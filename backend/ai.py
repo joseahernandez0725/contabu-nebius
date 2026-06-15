@@ -21,6 +21,8 @@ from google import genai
 from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
+from models import AccountType  # enum estándar de secciones del P&L (fuente única)
+
 load_dotenv()
 
 logger = logging.getLogger("contabu.ai")
@@ -33,10 +35,11 @@ _RETRY_CODES = {429, 500, 502, 503, 504}
 
 
 class Categorization(BaseModel):
-    """Resultado de categorizar una transacción (todo en inglés)."""
-    category: str      # p. ej. "Cost of Goods Sold"
-    subcategory: str   # p. ej. "Direct Materials"
-    confidence: float  # 0.0 - 1.0
+    """Resultado de categorizar una transacción: los 3 niveles del plan de cuentas (en inglés)."""
+    account_type: AccountType  # sección del P&L: REVENUE/COGS/OPERATING_EXPENSE/OTHER_INCOME/OTHER_EXPENSE
+    category: str              # cuenta contable, p. ej. "Materials"
+    subcategory: str           # nombre del comercio/empresa, p. ej. "Home Depot"
+    confidence: float          # 0.0 - 1.0
 
 
 class ColumnMapping(BaseModel):
@@ -72,21 +75,28 @@ def _generate(prompt: str, schema: type[BaseModel], *, max_retries: int = 4):
 
 def categorize_transaction(description: str, amount: float, sector: str) -> Categorization:
     """Clasifica una transacción bancaria. Devuelve category/subcategory/confidence."""
-    prompt = f"""You categorize bank transactions for small-business bookkeeping.
-The business operates in the "{sector}" sector.
-Categorize the following transaction using concise English accounting terms.
+    prompt = f"""You categorize bank transactions for small-business bookkeeping using a
+3-level chart of accounts. The business operates in the "{sector}" sector.
+
+For the transaction below, return (all in English):
+- account_type: the income-statement section. Exactly one of:
+  REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE.
+  (COGS = direct costs of producing the product/service; OPERATING_EXPENSE = overhead.)
+- category: the specific accounting account, e.g. "Materials", "Labor",
+  "Subcontractors", "Rent", "Utilities", "Marketing".
+- subcategory: the merchant or company name in the transaction, e.g. "Home Depot", "Shell".
+- confidence: 0.0 to 1.0.
 
 Transaction description: "{description}"
-Amount (USD, negative = expense): {amount}
-
-Return the category, a more specific subcategory, and your confidence (0.0-1.0)."""
+Amount (USD, negative = expense): {amount}"""
 
     response = _generate(prompt, Categorization)
     result = response.parsed
     # Log de la decisión del agente (entrada -> salida): evidencia para el concurso.
     logger.info(
-        "categorize | sector=%s desc=%r amount=%s -> category=%r subcategory=%r confidence=%s",
-        sector, description, amount, result.category, result.subcategory, result.confidence,
+        "categorize | sector=%s desc=%r amount=%s -> type=%s category=%r subcategory=%r confidence=%s",
+        sector, description, amount, result.account_type.value, result.category,
+        result.subcategory, result.confidence,
     )
     return result
 

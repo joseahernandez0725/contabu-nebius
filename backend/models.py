@@ -34,6 +34,19 @@ class RuleScope(str, Enum):
     COMPANY = "COMPANY"  # privada de una empresa (plan Pro); la IA la propone
 
 
+class AccountType(str, Enum):
+    """Sección del estado de resultados (P&L). Conjunto ESTÁNDAR y cerrado.
+
+    Es el nivel más alto del plan de cuentas: con él se calcula el P&L
+    (Revenue − COGS = Gross Profit; − Operating Expenses = Operating Income…).
+    """
+    REVENUE = "REVENUE"                       # ingresos / ventas
+    COGS = "COGS"                             # Cost of Goods Sold: costos directos
+    OPERATING_EXPENSE = "OPERATING_EXPENSE"   # gastos operativos / overhead
+    OTHER_INCOME = "OTHER_INCOME"             # otros ingresos (intereses, reembolsos…)
+    OTHER_EXPENSE = "OTHER_EXPENSE"           # otros gastos (intereses pagados, impuestos…)
+
+
 class Company(SQLModel, table=True):
     """La empresa del usuario (un negocio inmigrante)."""
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -58,9 +71,10 @@ class Transaction(SQLModel, table=True):
     description: str  # en inglés
     amount: Decimal = Field(max_digits=14, decimal_places=2)  # dinero exacto
 
-    # --- Datos que RELLENA ContaBu / la IA ---
-    category: Optional[str] = Field(default=None)
-    subcategory: Optional[str] = Field(default=None)  # más detalle que la categoría
+    # --- Datos que RELLENA ContaBu / la IA (3 niveles del plan de cuentas) ---
+    account_type: Optional[AccountType] = Field(default=None)  # sección del P&L (REVENUE/COGS/…)
+    category: Optional[str] = Field(default=None)              # cuenta contable (Materials, Rent…)
+    subcategory: Optional[str] = Field(default=None)           # nombre del comercio/empresa (Home Depot…)
     ai_categorized: bool = Field(default=False)
 
     created_at: datetime = Field(default_factory=_utcnow)
