@@ -79,16 +79,19 @@ def categorize_transaction(description: str, amount: float, sector: str) -> Cate
 3-level chart of accounts. The business operates in the "{sector}" sector.
 
 For the transaction below, return (all in English):
-- account_type: the income-statement section. Exactly one of:
-  REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE.
+- account_type: exactly one of:
+  REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
   (COGS = direct costs of producing the product/service; OPERATING_EXPENSE = overhead.)
-- category: the specific accounting account, e.g. "Materials", "Labor",
-  "Subcontractors", "Rent", "Utilities", "Marketing".
-- subcategory: the merchant or company name in the transaction, e.g. "Home Depot", "Shell".
+  Use NON_PL when the movement is NOT business income or expense and must be excluded
+  from the profit & loss: transfers between the owner's own accounts, owner draws or
+  capital contributions, loan principal (received or repaid), and credit-card payments.
+- category: a BROAD, reusable account name (keep it generic so it groups many
+  transactions), e.g. "Materials", "Labor", "Rent", "Utilities", "Marketing".
+- subcategory: the SPECIFIC merchant or company name, e.g. "Home Depot", "Shell".
 - confidence: 0.0 to 1.0.
 
 Transaction description: "{description}"
-Amount (USD, negative = expense): {amount}"""
+Amount (USD, negative = money out / expense): {amount}"""
 
     response = _generate(prompt, Categorization)
     result = response.parsed
@@ -125,7 +128,10 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
     cat = categorize_transaction("HOME DEPOT #2745 BUILDING MATERIALS", -342.18, "construction")
-    print("Categorization:", cat)
+    print("Categorization (expense):", cat)
+
+    transfer = categorize_transaction("ONLINE TRANSFER TO SAVINGS #4471", -500.00, "construction")
+    print("Categorization (transfer):", transfer)
 
     mapping = map_columns(
         ["TXN DT", "NARRATIVE", "DR/CR", "VALUE", "RUNNING BAL"],

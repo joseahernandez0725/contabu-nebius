@@ -45,6 +45,8 @@ class AccountType(str, Enum):
     OPERATING_EXPENSE = "OPERATING_EXPENSE"   # gastos operativos / overhead
     OTHER_INCOME = "OTHER_INCOME"             # otros ingresos (intereses, reembolsos…)
     OTHER_EXPENSE = "OTHER_EXPENSE"           # otros gastos (intereses pagados, impuestos…)
+    NON_PL = "NON_PL"                         # NO entra al P&L: transferencias, retiro/aporte del
+                                              # dueño, capital de préstamo, pago de tarjeta…
 
 
 class Company(SQLModel, table=True):
@@ -69,12 +71,15 @@ class Transaction(SQLModel, table=True):
     # --- Datos que SUBE el usuario (vienen del banco) ---
     date: date
     description: str  # en inglés
-    amount: Decimal = Field(max_digits=14, decimal_places=2)  # dinero exacto
+    # MAGNITUD positiva (valor absoluto). El signo en los cálculos lo determina account_type
+    # (REVENUE/OTHER_INCOME suman; COGS/OPERATING_EXPENSE/OTHER_EXPENSE restan; NON_PL se excluye).
+    amount: Decimal = Field(max_digits=14, decimal_places=2)
 
-    # --- Datos que RELLENA ContaBu / la IA (3 niveles del plan de cuentas) ---
-    account_type: Optional[AccountType] = Field(default=None)  # sección del P&L (REVENUE/COGS/…)
-    category: Optional[str] = Field(default=None)              # cuenta contable (Materials, Rent…)
-    subcategory: Optional[str] = Field(default=None)           # nombre del comercio/empresa (Home Depot…)
+    # --- Datos que RELLENA ContaBu / la IA ---
+    account_type: Optional[AccountType] = Field(default=None)  # sección del P&L (o NON_PL)
+    category: Optional[str] = Field(default=None)              # cuenta GENÉRICA (Materials, Rent…)
+    subcategory: Optional[str] = Field(default=None)           # comercio/empresa específico (Home Depot…)
+    confidence: Optional[float] = Field(default=None)          # confianza de la IA (0-1); revisión / reglas Pro
     ai_categorized: bool = Field(default=False)
 
     created_at: datetime = Field(default_factory=_utcnow)
