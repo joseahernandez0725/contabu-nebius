@@ -1,0 +1,44 @@
+# ===== Secretos (NUNCA subir) =====
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# ===== Python / backend =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.sqlite3
+
+# ===== Node / frontend =====
+node_modules/
+dist/
+build/
+.vite/
+*.local
+
+# ===== Logs y temporales =====
+*.log
+logs/
+tmp/
+.cache/
+
+# ===== Sistema operativo =====
+.DS_Store
+Thumbs.db
+
+# ===== Editores =====
+.vscode/
+.idea/
+*.swp
+
+# ===== Claude Code (config local de la máquina) =====
+.claude/settings.local.json
