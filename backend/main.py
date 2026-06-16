@@ -5,11 +5,12 @@ Endpoints de la API: prueba (/api/hello) e ingestión de archivos bancarios.
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from db import get_session
 from ingestion import ingest_csv
-from models import Company
+from models import Company, Transaction
+from reports import income_statement
 
 # `app` es nuestra aplicación. uvicorn la "sirve" y queda esperando peticiones.
 app = FastAPI(title="ContaBu API")
@@ -50,3 +51,19 @@ async def upload_transactions(
         session, company_id, company.sector, content, limit=20
     )
     return result
+
+
+@app.get("/api/companies/{company_id}/transactions")
+def list_transactions(company_id: int, session: Session = Depends(get_session)):
+    """Lista las transacciones de una empresa (más recientes primero)."""
+    return session.exec(
+        select(Transaction)
+        .where(Transaction.company_id == company_id)
+        .order_by(Transaction.date.desc())
+    ).all()
+
+
+@app.get("/api/companies/{company_id}/income-statement")
+def get_income_statement(company_id: int, session: Session = Depends(get_session)):
+    """Estado de resultados (P&L) calculado en SQL. Ver reports.income_statement."""
+    return income_statement(session, company_id)
