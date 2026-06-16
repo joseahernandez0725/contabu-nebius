@@ -16,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 from dateutil import parser as dateparser
 from sqlmodel import Session
 
-from ai import categorize_transaction, map_columns
+from ai import categorize_batch, map_columns
 from models import Transaction
 
 
@@ -75,32 +75,46 @@ def ingest_csv(
                 "message": "la IA devolvió una columna que no existe en el archivo"}
 
     to_process = rows[:limit] if limit else rows
-    inserted, errors = 0, 0
-    preview: list[dict] = []
 
+    # 1) Parsear todas las filas (fecha, descripción, monto con signo).
+    parsed: list[tuple] = []  # (date, description, signed_amount)
+    errors = 0
     for r in to_process:
         try:
             d = parse_date(r[i_date])
             description = r[i_desc].strip()
-            signed = parse_amount(r[i_amount])          # con signo (dirección)
-            amount = abs(signed)                         # magnitud para guardar
+            signed = parse_amount(r[i_amount])  # con signo (dirección)
         except (IndexError, ValueError, TypeError):
             errors += 1
             continue
+        parsed.append((d, description, signed))
 
-        tx = Transaction(company_id=company_id, date=d, description=description, amount=amount)
+    # 2) Categorizar TODAS en UNA sola llamada (batch) → eficiente con el rate limit.
+    cats = []
+    if categorize and parsed:
+        items = [{"description": desc, "amount": float(signed)} for (_, desc, signed) in parsed]
+        cats = categorize_batch(items, sector)
 
-        if categorize:
-            cat = categorize_transaction(description, float(signed), sector)
+    # 3) Crear las transacciones (monto = magnitud positiva).
+    inserted = 0
+    preview: list[dict] = []
+    for idx, (d, description, signed) in enumerate(parsed):
+        tx = Transaction(company_id=company_id, date=d, description=description, amount=abs(signed))
+        if categorize and idx < len(cats):
+            cat = cats[idx]
             tx.account_type = cat.account_type
             tx.category = cat.category
             tx.subcategory = cat.subcategory
             tx.confidence = cat.confidence
+            tx.needs_review = cat.needs_review
+            tx.review_question = cat.review_question or None
             tx.ai_categorized = True
-            preview.append({"date": str(d), "description": description, "amount": str(amount),
-                            "account_type": cat.account_type.value, "category": cat.category,
-                            "subcategory": cat.subcategory, "confidence": cat.confidence})
-
+            preview.append({
+                "date": str(d), "description": description, "amount": str(abs(signed)),
+                "account_type": cat.account_type.value, "category": cat.category,
+                "subcategory": cat.subcategory, "confidence": cat.confidence,
+                "needs_review": cat.needs_review, "review_question": cat.review_question,
+            })
         session.add(tx)
         inserted += 1
 
@@ -125,13 +139,17 @@ if __name__ == "__main__":
 
     from db import engine
 
+    # Uso:  python ingestion.py <archivo> [limite] [sector]
     path = sys.argv[1] if len(sys.argv) > 1 else "sample_bank.csv"
+    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+    sector = sys.argv[3] if len(sys.argv) > 3 else "construction"
+
     with open(path, "rb") as fh:
         content = fh.read()
 
     with Session(engine) as session:
         result = ingest_csv(
-            session, company_id=1, sector="construction", content=content,
-            limit=5, dry_run=True,
+            session, company_id=1, sector=sector, content=content,
+            limit=limit, dry_run=True,
         )
     print(json.dumps(result, indent=2, ensure_ascii=False))

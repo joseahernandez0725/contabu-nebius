@@ -1,4 +1,5 @@
 import { money } from "../api";
+import { PNL } from "../accounting";
 import type { IncomeStatement as IS } from "../types";
 
 function Row({ label, value, strong, indent }: {
@@ -9,7 +10,7 @@ function Row({ label, value, strong, indent }: {
       className={[
         "flex justify-between py-1.5 text-sm",
         strong ? "font-semibold border-t border-slate-200 pt-2 text-slate-900" : "text-slate-600",
-        indent ? "pl-3" : "",
+        indent ? "ps-3" : "",
       ].join(" ")}
     >
       <span>{label}</span>
@@ -18,20 +19,20 @@ function Row({ label, value, strong, indent }: {
   );
 }
 
-// Estado de resultados (P&L). Presentacional: recibe los datos ya calculados.
+// Estado de resultados (P&L). Términos contables en inglés (no se traducen).
 export default function IncomeStatement({ data }: { data: IS }) {
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-      <h2 className="font-semibold text-slate-900 mb-3">Estado de resultados</h2>
-      <Row label="Ingresos (Revenue)" value={data.revenue} />
-      <Row label="− Costo de ventas (COGS)" value={data.cogs} indent />
-      <Row label="Utilidad bruta" value={data.gross_profit} strong />
-      <Row label="− Gastos operativos" value={data.operating_expenses} indent />
-      <Row label="Utilidad operativa" value={data.operating_income} strong />
-      <Row label="+ Otros ingresos" value={data.other_income} indent />
-      <Row label="− Otros gastos" value={data.other_expense} indent />
+      <h2 className="font-semibold text-slate-900 mb-3">{PNL.title}</h2>
+      <Row label={PNL.revenue} value={data.revenue} />
+      <Row label={PNL.cogs} value={data.cogs} indent />
+      <Row label={PNL.grossProfit} value={data.gross_profit} strong />
+      <Row label={PNL.opex} value={data.operating_expenses} indent />
+      <Row label={PNL.operatingIncome} value={data.operating_income} strong />
+      <Row label={PNL.otherIncome} value={data.other_income} indent />
+      <Row label={PNL.otherExpense} value={data.other_expense} indent />
       <div className="flex justify-between items-center mt-3 pt-3 border-t-2 border-brand-green">
-        <span className="font-bold text-brand-green">Utilidad neta</span>
+        <span className="font-bold text-brand-green">{PNL.netIncome}</span>
         <span className="font-bold text-brand-green text-lg tabular-nums">{money(data.net_income)}</span>
       </div>
     </div>

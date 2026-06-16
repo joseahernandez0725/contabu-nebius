@@ -1,0 +1,55 @@
+{
+  "nav": { "dashboard": "Summary", "transactions": "Activity", "upload": "Upload", "review": "Review" },
+  "review": { "confirm": "Confirm", "empty": "Nothing to review", "emptyHint": "When the AI is unsure about a transaction, it appears here.", "intro": "{{count}} transactions need your confirmation.", "answerPlaceholder": "Tell us in your own words (e.g. \"plumbing subcontractor\", \"rent\")" },
+  "dashboard": {
+    "netIncomeLabel": "Net income this period",
+    "profitPositive": "Your business is profitable 🎉",
+    "profitNegative": "Your business had a loss this period",
+    "revenue": "Revenue",
+    "totalExpenses": "Total expenses",
+    "whereMoneyGoes": "Where does the money go?",
+    "recentActivity": "Recent activity",
+    "seeAll": "See all",
+    "uploadNew": "+ Upload a new bank statement"
+  },
+  "empty": {
+    "welcome": "Welcome to ContaBu!",
+    "subtitle": "Upload your first bank statement and AI will organize your business in seconds.",
+    "cta": "Upload my statement"
+  },
+  "sections": {
+    "REVENUE": "Income",
+    "OTHER_INCOME": "Other income",
+    "COGS": "Cost of goods sold",
+    "OPERATING_EXPENSE": "Operating expense",
+    "OTHER_EXPENSE": "Other expense",
+    "NON_PL": "Outside P&L",
+    "unclassified": "Unclassified"
+  },
+  "pnl": {
+    "title": "Income statement",
+    "revenue": "Revenue",
+    "cogs": "− Cost of goods sold (COGS)",
+    "grossProfit": "Gross profit",
+    "opex": "− Operating expenses",
+    "operatingIncome": "Operating income",
+    "otherIncome": "+ Other income",
+    "otherExpense": "− Other expenses",
+    "netIncome": "Net income"
+  },
+  "tx": {
+    "title": "Activity",
+    "total": "{{count}} total",
+    "empty": "No transactions yet.",
+    "emptyHint": "Upload a statement in the \"Upload\" tab."
+  },
+  "upload": {
+    "title": "Upload your bank statement",
+    "subtitle": "Upload a CSV from your bank. AI categorizes each transaction for you.",
+    "choose": "Tap to choose your CSV file",
+    "submit": "Upload and categorize",
+    "done": "Done!",
+    "result": "{{count}} transactions categorized",
+    "seeSummary": "See my summary →"
+  }
+}

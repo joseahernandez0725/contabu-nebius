@@ -1,0 +1,55 @@
+{
+  "nav": { "dashboard": "Resumo", "transactions": "Movimentos", "upload": "Enviar", "review": "Revisar" },
+  "review": { "confirm": "Confirmar", "empty": "Nada para revisar", "emptyHint": "Quando a IA tiver dúvida sobre uma transação, ela aparecerá aqui.", "intro": "{{count}} transações precisam da sua confirmação.", "answerPlaceholder": "Conte com suas palavras (ex. \"subempreiteiro\", \"aluguel\")" },
+  "dashboard": {
+    "netIncomeLabel": "Lucro líquido do período",
+    "profitPositive": "Seu negócio está lucrando 🎉",
+    "profitNegative": "Seu negócio teve prejuízo neste período",
+    "revenue": "Receita",
+    "totalExpenses": "Despesas totais",
+    "whereMoneyGoes": "Para onde vai o dinheiro?",
+    "recentActivity": "Movimentos recentes",
+    "seeAll": "Ver todos",
+    "uploadNew": "+ Enviar um novo extrato bancário"
+  },
+  "empty": {
+    "welcome": "Bem-vindo ao ContaBu!",
+    "subtitle": "Envie seu primeiro extrato bancário e a IA organizará seu negócio em segundos.",
+    "cta": "Enviar meu extrato"
+  },
+  "sections": {
+    "REVENUE": "Receita",
+    "OTHER_INCOME": "Outra receita",
+    "COGS": "Custo das vendas",
+    "OPERATING_EXPENSE": "Despesa operacional",
+    "OTHER_EXPENSE": "Outra despesa",
+    "NON_PL": "Fora do P&L",
+    "unclassified": "Sem classificação"
+  },
+  "pnl": {
+    "title": "Demonstração de resultados",
+    "revenue": "Receita (Revenue)",
+    "cogs": "− Custo das vendas (COGS)",
+    "grossProfit": "Lucro bruto",
+    "opex": "− Despesas operacionais",
+    "operatingIncome": "Lucro operacional",
+    "otherIncome": "+ Outras receitas",
+    "otherExpense": "− Outras despesas",
+    "netIncome": "Lucro líquido"
+  },
+  "tx": {
+    "title": "Movimentos",
+    "total": "{{count}} no total",
+    "empty": "Ainda não há movimentos.",
+    "emptyHint": "Envie um extrato na aba \"Enviar\"."
+  },
+  "upload": {
+    "title": "Envie seu extrato bancário",
+    "subtitle": "Envie um CSV do seu banco. A IA categoriza cada movimento para você.",
+    "choose": "Toque para escolher seu arquivo CSV",
+    "submit": "Enviar e categorizar",
+    "done": "Pronto!",
+    "result": "{{count}} movimentos categorizados",
+    "seeSummary": "Ver meu resumo →"
+  }
+}

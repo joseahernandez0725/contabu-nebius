@@ -6,6 +6,12 @@
 *.pem
 secrets/
 
+# ===== Datos bancarios REALES de clientes (privados — NUNCA subir) =====
+# (sample_bank.csv sí se versiona: son datos ficticios de prueba)
+backend/Chase*
+backend/*_Activity_*
+backend/private/
+
 # ===== Python / backend =====
 __pycache__/
 *.py[cod]

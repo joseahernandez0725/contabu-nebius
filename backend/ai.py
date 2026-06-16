@@ -27,7 +27,7 @@ load_dotenv()
 
 logger = logging.getLogger("contabu.ai")
 
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash-lite"  # cuota propia + más barato/rápido; suficiente para clasificar
 _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Códigos HTTP transitorios que vale la pena reintentar (saturación, límites temporales).
@@ -36,10 +36,12 @@ _RETRY_CODES = {429, 500, 502, 503, 504}
 
 class Categorization(BaseModel):
     """Resultado de categorizar una transacción: los 3 niveles del plan de cuentas (en inglés)."""
-    account_type: AccountType  # sección del P&L: REVENUE/COGS/OPERATING_EXPENSE/OTHER_INCOME/OTHER_EXPENSE
+    account_type: AccountType  # sección del P&L
     category: str              # cuenta contable, p. ej. "Materials"
     subcategory: str           # nombre del comercio/empresa, p. ej. "Home Depot"
     confidence: float          # 0.0 - 1.0
+    needs_review: bool         # true si es ambiguo y necesita confirmación humana
+    review_question: str       # pregunta para el usuario si needs_review (si no, "")
 
 
 class ColumnMapping(BaseModel):
@@ -49,8 +51,9 @@ class ColumnMapping(BaseModel):
     amount_column: str
 
 
-def _generate(prompt: str, schema: type[BaseModel], *, max_retries: int = 4):
-    """Llama a Gemini con structured output. Reintenta ante errores transitorios (backoff)."""
+def _generate(prompt: str, schema, *, max_retries: int = 4):
+    """Llama a Gemini con structured output (schema puede ser un modelo o una lista de modelos).
+    Reintenta ante errores transitorios (backoff)."""
     delay = 2.0
     for attempt in range(1, max_retries + 1):
         try:
@@ -102,6 +105,69 @@ Amount (USD, negative = money out / expense): {amount}"""
         result.subcategory, result.confidence,
     )
     return result
+
+
+def recategorize_with_answer(description: str, amount: float, sector: str, answer: str) -> Categorization:
+    """Re-categoriza usando la EXPLICACIÓN del dueño (lenguaje simple) como señal principal."""
+    prompt = f"""Re-categorize a bank transaction for a "{sector}" small business AFTER the owner
+explained what it was. Use the owner's explanation as the PRIMARY signal.
+
+Transaction: "{description}" | amount: {amount}
+Owner's explanation (plain language): "{answer}"
+
+Return account_type, category, subcategory, confidence, needs_review, review_question.
+(COGS = direct cost of the product/service sold; OPERATING_EXPENSE = overhead; NON_PL =
+transfers between the owner's own accounts, owner draws, loan principal, credit-card payments.)
+With the owner's explanation you should normally be confident: set needs_review=false and
+review_question="" unless the explanation is still genuinely unclear."""
+
+    response = _generate(prompt, Categorization)
+    result = response.parsed
+    logger.info(
+        "recategorize | desc=%r answer=%r -> type=%s category=%r confidence=%s",
+        description, answer, result.account_type.value, result.category, result.confidence,
+    )
+    return result
+
+
+def categorize_batch(items: list[dict], sector: str) -> list[Categorization]:
+    """Categoriza MUCHAS transacciones en UNA sola llamada (eficiente con el rate limit).
+
+    `items`: lista de {"description": str, "amount": float (con signo: negativo = salida)}.
+    Devuelve una lista de Categorization en el MISMO orden.
+    """
+    lines = "\n".join(
+        f'{i + 1}. "{it["description"]}" | amount: {it["amount"]}'
+        for i, it in enumerate(items)
+    )
+    prompt = f"""You categorize bank transactions for small-business bookkeeping using a
+3-level chart of accounts. The business operates in the "{sector}" sector.
+
+Categorize EACH transaction below. Return a JSON array with ONE object per transaction,
+in the SAME ORDER, each with: account_type, category, subcategory, confidence,
+needs_review, review_question.
+
+- account_type: one of REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
+  COGS = direct cost of producing the product/service sold. OPERATING_EXPENSE = overhead.
+  NON_PL = transfers between the owner's own accounts, owner draws/contributions, loan
+  principal, credit-card payments. NON_PL is NOT a payment to a subcontractor or supplier.
+- category: a BROAD, reusable account name (e.g. "Materials", "Labor", "Rent", "Software").
+- subcategory: the SPECIFIC merchant or person name in the transaction.
+- confidence: 0.0 to 1.0.  (amount: negative = money out / expense)
+- needs_review: true when the transaction is genuinely ambiguous and a human should confirm —
+  e.g. Zelle / person-to-person transfers (could be a subcontractor, an owner draw, or a
+  customer payment), unclear merchants, or whenever your confidence is below 0.8.
+- review_question: if needs_review is true, a short, friendly question for the business owner
+  that would resolve it (e.g. "Is the $2,080 payment to watson yu a subcontractor or your own
+  draw?"). If needs_review is false, return an empty string "".
+
+Transactions:
+{lines}"""
+
+    response = _generate(prompt, list[Categorization])
+    results: list[Categorization] = response.parsed or []
+    logger.info("categorize_batch | sector=%s n=%d -> %d resultados", sector, len(items), len(results))
+    return results
 
 
 def map_columns(headers: list[str], sample_row: list[str]) -> ColumnMapping:

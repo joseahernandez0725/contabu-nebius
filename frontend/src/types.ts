@@ -18,7 +18,17 @@ export interface Transaction {
   category: string | null;
   subcategory: string | null;
   confidence: number | null;
+  needs_review: boolean;
+  review_question: string | null;
   ai_categorized: boolean;
+}
+
+export interface Company {
+  id: number;
+  name: string;
+  sector: string;
+  plan: string;
+  created_at: string;
 }
 
 export interface IncomeStatement {

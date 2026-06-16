@@ -1,0 +1,55 @@
+{
+  "nav": { "dashboard": "ملخص", "transactions": "الحركات", "upload": "رفع", "review": "المراجعة" },
+  "review": { "confirm": "تأكيد", "empty": "لا شيء للمراجعة", "emptyHint": "عندما لا يكون الذكاء الاصطناعي متأكدًا من حركة، ستظهر هنا.", "intro": "{{count}} حركة تحتاج إلى تأكيدك.", "answerPlaceholder": "أخبرنا بكلماتك (مثل \"مقاول فرعي للسباكة\"، \"إيجار\")" },
+  "dashboard": {
+    "netIncomeLabel": "صافي الربح لهذه الفترة",
+    "profitPositive": "عملك يحقق ربحًا 🎉",
+    "profitNegative": "تكبّد عملك خسارة في هذه الفترة",
+    "revenue": "الإيرادات",
+    "totalExpenses": "إجمالي المصروفات",
+    "whereMoneyGoes": "أين يذهب المال؟",
+    "recentActivity": "الحركات الأخيرة",
+    "seeAll": "عرض الكل",
+    "uploadNew": "+ رفع كشف حساب بنكي جديد"
+  },
+  "empty": {
+    "welcome": "مرحبًا بك في ContaBu!",
+    "subtitle": "ارفع أول كشف حساب بنكي وسيقوم الذكاء الاصطناعي بتنظيم عملك في ثوانٍ.",
+    "cta": "رفع كشف حسابي"
+  },
+  "sections": {
+    "REVENUE": "إيراد",
+    "OTHER_INCOME": "إيراد آخر",
+    "COGS": "تكلفة البضاعة المباعة",
+    "OPERATING_EXPENSE": "مصروف تشغيلي",
+    "OTHER_EXPENSE": "مصروف آخر",
+    "NON_PL": "خارج قائمة الدخل",
+    "unclassified": "غير مُصنّف"
+  },
+  "pnl": {
+    "title": "قائمة الدخل",
+    "revenue": "الإيرادات (Revenue)",
+    "cogs": "− تكلفة البضاعة المباعة (COGS)",
+    "grossProfit": "إجمالي الربح",
+    "opex": "− المصروفات التشغيلية",
+    "operatingIncome": "الربح التشغيلي",
+    "otherIncome": "+ إيرادات أخرى",
+    "otherExpense": "− مصروفات أخرى",
+    "netIncome": "صافي الربح"
+  },
+  "tx": {
+    "title": "الحركات",
+    "total": "{{count}} إجمالاً",
+    "empty": "لا توجد حركات بعد.",
+    "emptyHint": "ارفع كشف حساب من تبويب \"رفع\"."
+  },
+  "upload": {
+    "title": "ارفع كشف حسابك البنكي",
+    "subtitle": "ارفع ملف CSV من بنكك. الذكاء الاصطناعي يصنّف كل حركة نيابةً عنك.",
+    "choose": "اضغط لاختيار ملف CSV",
+    "submit": "رفع وتصنيف",
+    "done": "تم!",
+    "result": "تم تصنيف {{count}} حركة",
+    "seeSummary": "عرض ملخّصي ←"
+  }
+}

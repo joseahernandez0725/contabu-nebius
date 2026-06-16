@@ -79,7 +79,9 @@ class Transaction(SQLModel, table=True):
     account_type: Optional[AccountType] = Field(default=None)  # sección del P&L (o NON_PL)
     category: Optional[str] = Field(default=None)              # cuenta GENÉRICA (Materials, Rent…)
     subcategory: Optional[str] = Field(default=None)           # comercio/empresa específico (Home Depot…)
-    confidence: Optional[float] = Field(default=None)          # confianza de la IA (0-1); revisión / reglas Pro
+    confidence: Optional[float] = Field(default=None)          # confianza de la IA (0-1)
+    needs_review: bool = Field(default=False)                  # la IA dudó → atención humana
+    review_question: Optional[str] = Field(default=None)       # pregunta para el usuario (inglés)
     ai_categorized: bool = Field(default=False)
 
     created_at: datetime = Field(default_factory=_utcnow)
@@ -102,6 +104,7 @@ class CategoryRule(SQLModel, table=True):
         default=None, foreign_key="company.id", index=True
     )  # null si la regla es de SECTOR
     sector: Optional[str] = Field(default=None)  # se usa en reglas de SECTOR
-    match_text: str  # texto de la descripción que dispara la regla
+    match_text: str  # texto/comercio que dispara la regla (ej. "MIKE SMITH")
+    account_type: Optional[AccountType] = Field(default=None)  # sección a asignar
     category: str    # categoría a asignar
     created_at: datetime = Field(default_factory=_utcnow)

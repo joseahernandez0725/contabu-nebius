@@ -1,0 +1,55 @@
+{
+  "nav": { "dashboard": "Resumen", "transactions": "Movimientos", "upload": "Subir", "review": "Por revisar" },
+  "review": { "confirm": "Confirmar", "empty": "Nada por revisar", "emptyHint": "Cuando la IA dude de una transacción, aparecerá aquí.", "intro": "{{count}} transacciones necesitan tu confirmación.", "answerPlaceholder": "Cuéntanos en tus palabras (ej. \"subcontratista de plomería\", \"renta\")" },
+  "dashboard": {
+    "netIncomeLabel": "Utilidad neta del periodo",
+    "profitPositive": "Tu negocio está en ganancia 🎉",
+    "profitNegative": "Tu negocio está en pérdida este periodo",
+    "revenue": "Ingresos",
+    "totalExpenses": "Gastos totales",
+    "whereMoneyGoes": "¿En qué se va el dinero?",
+    "recentActivity": "Movimientos recientes",
+    "seeAll": "Ver todos",
+    "uploadNew": "+ Subir un nuevo extracto bancario"
+  },
+  "empty": {
+    "welcome": "¡Bienvenido a ContaBu!",
+    "subtitle": "Sube tu primer extracto bancario y la IA organizará tu negocio en segundos.",
+    "cta": "Subir mi extracto"
+  },
+  "sections": {
+    "REVENUE": "Ingreso",
+    "OTHER_INCOME": "Otro ingreso",
+    "COGS": "Costo de ventas",
+    "OPERATING_EXPENSE": "Gasto operativo",
+    "OTHER_EXPENSE": "Otro gasto",
+    "NON_PL": "Fuera del P&L",
+    "unclassified": "Sin clasificar"
+  },
+  "pnl": {
+    "title": "Estado de resultados",
+    "revenue": "Ingresos (Revenue)",
+    "cogs": "− Costo de ventas (COGS)",
+    "grossProfit": "Utilidad bruta",
+    "opex": "− Gastos operativos",
+    "operatingIncome": "Utilidad operativa",
+    "otherIncome": "+ Otros ingresos",
+    "otherExpense": "− Otros gastos",
+    "netIncome": "Utilidad neta"
+  },
+  "tx": {
+    "title": "Movimientos",
+    "total": "{{count}} en total",
+    "empty": "Aún no hay movimientos.",
+    "emptyHint": "Sube un extracto en la pestaña \"Subir\"."
+  },
+  "upload": {
+    "title": "Sube tu extracto bancario",
+    "subtitle": "Sube un CSV de tu banco. La IA categoriza cada movimiento por ti.",
+    "choose": "Toca para elegir tu archivo CSV",
+    "submit": "Subir y categorizar",
+    "done": "¡Listo!",
+    "result": "{{count}} movimientos categorizados",
+    "seeSummary": "Ver mi resumen →"
+  }
+}
