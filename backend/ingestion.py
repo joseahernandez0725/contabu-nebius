@@ -1,8 +1,8 @@
 """
 ContaBu — pipeline de ingestión de archivos bancarios.
 
-CSV bancario desordenado → (IA mapea columnas) → parsea cada fila → (IA categoriza)
-→ crea Transaction. Pensado para datos reales (formatos de fecha/monto variados).
+CSV bancario desordenado → (IA mapea columnas) → parsea cada fila → (reglas → IA categoriza
+lo que no matchea) → crea Transaction. Pensado para datos reales (formatos variados).
 
 Convención: `amount` se guarda como MAGNITUD positiva; el signo (dirección entrada/salida)
 se le pasa a la IA para que clasifique bien.
@@ -17,7 +17,8 @@ from dateutil import parser as dateparser
 from sqlmodel import Session
 
 from ai import categorize_batch, map_columns
-from models import Transaction
+from models import CategoryRule, Transaction
+from rules import load_rules, match_rule
 
 
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
@@ -89,19 +90,47 @@ def ingest_csv(
             continue
         parsed.append((d, description, signed))
 
-    # 2) Categorizar TODAS en UNA sola llamada (batch) → eficiente con el rate limit.
-    cats = []
-    if categorize and parsed:
-        items = [{"description": desc, "amount": float(signed)} for (_, desc, signed) in parsed]
-        cats = categorize_batch(items, sector)
+    # 2) MOTOR DE REGLAS: lo que ya tiene regla (comercio conocido) se resuelve SIN IA.
+    #    Solo las filas que no matchean ninguna regla van al batch de la IA.
+    rules: list[CategoryRule] = load_rules(session, company_id, sector) if categorize else []
+    rule_hits: dict[int, CategoryRule] = {}
+    ai_indices: list[int] = []
+    if categorize:
+        for idx, (_, desc, _) in enumerate(parsed):
+            rule = match_rule(rules, desc)
+            if rule is not None:
+                rule_hits[idx] = rule
+            else:
+                ai_indices.append(idx)
 
-    # 3) Crear las transacciones (monto = magnitud positiva).
+    # 3) Categorizar con la IA SOLO lo que no matcheó regla (batch, eficiente).
+    ai_cats: dict[int, object] = {}
+    if ai_indices:
+        items = [{"description": parsed[i][1], "amount": float(parsed[i][2])} for i in ai_indices]
+        results = categorize_batch(items, sector)
+        ai_cats = {i: cat for i, cat in zip(ai_indices, results)}
+
+    # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
+    by_rule = 0
+    by_ai = 0
     preview: list[dict] = []
     for idx, (d, description, signed) in enumerate(parsed):
         tx = Transaction(company_id=company_id, date=d, description=description, amount=abs(signed))
-        if categorize and idx < len(cats):
-            cat = cats[idx]
+        source = None
+        if idx in rule_hits:
+            rule = rule_hits[idx]
+            tx.account_type = rule.account_type
+            tx.category = rule.category
+            tx.subcategory = rule.match_text  # el comercio/patrón que disparó la regla
+            tx.confidence = 1.0
+            tx.needs_review = False
+            tx.review_question = None
+            tx.ai_categorized = False  # vino de una regla, no de la IA
+            source = "rule"
+            by_rule += 1
+        elif idx in ai_cats:
+            cat = ai_cats[idx]
             tx.account_type = cat.account_type
             tx.category = cat.category
             tx.subcategory = cat.subcategory
@@ -109,11 +138,16 @@ def ingest_csv(
             tx.needs_review = cat.needs_review
             tx.review_question = cat.review_question or None
             tx.ai_categorized = True
+            source = "ai"
+            by_ai += 1
+        if source is not None:
             preview.append({
                 "date": str(d), "description": description, "amount": str(abs(signed)),
-                "account_type": cat.account_type.value, "category": cat.category,
-                "subcategory": cat.subcategory, "confidence": cat.confidence,
-                "needs_review": cat.needs_review, "review_question": cat.review_question,
+                "source": source,
+                "account_type": tx.account_type.value if tx.account_type else None,
+                "category": tx.category, "subcategory": tx.subcategory,
+                "confidence": tx.confidence, "needs_review": tx.needs_review,
+                "review_question": tx.review_question,
             })
         session.add(tx)
         inserted += 1
@@ -126,6 +160,8 @@ def ingest_csv(
     return {
         "inserted": inserted,
         "errors": errors,
+        "by_rule": by_rule,
+        "by_ai": by_ai,
         "dry_run": dry_run,
         "mapping": mapping.model_dump(),
         "preview": preview,
