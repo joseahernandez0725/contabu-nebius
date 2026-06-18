@@ -14,6 +14,13 @@ const BADGE: Record<string, string> = {
   NON_PL: "bg-slate-100 text-slate-500",
 };
 
+// Badge de origen de la categorización (regla / IA / manual) → transparencia para el dueño.
+const SOURCE_BADGE: Record<string, string> = {
+  rule: "bg-emerald-50 text-emerald-700 border border-emerald-200",
+  ai: "bg-indigo-50 text-indigo-700 border border-indigo-200",
+  manual: "bg-slate-100 text-slate-600 border border-slate-200",
+};
+
 export default function Transactions() {
   const { t } = useTranslation();
   const [txs, setTxs] = useState<Transaction[] | null>(null);
@@ -60,6 +67,25 @@ export default function Transactions() {
                 </div>
                 <div className="flex items-center gap-2 mt-1">
                   <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${badge}`}>{label}</span>
+                  {tx.source && (
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${SOURCE_BADGE[tx.source] ?? ""}`}>
+                      {t(`tx.source.${tx.source}`)}
+                    </span>
+                  )}
+                  {tx.confidence != null && (
+                    <span
+                      className={`text-[10px] font-medium tabular-nums ${
+                        tx.confidence >= 0.8
+                          ? "text-slate-400"
+                          : tx.confidence >= 0.6
+                          ? "text-amber-600"
+                          : "text-rose-600"
+                      }`}
+                      title={t("tx.confidence")}
+                    >
+                      {Math.round(tx.confidence * 100)}%
+                    </span>
+                  )}
                   <span className="text-xs text-slate-400 truncate">{tx.category ?? "—"} · {tx.date}</span>
                 </div>
               </div>

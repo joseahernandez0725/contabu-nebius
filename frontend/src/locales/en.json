@@ -41,7 +41,9 @@
     "title": "Activity",
     "total": "{{count}} total",
     "empty": "No transactions yet.",
-    "emptyHint": "Upload a statement in the \"Upload\" tab."
+    "emptyHint": "Upload a statement in the \"Upload\" tab.",
+    "source": { "rule": "Rule", "ai": "AI", "manual": "You" },
+    "confidence": "AI confidence"
   },
   "upload": {
     "title": "Upload your bank statement",

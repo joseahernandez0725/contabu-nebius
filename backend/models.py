@@ -55,6 +55,9 @@ class Company(SQLModel, table=True):
     name: str
     sector: str  # construcción / limpieza / restaurante…
     plan: Plan = Field(default=Plan.FREE)
+    # Umbrales editables para desambiguar por monto (idea #14). None = usar el default del sistema.
+    supermarket_threshold: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
+    gas_station_threshold: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -83,6 +86,7 @@ class Transaction(SQLModel, table=True):
     needs_review: bool = Field(default=False)                  # la IA dudó → atención humana
     review_question: Optional[str] = Field(default=None)       # pregunta para el usuario (inglés)
     ai_categorized: bool = Field(default=False)
+    source: Optional[str] = Field(default=None)               # quién categorizó: "rule" | "ai" | "manual"
 
     created_at: datetime = Field(default_factory=_utcnow)
 

@@ -41,7 +41,9 @@
     "title": "Movimientos",
     "total": "{{count}} en total",
     "empty": "Aún no hay movimientos.",
-    "emptyHint": "Sube un extracto en la pestaña \"Subir\"."
+    "emptyHint": "Sube un extracto en la pestaña \"Subir\".",
+    "source": { "rule": "Regla", "ai": "IA", "manual": "Tú" },
+    "confidence": "Confianza de la IA"
   },
   "upload": {
     "title": "Sube tu extracto bancario",

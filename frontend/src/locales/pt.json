@@ -41,7 +41,9 @@
     "title": "Movimentos",
     "total": "{{count}} no total",
     "empty": "Ainda não há movimentos.",
-    "emptyHint": "Envie um extrato na aba \"Enviar\"."
+    "emptyHint": "Envie um extrato na aba \"Enviar\".",
+    "source": { "rule": "Regra", "ai": "IA", "manual": "Você" },
+    "confidence": "Confiança da IA"
   },
   "upload": {
     "title": "Envie seu extrato bancário",

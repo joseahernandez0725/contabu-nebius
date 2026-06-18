@@ -21,6 +21,7 @@ from google import genai
 from google.genai import errors as genai_errors
 from pydantic import BaseModel
 
+from categories import format_for_prompt  # plan de cuentas cerrado por sector
 from models import AccountType  # enum estándar de secciones del P&L (fuente única)
 
 load_dotenv()
@@ -88,10 +89,13 @@ For the transaction below, return (all in English):
   Use NON_PL when the movement is NOT business income or expense and must be excluded
   from the profit & loss: transfers between the owner's own accounts, owner draws or
   capital contributions, loan principal (received or repaid), and credit-card payments.
-- category: a BROAD, reusable account name (keep it generic so it groups many
-  transactions), e.g. "Materials", "Labor", "Rent", "Utilities", "Marketing".
+- category: choose the BEST-FITTING category from the closed chart of accounts below; it MUST
+  belong to the account_type you assigned. If nothing truly fits, use "Other". Do NOT invent names.
 - subcategory: the SPECIFIC merchant or company name, e.g. "Home Depot", "Shell".
 - confidence: 0.0 to 1.0.
+
+Chart of accounts for the "{sector}" sector (pick category from the matching account_type):
+{format_for_prompt(sector)}
 
 Transaction description: "{description}"
 Amount (USD, negative = money out / expense): {amount}"""
@@ -114,6 +118,10 @@ explained what it was. Use the owner's explanation as the PRIMARY signal.
 
 Transaction: "{description}" | amount: {amount}
 Owner's explanation (plain language): "{answer}"
+
+Choose `category` from the closed chart of accounts below; it MUST belong to the chosen account_type
+(if nothing fits, use "Other"):
+{format_for_prompt(sector)}
 
 Return account_type, category, subcategory, confidence, needs_review, review_question.
 (COGS = direct cost of the product/service sold; OPERATING_EXPENSE = overhead; NON_PL =
@@ -151,7 +159,8 @@ needs_review, review_question.
   COGS = direct cost of producing the product/service sold. OPERATING_EXPENSE = overhead.
   NON_PL = transfers between the owner's own accounts, owner draws/contributions, loan
   principal, credit-card payments. NON_PL is NOT a payment to a subcontractor or supplier.
-- category: a BROAD, reusable account name (e.g. "Materials", "Labor", "Rent", "Software").
+- category: choose the BEST-FITTING category from the closed chart of accounts below; it MUST
+  belong to the account_type you assigned. If nothing truly fits, use "Other". Do NOT invent names.
 - subcategory: the SPECIFIC merchant or person name in the transaction.
 - confidence: 0.0 to 1.0.  (amount: negative = money out / expense)
 - needs_review: true when the transaction is genuinely ambiguous and a human should confirm —
@@ -160,6 +169,9 @@ needs_review, review_question.
 - review_question: if needs_review is true, a short, friendly question for the business owner
   that would resolve it (e.g. "Is the $2,080 payment to watson yu a subcontractor or your own
   draw?"). If needs_review is false, return an empty string "".
+
+Chart of accounts for the "{sector}" sector (pick category from the matching account_type):
+{format_for_prompt(sector)}
 
 Transactions:
 {lines}"""

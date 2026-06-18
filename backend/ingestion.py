@@ -17,8 +17,8 @@ from dateutil import parser as dateparser
 from sqlmodel import Session
 
 from ai import categorize_batch, map_columns
-from models import CategoryRule, Transaction
-from rules import load_rules, match_rule
+from models import CategoryRule, Company, Transaction
+from rules import amount_band_category, load_rules, match_rule
 
 
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
@@ -90,18 +90,27 @@ def ingest_csv(
             continue
         parsed.append((d, description, signed))
 
-    # 2) MOTOR DE REGLAS: lo que ya tiene regla (comercio conocido) se resuelve SIN IA.
-    #    Solo las filas que no matchean ninguna regla van al batch de la IA.
+    # 2) MOTOR DE REGLAS: lo que ya tiene regla (comercio conocido) o cae en una banda de monto
+    #    (super/gasolinera) se resuelve SIN IA. Solo lo que no matchea nada va al batch de la IA.
+    #    Precedencia: regla explícita de empresa → banda de monto → IA.
     rules: list[CategoryRule] = load_rules(session, company_id, sector) if categorize else []
+    company = session.get(Company, company_id) if categorize else None
+    super_thr = company.supermarket_threshold if company else None
+    gas_thr = company.gas_station_threshold if company else None
     rule_hits: dict[int, CategoryRule] = {}
+    band_hits: dict[int, tuple] = {}  # idx -> (account_type, category)
     ai_indices: list[int] = []
     if categorize:
-        for idx, (_, desc, _) in enumerate(parsed):
+        for idx, (_, desc, signed) in enumerate(parsed):
             rule = match_rule(rules, desc)
             if rule is not None:
                 rule_hits[idx] = rule
-            else:
-                ai_indices.append(idx)
+                continue
+            band = amount_band_category(desc, float(signed), super_thr, gas_thr)
+            if band is not None:
+                band_hits[idx] = band
+                continue
+            ai_indices.append(idx)
 
     # 3) Categorizar con la IA SOLO lo que no matcheó regla (batch, eficiente).
     ai_cats: dict[int, object] = {}
@@ -113,6 +122,7 @@ def ingest_csv(
     # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
     by_rule = 0
+    by_band = 0
     by_ai = 0
     preview: list[dict] = []
     for idx, (d, description, signed) in enumerate(parsed):
@@ -127,8 +137,20 @@ def ingest_csv(
             tx.needs_review = False
             tx.review_question = None
             tx.ai_categorized = False  # vino de una regla, no de la IA
+            tx.source = "rule"
             source = "rule"
             by_rule += 1
+        elif idx in band_hits:
+            at, cat = band_hits[idx]
+            tx.account_type = at
+            tx.category = cat
+            tx.confidence = 1.0
+            tx.needs_review = False
+            tx.review_question = None
+            tx.ai_categorized = False  # banda de monto determinista, no IA
+            tx.source = "rule"
+            source = "rule"
+            by_band += 1
         elif idx in ai_cats:
             cat = ai_cats[idx]
             tx.account_type = cat.account_type
@@ -138,6 +160,7 @@ def ingest_csv(
             tx.needs_review = cat.needs_review
             tx.review_question = cat.review_question or None
             tx.ai_categorized = True
+            tx.source = "ai"
             source = "ai"
             by_ai += 1
         if source is not None:
@@ -161,6 +184,7 @@ def ingest_csv(
         "inserted": inserted,
         "errors": errors,
         "by_rule": by_rule,
+        "by_band": by_band,
         "by_ai": by_ai,
         "dry_run": dry_run,
         "mapping": mapping.model_dump(),

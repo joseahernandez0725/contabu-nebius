@@ -21,6 +21,7 @@ export interface Transaction {
   needs_review: boolean;
   review_question: string | null;
   ai_categorized: boolean;
+  source: "rule" | "ai" | "manual" | null; // quién categorizó
 }
 
 export interface Company {

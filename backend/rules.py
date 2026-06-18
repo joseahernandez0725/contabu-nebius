@@ -12,11 +12,18 @@ a igualdad, gana la de `match_text` más específico (más largo).
 """
 
 import re
+from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
-from models import CategoryRule, RuleScope
+from merchants import GAS_STATIONS, SUPERMARKETS
+from models import AccountType, CategoryRule, RuleScope
+
+# Umbrales por defecto si la empresa no fijó los suyos (editables por empresa, ver Company).
+DEFAULT_SUPERMARKET_THRESHOLD = Decimal("50")
+DEFAULT_GAS_STATION_THRESHOLD = Decimal("75")
 
 
 def normalize(text: str) -> str:
@@ -70,3 +77,100 @@ def find_matching_rule(
 ) -> CategoryRule | None:
     """Conveniencia para un solo lookup: carga las reglas y matchea una descripción."""
     return match_rule(load_rules(session, company_id, sector), description)
+
+
+def classify_merchant(description: str) -> Optional[str]:
+    """¿La descripción es de una gasolinera o un supermercado? → "gas_station" | "supermarket" | None.
+
+    Se evalúa GASOLINERA primero (ej. "COSTCO GAS" es gasolinera, no supermercado)."""
+    norm = normalize(description)
+    if not norm:
+        return None
+    if any(normalize(m) in norm for m in GAS_STATIONS):
+        return "gas_station"
+    if any(normalize(m) in norm for m in SUPERMARKETS):
+        return "supermarket"
+    return None
+
+
+def amount_band_category(
+    description: str,
+    amount: float,
+    supermarket_threshold: Optional[Decimal] = None,
+    gas_station_threshold: Optional[Decimal] = None,
+) -> Optional[tuple[AccountType, str]]:
+    """Desambigua por MONTO en comercios mixtos (super/gasolinera). Determinista, antes de la IA.
+
+    Devuelve `(account_type, category)` o `None` si el comercio no es super/gasolinera.
+    `amount` puede venir con signo; se usa su magnitud.
+
+    --- MAPEO (centralizado aquí; ajustar cuando se defina el esquema final) ---
+    Supermercado:  < umbral → comida (Meals, OpEx) · ≥ umbral → personal (Owner Draw, NON_PL)
+    Gasolinera:    < umbral → maquinaria (Equipment Fuel, COGS) · ≥ umbral → vehículo (Vehicle Fuel, OpEx)
+    """
+    kind = classify_merchant(description)
+    if kind is None:
+        return None
+
+    magnitude = abs(Decimal(str(amount)))
+
+    if kind == "supermarket":
+        threshold = supermarket_threshold or DEFAULT_SUPERMARKET_THRESHOLD
+        if magnitude < threshold:
+            return (AccountType.OPERATING_EXPENSE, "Meals")
+        return (AccountType.NON_PL, "Owner Draw")
+
+    # gas_station
+    threshold = gas_station_threshold or DEFAULT_GAS_STATION_THRESHOLD
+    if magnitude < threshold:
+        return (AccountType.COGS, "Equipment Fuel")
+    return (AccountType.OPERATING_EXPENSE, "Vehicle Fuel")
+
+
+def upsert_company_rule(
+    session: Session,
+    company_id: int,
+    sector: str,
+    match_text: Optional[str],
+    account_type: Optional[AccountType],
+    category: Optional[str],
+) -> Optional[CategoryRule]:
+    """Crea o actualiza la regla COMPANY de un comercio (memoria del cliente).
+
+    **Idempotente:** si ya existe una regla COMPANY de esta empresa para el mismo comercio
+    (comparando normalizado), la **actualiza** en vez de duplicarla. Devuelve la regla, o `None`
+    si faltan datos para formar una regla útil (sin comercio / sin sección / sin categoría).
+
+    Se llama tras `clarify` (la IA re-categoriza) y tras una corrección manual (`PATCH`).
+    """
+    if not match_text or account_type is None or not category:
+        return None
+
+    norm = normalize(match_text)
+    if not norm:
+        return None
+
+    existing = session.exec(
+        select(CategoryRule).where(
+            (CategoryRule.scope == RuleScope.COMPANY)
+            & (CategoryRule.company_id == company_id)
+        )
+    ).all()
+    for rule in existing:
+        if normalize(rule.match_text) == norm:
+            rule.account_type = account_type
+            rule.category = category
+            rule.match_text = match_text  # refresca el texto visible (última versión)
+            session.add(rule)
+            return rule
+
+    rule = CategoryRule(
+        scope=RuleScope.COMPANY,
+        company_id=company_id,
+        sector=sector,
+        match_text=match_text,
+        account_type=account_type,
+        category=category,
+    )
+    session.add(rule)
+    return rule

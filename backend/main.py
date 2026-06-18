@@ -3,6 +3,7 @@ ContaBu — backend (FastAPI).
 Endpoints de la API: prueba (/api/hello) e ingestión de archivos bancarios.
 """
 
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
@@ -13,8 +14,9 @@ from sqlmodel import Session, select
 from ai import recategorize_with_answer
 from db import get_session
 from ingestion import ingest_csv
-from models import AccountType, CategoryRule, Company, RuleScope, Transaction
+from models import AccountType, Company, Transaction
 from reports import income_statement
+from rules import upsert_company_rule
 
 
 class TransactionUpdate(BaseModel):
@@ -28,6 +30,12 @@ class TransactionUpdate(BaseModel):
 class ClarifyPayload(BaseModel):
     """Respuesta del dueño en lenguaje simple ('¿qué fue / en qué consistió?')."""
     answer: str
+
+
+class CompanyThresholds(BaseModel):
+    """Umbrales editables por empresa para desambiguar por monto (super/gasolinera)."""
+    supermarket_threshold: Optional[Decimal] = None
+    gas_station_threshold: Optional[Decimal] = None
 
 # `app` es nuestra aplicación. uvicorn la "sirve" y queda esperando peticiones.
 app = FastAPI(title="ContaBu API")
@@ -79,6 +87,24 @@ def get_company(company_id: int, session: Session = Depends(get_session)):
     return company
 
 
+@app.patch("/api/companies/{company_id}/thresholds")
+def update_thresholds(
+    company_id: int,
+    payload: CompanyThresholds,
+    session: Session = Depends(get_session),
+):
+    """Edita los umbrales de monto (super/gasolinera) que usa la desambiguación por banda."""
+    company = session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="company not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(company, field, value)
+    session.add(company)
+    session.commit()
+    session.refresh(company)
+    return company
+
+
 @app.get("/api/companies/{company_id}/transactions")
 def list_transactions(company_id: int, session: Session = Depends(get_session)):
     """Lista las transacciones de una empresa (más recientes primero)."""
@@ -116,8 +142,18 @@ def update_transaction(
     tx = session.get(Transaction, transaction_id)
     if tx is None:
         raise HTTPException(status_code=404, detail="transaction not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    data = payload.model_dump(exclude_unset=True)
+    for field, value in data.items():
         setattr(tx, field, value)
+    # Si el usuario tocó la categorización: fuente = manual y se guarda como REGLA (memoria),
+    # igual que el flujo de "explicar". Así la próxima vez ese comercio se categoriza solo.
+    if any(k in data for k in ("account_type", "category", "subcategory")):
+        tx.source = "manual"
+        company = session.get(Company, tx.company_id)
+        upsert_company_rule(
+            session, tx.company_id, company.sector if company else "general",
+            tx.subcategory, tx.account_type, tx.category,
+        )
     session.add(tx)
     session.commit()
     session.refresh(tx)
@@ -152,18 +188,11 @@ def clarify_transaction(
     tx.needs_review = cat.needs_review
     tx.review_question = cat.review_question or None
     tx.ai_categorized = True
+    tx.source = "ai"  # re-categorizada por la IA a partir de la explicación del dueño
     session.add(tx)
 
-    # Memoria del cliente: regla de empresa para que la próxima vez se aplique sola.
-    if cat.subcategory:
-        session.add(CategoryRule(
-            scope=RuleScope.COMPANY,
-            company_id=tx.company_id,
-            sector=sector,
-            match_text=cat.subcategory,
-            account_type=cat.account_type,
-            category=cat.category,
-        ))
+    # Memoria del cliente: crea/actualiza la regla de empresa (idempotente, sin duplicar).
+    upsert_company_rule(session, tx.company_id, sector, cat.subcategory, cat.account_type, cat.category)
 
     session.commit()
     session.refresh(tx)
