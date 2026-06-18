@@ -10,11 +10,11 @@ import hi from "./locales/hi.json";
 
 // Idiomas soportados (Regla de Oro: UI en 5 idiomas).
 export const LANGS = [
-  { code: "en", label: "English" },
-  { code: "es", label: "Español" },
-  { code: "pt", label: "Português" },
-  { code: "ar", label: "العربية" },
-  { code: "hi", label: "हिन्दी" },
+  { code: "en", label: "English", short: "EN" },
+  { code: "es", label: "Español", short: "ES" },
+  { code: "pt", label: "Português", short: "PT" },
+  { code: "ar", label: "العربية", short: "AR" },
+  { code: "hi", label: "हिन्दी", short: "HI" },
 ];
 
 const RTL_LANGS = ["ar"]; // idiomas de derecha a izquierda

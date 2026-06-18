@@ -4,11 +4,12 @@ import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
+import Settings from "./components/Settings";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import { getCompany, getReviewTransactions } from "./api";
 import type { Company, Transaction } from "./types";
 
-type View = "dashboard" | "transactions" | "review" | "upload";
+type View = "dashboard" | "transactions" | "review" | "upload" | "settings";
 
 function Logo() {
   return (
@@ -23,7 +24,7 @@ function Logo() {
   );
 }
 
-const ICONS: Record<View, ReactNode> = {
+const ICONS: Partial<Record<View, ReactNode>> = {
   dashboard: (
     <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" />
@@ -78,6 +79,18 @@ function App() {
             <div className="text-xs text-slate-500 truncate">{company?.name ?? "…"}</div>
           </div>
           <LanguageSwitcher />
+          <button
+            onClick={() => setView("settings")}
+            aria-label={t("settings.title")}
+            className={`p-1.5 rounded-lg transition-colors ${
+              view === "settings" ? "text-brand-green" : "text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
         </div>
       </header>
 
@@ -90,6 +103,7 @@ function App() {
         {view === "upload" && (
           <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
         )}
+        {view === "settings" && <Settings company={company} onSaved={setCompany} />}
       </main>
 
       <nav className="fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-slate-200">

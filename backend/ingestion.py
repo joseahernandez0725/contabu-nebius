@@ -132,7 +132,7 @@ def ingest_csv(
             rule = rule_hits[idx]
             tx.account_type = rule.account_type
             tx.category = rule.category
-            tx.subcategory = rule.match_text  # el comercio/patrón que disparó la regla
+            tx.subcategory = rule.match_text.upper()  # el comercio/patrón que disparó la regla
             tx.confidence = 1.0
             tx.needs_review = False
             tx.review_question = None
@@ -155,7 +155,7 @@ def ingest_csv(
             cat = ai_cats[idx]
             tx.account_type = cat.account_type
             tx.category = cat.category
-            tx.subcategory = cat.subcategory
+            tx.subcategory = (cat.subcategory or "").upper() or None
             tx.confidence = cat.confidence
             tx.needs_review = cat.needs_review
             tx.review_question = cat.review_question or None

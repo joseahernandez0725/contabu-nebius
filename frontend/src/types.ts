@@ -29,6 +29,8 @@ export interface Company {
   name: string;
   sector: string;
   plan: string;
+  supermarket_threshold: string | null; // Decimal → string; null = usar default del sistema
+  gas_station_threshold: string | null;
   created_at: string;
 }
 

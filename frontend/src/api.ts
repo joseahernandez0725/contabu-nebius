@@ -11,9 +11,29 @@ export async function getCompany(): Promise<Company> {
   return res.json();
 }
 
+export async function updateThresholds(
+  payload: Partial<{ supermarket_threshold: number; gas_station_threshold: number }>,
+): Promise<Company> {
+  const res = await fetch(`${API}/api/companies/${COMPANY_ID}/thresholds`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("No se pudieron actualizar los umbrales");
+  return res.json();
+}
+
 export async function getTransactions(): Promise<Transaction[]> {
   const res = await fetch(`${API}/api/companies/${COMPANY_ID}/transactions`);
   if (!res.ok) throw new Error("No se pudieron cargar las transacciones");
+  return res.json();
+}
+
+// Plan de cuentas del sector: { account_type: [categorías] }.
+export type ChartOfAccounts = Record<string, string[]>;
+export async function getCategories(): Promise<ChartOfAccounts> {
+  const res = await fetch(`${API}/api/companies/${COMPANY_ID}/categories`);
+  if (!res.ok) throw new Error("No se pudieron cargar las categorías");
   return res.json();
 }
 

@@ -22,8 +22,10 @@ from merchants import GAS_STATIONS, SUPERMARKETS
 from models import AccountType, CategoryRule, RuleScope
 
 # Umbrales por defecto si la empresa no fijó los suyos (editables por empresa, ver Company).
+# Gasolinera $30: bajo eso suele ser combustible de equipos o compras pequeñas en la tienda;
+# por encima, llenar el tanque del vehículo (auto expense).
 DEFAULT_SUPERMARKET_THRESHOLD = Decimal("50")
-DEFAULT_GAS_STATION_THRESHOLD = Decimal("75")
+DEFAULT_GAS_STATION_THRESHOLD = Decimal("30")
 
 
 def normalize(text: str) -> str:
@@ -60,14 +62,24 @@ def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryR
     return usable
 
 
+def _phrase(text: str) -> str:
+    """Texto → PALABRAS en mayúsculas separadas por un solo espacio.
+    'HOME DEPOT #2745' → 'HOME DEPOT 2745'. Sirve para match por **límite de palabra**."""
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", text.upper())).strip()
+
+
 def match_rule(rules: list[CategoryRule], description: str) -> CategoryRule | None:
-    """Primera regla (de la lista ya ordenada por prioridad) cuyo `match_text` aparece
-    en la descripción normalizada. `None` si ninguna aplica."""
-    norm_desc = normalize(description)
-    if not norm_desc:
+    """Primera regla (de la lista ya ordenada por prioridad) cuyo `match_text` aparece como
+    **palabra/frase completa** en la descripción. `None` si ninguna aplica.
+
+    Match por límite de palabra (no subcadena suelta) → reglas **específicas, sin conflicto**:
+    "Shell" matchea "SHELL OIL 4471" pero NO "MICHELLE"; "Home Depot" matchea "HOME DEPOT 1234"."""
+    desc = f" {_phrase(description)} "
+    if desc == "  ":
         return None
     for rule in rules:
-        if normalize(rule.match_text) in norm_desc:
+        token = _phrase(rule.match_text)
+        if token and f" {token} " in desc:
             return rule
     return None
 
@@ -127,6 +139,42 @@ def amount_band_category(
     return (AccountType.OPERATING_EXPENSE, "Vehicle Fuel")
 
 
+# Palabras genéricas que no aportan especificidad (no deben quedar como regla por sí solas).
+_STOPWORDS = {
+    "THE", "AND", "INC", "LLC", "CO", "CORP", "LTD", "PAYMENT", "POS", "DEBIT", "CREDIT",
+    "PURCHASE", "ONLINE", "TRANSFER", "FROM", "TO", "OF", "FOR", "ORIG", "DESC", "ID", "CO",
+}
+
+
+def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
+    """Devuelve un `match_text` **específico**: una frase de ~2 palabras cuando sea posible,
+    para que el lookup no cree interferencias.
+
+    Prioriza el comercio (subcategory); si trae **una sola** palabra, intenta unirle una palabra
+    significativa contigua de la descripción → frase compuesta. Sin comercio: 2 palabras
+    significativas de la descripción. Devuelve MAYÚSCULAS (espejo de la subcategoría)."""
+    mwords = _phrase(merchant or "").split()
+    dwords = _phrase(description or "").split()
+
+    if len(mwords) >= 2:
+        return " ".join(mwords[:2])
+
+    if len(mwords) == 1:
+        w = mwords[0]
+        if w in dwords:
+            i = dwords.index(w)
+            for nxt in dwords[i + 1:]:
+                if not nxt.isdigit() and len(nxt) >= 2 and nxt not in _STOPWORDS:
+                    return f"{w} {nxt}"
+        return w  # comercio de una palabra sin vecino útil → se queda solo
+
+    # Sin comercio: primeras 2 palabras significativas de la descripción.
+    sig = [w for w in dwords if not w.isdigit() and len(w) >= 2 and w not in _STOPWORDS]
+    if len(sig) >= 2:
+        return " ".join(sig[:2])
+    return sig[0] if sig else (dwords[0] if dwords else "")
+
+
 def upsert_company_rule(
     session: Session,
     company_id: int,
@@ -134,20 +182,21 @@ def upsert_company_rule(
     match_text: Optional[str],
     account_type: Optional[AccountType],
     category: Optional[str],
+    description: Optional[str] = None,
 ) -> Optional[CategoryRule]:
     """Crea o actualiza la regla COMPANY de un comercio (memoria del cliente).
 
-    **Idempotente:** si ya existe una regla COMPANY de esta empresa para el mismo comercio
-    (comparando normalizado), la **actualiza** en vez de duplicarla. Devuelve la regla, o `None`
-    si faltan datos para formar una regla útil (sin comercio / sin sección / sin categoría).
+    El `match_text` se hace **específico** (frase compuesta de ~2 palabras vía `specific_phrase`)
+    para no crear interferencias. **Idempotente:** si ya existe una regla con la misma frase, la
+    actualiza en vez de duplicarla. Devuelve la regla o `None` si faltan datos.
 
     Se llama tras `clarify` (la IA re-categoriza) y tras una corrección manual (`PATCH`).
     """
-    if not match_text or account_type is None or not category:
+    if account_type is None or not category:
         return None
 
-    norm = normalize(match_text)
-    if not norm:
+    phrase = specific_phrase(description, match_text) if description is not None else _phrase(match_text or "")
+    if not phrase:
         return None
 
     existing = session.exec(
@@ -157,10 +206,10 @@ def upsert_company_rule(
         )
     ).all()
     for rule in existing:
-        if normalize(rule.match_text) == norm:
+        if _phrase(rule.match_text) == phrase:
             rule.account_type = account_type
             rule.category = category
-            rule.match_text = match_text  # refresca el texto visible (última versión)
+            rule.match_text = phrase
             session.add(rule)
             return rule
 
@@ -168,7 +217,7 @@ def upsert_company_rule(
         scope=RuleScope.COMPANY,
         company_id=company_id,
         sector=sector,
-        match_text=match_text,
+        match_text=phrase,
         account_type=account_type,
         category=category,
     )

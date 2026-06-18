@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from ai import recategorize_with_answer
+from categories import categories_for
 from db import get_session
 from ingestion import ingest_csv
 from models import AccountType, Company, Transaction
@@ -105,6 +106,16 @@ def update_thresholds(
     return company
 
 
+@app.get("/api/companies/{company_id}/categories")
+def get_categories(company_id: int, session: Session = Depends(get_session)):
+    """Plan de cuentas cerrado del sector de la empresa: {account_type: [categorías]}.
+    Lo usa el frontend para el selector de categoría (y derivar el account_type)."""
+    company = session.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="company not found")
+    return categories_for(company.sector)
+
+
 @app.get("/api/companies/{company_id}/transactions")
 def list_transactions(company_id: int, session: Session = Depends(get_session)):
     """Lista las transacciones de una empresa (más recientes primero)."""
@@ -143,6 +154,8 @@ def update_transaction(
     if tx is None:
         raise HTTPException(status_code=404, detail="transaction not found")
     data = payload.model_dump(exclude_unset=True)
+    if data.get("subcategory"):
+        data["subcategory"] = data["subcategory"].upper()  # subcategorías siempre en MAYÚSCULA
     for field, value in data.items():
         setattr(tx, field, value)
     # Si el usuario tocó la categorización: fuente = manual y se guarda como REGLA (memoria),
@@ -153,6 +166,7 @@ def update_transaction(
         upsert_company_rule(
             session, tx.company_id, company.sector if company else "general",
             tx.subcategory, tx.account_type, tx.category,
+            description=tx.description,
         )
     session.add(tx)
     session.commit()
@@ -183,7 +197,7 @@ def clarify_transaction(
 
     tx.account_type = cat.account_type
     tx.category = cat.category
-    tx.subcategory = cat.subcategory
+    tx.subcategory = (cat.subcategory or "").upper() or None
     tx.confidence = cat.confidence
     tx.needs_review = cat.needs_review
     tx.review_question = cat.review_question or None
@@ -191,8 +205,11 @@ def clarify_transaction(
     tx.source = "ai"  # re-categorizada por la IA a partir de la explicación del dueño
     session.add(tx)
 
-    # Memoria del cliente: crea/actualiza la regla de empresa (idempotente, sin duplicar).
-    upsert_company_rule(session, tx.company_id, sector, cat.subcategory, cat.account_type, cat.category)
+    # Memoria del cliente: crea/actualiza la regla de empresa (idempotente, frase específica).
+    upsert_company_rule(
+        session, tx.company_id, sector, cat.subcategory, cat.account_type, cat.category,
+        description=tx.description,
+    )
 
     session.commit()
     session.refresh(tx)

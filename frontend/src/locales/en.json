@@ -40,10 +40,21 @@
   "tx": {
     "title": "Activity",
     "total": "{{count}} total",
+    "search": "Search",
     "empty": "No transactions yet.",
     "emptyHint": "Upload a statement in the \"Upload\" tab.",
     "source": { "rule": "Rule", "ai": "AI", "manual": "You" },
-    "confidence": "AI confidence"
+    "confidence": "AI confidence",
+    "cols": { "date": "Date", "movement": "Movement", "category": "Category", "subcategory": "Subcategory", "amount": "Amount" },
+    "edit": {
+      "title": "Edit category",
+      "category": "Category",
+      "subcategory": "Subcategory (merchant)",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "learn": "We'll remember this merchant next time."
+    }
   },
   "upload": {
     "title": "Upload your bank statement",
@@ -53,5 +64,16 @@
     "done": "Done!",
     "result": "{{count}} transactions categorized",
     "seeSummary": "See my summary →"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Amounts that help auto-categorize your purchases.",
+    "gasLabel": "Gas station threshold",
+    "gasHelp": "Under ${{amount}}: equipment fuel. Over: vehicle fuel.",
+    "superLabel": "Supermarket threshold",
+    "superHelp": "Under ${{amount}}: a meal. Over: a personal expense.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Saved ✓"
   }
 }
