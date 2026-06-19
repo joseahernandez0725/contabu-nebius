@@ -26,6 +26,10 @@ from models import CategoryRule, Company, Transaction
 # fin de semana. Se retienen los movimientos recientes/pending hasta que liquidan (base caja).
 DEFAULT_SETTLEMENT_BUFFER_DAYS = 5
 
+# Tamaño de lote para categorizar con la IA: cada lote es UNA petición a Gemini. Se trocea para
+# que el JSON de salida no se trunque ni degrade en archivos grandes. Ver docs/FASE 6.E.md.
+AI_BATCH_SIZE = 50
+
 # Palabras que indican que un movimiento aún NO liquidó (no debe entrar a los libros todavía).
 _PENDING_WORDS = ("pending", "hold", "authoriz", "processing", "unposted", "in process")
 
@@ -217,12 +221,15 @@ def ingest_csv(
                 continue
             ai_indices.append(idx)
 
-    # 3) Categorizar con la IA SOLO lo que no matcheó regla (batch, eficiente).
+    # 3) Categorizar con la IA SOLO lo que no matcheó regla, en LOTES (chunks) de AI_BATCH_SIZE:
+    #    cada lote es una sola petición a Gemini → procesa archivos grandes sin truncar el JSON.
     ai_cats: dict[int, object] = {}
-    if ai_indices:
-        items = [{"description": parsed[i][1], "amount": float(parsed[i][2])} for i in ai_indices]
+    for start in range(0, len(ai_indices), AI_BATCH_SIZE):
+        chunk = ai_indices[start:start + AI_BATCH_SIZE]
+        items = [{"description": parsed[i][1], "amount": float(parsed[i][2])} for i in chunk]
         results = categorize_batch(items, sector)
-        ai_cats = {i: cat for i, cat in zip(ai_indices, results)}
+        for i, cat in zip(chunk, results):
+            ai_cats[i] = cat
 
     # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0

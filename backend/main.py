@@ -74,8 +74,10 @@ async def upload_transactions(
 ):
     """Sube un CSV bancario y dispara el pipeline (mapeo IA → parse → categoriza → guarda).
 
-    `limit` está fijo en dev para no agotar el rate limit del tier gratis; se quitará al
-    resolver el bulk asíncrono (ver FASE 5.md).
+    La IA categoriza en LOTES de 50 (cada lote = 1 petición a Gemini), así que el archivo se
+    importa completo. `limit=1000` es solo un **tope de seguridad** por subida en dev (evita
+    disparar la cuota gratis por accidente); el bulk asíncrono real queda para post-deploy
+    (deuda técnica #8).
     """
     company = session.get(Company, company_id)
     if company is None:
@@ -83,7 +85,7 @@ async def upload_transactions(
 
     content = await file.read()
     result = ingest_csv(
-        session, company_id, company.sector, content, limit=20
+        session, company_id, company.sector, content, limit=1000
     )
     return result
 
