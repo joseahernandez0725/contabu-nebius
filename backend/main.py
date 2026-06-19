@@ -55,11 +55,17 @@ class CompanyThresholds(BaseModel):
 # `app` es nuestra aplicación. uvicorn la "sirve" y queda esperando peticiones.
 app = FastAPI(title="ContaBu API")
 
-# CORS: permite que el frontend (que corre en otro puerto, el 5173)
-# pueda llamar a este backend (puerto 8000). Sin esto, el navegador lo bloquea.
+# CORS: orígenes desde los que el navegador puede llamar a este backend.
+# - localhost:5173 → desarrollo (Vite).
+# - *.web.app / *.firebaseapp.com → el frontend desplegado en Firebase Hosting.
+# (Cuando exista el dominio propio app.contabu.com, se agrega aquí.)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=[
+        "http://localhost:5173",
+        "https://contabu-prod.web.app",
+        "https://contabu-prod.firebaseapp.com",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
