@@ -1,5 +1,7 @@
 {
   "nav": { "dashboard": "Resumen", "transactions": "Movimientos", "upload": "Subir", "review": "Por revisar" },
+  "auth": { "error": "No se pudo iniciar sesión" },
+  "login": {"subtitle": "Tu contabilidad, simple", "google": "Continuar con Google", "or": "o", "email": "Correo", "password": "Contraseña", "signIn": "Entrar", "signUp": "Crear cuenta", "loading": "Un momento…", "noAccount": "¿No tienes cuenta?", "haveAccount": "¿Ya tienes cuenta?", "error": "No se pudo entrar. Revisa tus datos.", "signupError": "No se pudo crear la cuenta. El correo ya podría estar en uso.", "logout": "Salir"},
   "review": { "confirm": "Confirmar", "empty": "Nada por revisar", "emptyHint": "Cuando la IA dude de una transacción, aparecerá aquí.", "intro": "{{count}} transacciones necesitan tu confirmación.", "answerPlaceholder": "Cuéntanos en tus palabras (ej. \"subcontratista de plomería\", \"renta\")" },
   "dashboard": {
     "netIncomeLabel": "Utilidad neta del periodo",

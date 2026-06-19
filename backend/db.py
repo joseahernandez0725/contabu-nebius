@@ -21,8 +21,10 @@ if not DATABASE_URL:
     )
 
 # El engine es la conexión "raíz" a PostgreSQL.
-# echo=True imprime el SQL que se ejecuta (útil para aprender; se apagará en producción).
-engine = create_engine(DATABASE_URL, echo=True)
+# `echo` imprime el SQL ejecutado (útil para aprender). En producción debe ir APAGADO
+# (deuda técnica #10): se controla por entorno, default OFF. Para verlo en local: SQL_ECHO=true.
+SQL_ECHO = os.getenv("SQL_ECHO", "").lower() in {"1", "true", "yes"}
+engine = create_engine(DATABASE_URL, echo=SQL_ECHO)
 
 
 def get_session():

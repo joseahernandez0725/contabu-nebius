@@ -49,9 +49,24 @@ class AccountType(str, Enum):
                                               # dueño, capital de préstamo, pago de tarjeta…
 
 
+class User(SQLModel, table=True):
+    """Usuario autenticado (vía Firebase Auth). Es el dueño de una o varias `Company`.
+
+    `firebase_uid` es la identidad estable que emite Firebase; el backend la saca del ID token
+    verificado y nunca confía en datos de la URL para saber quién es (multi-tenant, deuda #2).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    firebase_uid: str = Field(index=True, unique=True)
+    email: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class Company(SQLModel, table=True):
     """La empresa del usuario (un negocio inmigrante)."""
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Dueño de la empresa (multi-tenant). Nullable por compatibilidad con datos sembrados
+    # antes de la auth; al primer login se crea el User y se enlaza su empresa.
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     name: str
     sector: str  # construcción / limpieza / restaurante…
     plan: Plan = Field(default=Plan.FREE)

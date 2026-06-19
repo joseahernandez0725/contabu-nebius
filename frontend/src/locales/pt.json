@@ -1,5 +1,7 @@
 {
   "nav": { "dashboard": "Resumo", "transactions": "Movimentos", "upload": "Enviar", "review": "Revisar" },
+  "auth": { "error": "Falha ao entrar" },
+  "login": {"subtitle": "Sua contabilidade, simples", "google": "Continuar com o Google", "or": "ou", "email": "E-mail", "password": "Senha", "signIn": "Entrar", "signUp": "Criar conta", "loading": "Um momento…", "noAccount": "Não tem conta?", "haveAccount": "Já tem conta?", "error": "Não foi possível entrar. Verifique seus dados.", "signupError": "Não foi possível criar a conta. O e-mail pode já estar em uso.", "logout": "Sair"},
   "review": { "confirm": "Confirmar", "empty": "Nada para revisar", "emptyHint": "Quando a IA tiver dúvida sobre uma transação, ela aparecerá aqui.", "intro": "{{count}} transações precisam da sua confirmação.", "answerPlaceholder": "Conte com suas palavras (ex. \"subempreiteiro\", \"aluguel\")" },
   "dashboard": {
     "netIncomeLabel": "Lucro líquido do período",

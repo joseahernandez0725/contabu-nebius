@@ -1,6 +1,10 @@
 """
 ContaBu — backend (FastAPI).
-Endpoints de la API: prueba (/api/hello) e ingestión de archivos bancarios.
+Endpoints de la API: prueba (/api/hello), identidad (/api/me) e ingestión de archivos bancarios.
+
+Multi-tenant (deuda #2 🔴): la identidad sale SIEMPRE del usuario autenticado (token Firebase,
+ver `auth.py`); los endpoints validan que la empresa/transacción pertenezca al usuario antes de
+tocarla. El `company_id` de la URL ya NO se confía a ciegas.
 """
 
 from decimal import Decimal
@@ -12,10 +16,11 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from ai import recategorize_with_answer
+from auth import current_user, owned_company, owned_transaction
 from categories import categories_for
 from db import get_session
 from ingestion import ingest_csv, mask_account
-from models import AccountType, Company, Transaction
+from models import AccountType, Company, Transaction, User
 from reports import income_statement
 from rules import upsert_company_rule
 
@@ -66,10 +71,29 @@ def hello():
     return {"message": "¡Hola desde el backend de ContaBu! 🚀"}
 
 
+@app.get("/api/me")
+def get_me(
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Devuelve el usuario autenticado y SUS empresas. En el primer login (sin empresa) crea una
+    empresa por defecto para que el flujo funcione de inmediato. El frontend usa esto en vez de
+    un `company_id` fijo."""
+    companies = session.exec(select(Company).where(Company.user_id == user.id)).all()
+    if not companies:
+        company = Company(name="My Business", sector="construction", user_id=user.id)
+        session.add(company)
+        session.commit()
+        session.refresh(company)
+        companies = [company]
+    return {"user": user, "companies": companies}
+
+
 @app.post("/api/companies/{company_id}/transactions/upload")
 async def upload_transactions(
     company_id: int,
     file: UploadFile,
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """Sube un CSV bancario y dispara el pipeline (mapeo IA → parse → categoriza → guarda).
@@ -79,10 +103,7 @@ async def upload_transactions(
     disparar la cuota gratis por accidente); el bulk asíncrono real queda para post-deploy
     (deuda técnica #8).
     """
-    company = session.get(Company, company_id)
-    if company is None:
-        raise HTTPException(status_code=404, detail="company not found")
-
+    company = owned_company(company_id, user, session)
     content = await file.read()
     result = ingest_csv(
         session, company_id, company.sector, content, limit=1000
@@ -94,10 +115,12 @@ async def upload_transactions(
 def set_transactions_account(
     company_id: int,
     payload: SetAccountPayload,
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """Asigna la cuenta bancaria (que indicó el usuario) a varias transacciones de la empresa.
     Se guarda enmascarada a los últimos 4 dígitos. Útil cuando la IA no la detectó del archivo."""
+    owned_company(company_id, user, session)
     masked = mask_account(payload.account)
     if masked is None:
         raise HTTPException(status_code=422, detail="account must contain at least 4 digits")
@@ -116,24 +139,24 @@ def set_transactions_account(
 
 
 @app.get("/api/companies/{company_id}")
-def get_company(company_id: int, session: Session = Depends(get_session)):
+def get_company(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
     """Devuelve la empresa (para el nombre en el header, etc.)."""
-    company = session.get(Company, company_id)
-    if company is None:
-        raise HTTPException(status_code=404, detail="company not found")
-    return company
+    return owned_company(company_id, user, session)
 
 
 @app.patch("/api/companies/{company_id}/thresholds")
 def update_thresholds(
     company_id: int,
     payload: CompanyThresholds,
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """Edita los umbrales de monto (super/gasolinera) que usa la desambiguación por banda."""
-    company = session.get(Company, company_id)
-    if company is None:
-        raise HTTPException(status_code=404, detail="company not found")
+    company = owned_company(company_id, user, session)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(company, field, value)
     session.add(company)
@@ -143,18 +166,25 @@ def update_thresholds(
 
 
 @app.get("/api/companies/{company_id}/categories")
-def get_categories(company_id: int, session: Session = Depends(get_session)):
+def get_categories(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
     """Plan de cuentas cerrado del sector de la empresa: {account_type: [categorías]}.
     Lo usa el frontend para el selector de categoría (y derivar el account_type)."""
-    company = session.get(Company, company_id)
-    if company is None:
-        raise HTTPException(status_code=404, detail="company not found")
+    company = owned_company(company_id, user, session)
     return categories_for(company.sector)
 
 
 @app.get("/api/companies/{company_id}/transactions")
-def list_transactions(company_id: int, session: Session = Depends(get_session)):
+def list_transactions(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
     """Lista las transacciones de una empresa (más recientes primero)."""
+    owned_company(company_id, user, session)
     return session.exec(
         select(Transaction)
         .where(Transaction.company_id == company_id)
@@ -163,14 +193,24 @@ def list_transactions(company_id: int, session: Session = Depends(get_session)):
 
 
 @app.get("/api/companies/{company_id}/income-statement")
-def get_income_statement(company_id: int, session: Session = Depends(get_session)):
+def get_income_statement(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
     """Estado de resultados (P&L) calculado en SQL. Ver reports.income_statement."""
+    owned_company(company_id, user, session)
     return income_statement(session, company_id)
 
 
 @app.get("/api/companies/{company_id}/transactions/review")
-def list_review(company_id: int, session: Session = Depends(get_session)):
+def list_review(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
     """Transacciones que la IA marcó como dudosas (necesitan confirmación humana)."""
+    owned_company(company_id, user, session)
     return session.exec(
         select(Transaction)
         .where(Transaction.company_id == company_id)
@@ -183,12 +223,11 @@ def list_review(company_id: int, session: Session = Depends(get_session)):
 def update_transaction(
     transaction_id: int,
     payload: TransactionUpdate,
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """Actualiza una transacción (confirmar o corregir una revisión)."""
-    tx = session.get(Transaction, transaction_id)
-    if tx is None:
-        raise HTTPException(status_code=404, detail="transaction not found")
+    tx = owned_transaction(transaction_id, user, session)
     data = payload.model_dump(exclude_unset=True)
     if data.get("subcategory"):
         data["subcategory"] = data["subcategory"].upper()  # subcategorías siempre en MAYÚSCULA
@@ -214,13 +253,12 @@ def update_transaction(
 def clarify_transaction(
     transaction_id: int,
     payload: ClarifyPayload,
+    user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """El dueño explica en lenguaje simple qué fue el movimiento → la IA re-categoriza
     con esa info y se guarda una REGLA de empresa (memoria) para la próxima vez."""
-    tx = session.get(Transaction, transaction_id)
-    if tx is None:
-        raise HTTPException(status_code=404, detail="transaction not found")
+    tx = owned_transaction(transaction_id, user, session)
 
     company = session.get(Company, tx.company_id)
     sector = company.sector if company else "general"

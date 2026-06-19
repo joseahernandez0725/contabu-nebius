@@ -1,0 +1,8 @@
+# No copiar a la imagen: entorno local, secretos y basura.
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+*.csv
+.pytest_cache/

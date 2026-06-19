@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { onAuthStateChanged, signOut, type User as FirebaseUser } from "firebase/auth";
 import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Settings from "./components/Settings";
+import Login from "./components/Login";
 import LanguageSwitcher from "./components/LanguageSwitcher";
-import { getCompany, getReviewTransactions } from "./api";
+import { auth } from "./firebase";
+import { getMe, getReviewTransactions } from "./api";
 import type { Company, Transaction } from "./types";
 
 type View = "dashboard" | "transactions" | "review" | "upload" | "settings";
@@ -53,18 +56,44 @@ function App() {
   const { t } = useTranslation();
   const [view, setView] = useState<View>("dashboard");
   const [company, setCompany] = useState<Company | null>(null);
+  const [authError, setAuthError] = useState(false);
   const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
-
-  useEffect(() => {
-    getCompany().then(setCompany).catch(() => setCompany(null));
-  }, []);
+  // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
+  const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(undefined);
 
   const reloadReview = useCallback(() => {
     getReviewTransactions().then(setReviewTxs).catch(() => setReviewTxs([]));
   }, []);
-  useEffect(() => { reloadReview(); }, [reloadReview]);
+
+  // Observa el login de Firebase. Al cerrar sesión, limpia el estado de la empresa.
+  useEffect(() => {
+    return onAuthStateChanged(auth, (u) => {
+      setFbUser(u);
+      if (!u) { setCompany(null); setReviewTxs([]); }
+    });
+  }, []);
+
+  // Con sesión, inicia la app (getMe fija la empresa activa) y carga las revisiones.
+  useEffect(() => {
+    if (!fbUser) return;
+    setAuthError(false);
+    getMe()
+      .then((c) => { setCompany(c); reloadReview(); })
+      .catch(() => setAuthError(true));
+  }, [fbUser, reloadReview]);
 
   const views: View[] = ["dashboard", "transactions", "review", "upload"];
+
+  // Verificando sesión de Firebase.
+  if (fbUser === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <span className="loading loading-spinner loading-lg text-brand-green" />
+      </div>
+    );
+  }
+  // Sin sesión → pantalla de acceso.
+  if (fbUser === null) return <Login />;
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
@@ -91,19 +120,41 @@ function App() {
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </button>
+          <button
+            onClick={() => signOut(auth)}
+            aria-label={t("login.logout")}
+            title={t("login.logout")}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 transition-colors"
+          >
+            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" />
+            </svg>
+          </button>
         </div>
       </header>
 
       <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-5 pb-24">
-        {view === "dashboard" && (
-          <Dashboard onUpload={() => setView("upload")} onSeeAll={() => setView("transactions")} />
+        {!company ? (
+          <div className="flex justify-center py-16">
+            {authError ? (
+              <span className="text-sm text-rose-600">{t("auth.error")}</span>
+            ) : (
+              <span className="loading loading-spinner loading-lg text-brand-green" />
+            )}
+          </div>
+        ) : (
+          <>
+            {view === "dashboard" && (
+              <Dashboard onUpload={() => setView("upload")} onSeeAll={() => setView("transactions")} />
+            )}
+            {view === "transactions" && <Transactions />}
+            {view === "review" && <Review items={reviewTxs} reload={reloadReview} />}
+            {view === "upload" && (
+              <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
+            )}
+            {view === "settings" && <Settings company={company} onSaved={setCompany} />}
+          </>
         )}
-        {view === "transactions" && <Transactions />}
-        {view === "review" && <Review items={reviewTxs} reload={reloadReview} />}
-        {view === "upload" && (
-          <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
-        )}
-        {view === "settings" && <Settings company={company} onSaved={setCompany} />}
       </main>
 
       <nav className="fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-slate-200">

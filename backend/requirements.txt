@@ -9,6 +9,8 @@ click==8.4.1
 cryptography==49.0.0
 distro==1.9.0
 fastapi==0.137.0
+# Auth (FASE 7): verificación del ID token. Sin pin exacto aún; se fijará con pip freeze al instalarlo.
+firebase-admin
 google-auth==2.54.0
 google-genai==2.8.0
 greenlet==3.5.1

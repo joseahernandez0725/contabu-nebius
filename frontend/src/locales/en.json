@@ -1,5 +1,7 @@
 {
   "nav": { "dashboard": "Summary", "transactions": "Activity", "upload": "Upload", "review": "Review" },
+  "auth": { "error": "Sign-in failed" },
+  "login": {"subtitle": "Bookkeeping made simple", "google": "Continue with Google", "or": "or", "email": "Email", "password": "Password", "signIn": "Sign in", "signUp": "Sign up", "loading": "Please wait…", "noAccount": "Don't have an account?", "haveAccount": "Already have an account?", "error": "Couldn't sign in. Check your details.", "signupError": "Couldn't sign up. The email may already be in use.", "logout": "Sign out"},
   "review": { "confirm": "Confirm", "empty": "Nothing to review", "emptyHint": "When the AI is unsure about a transaction, it appears here.", "intro": "{{count}} transactions need your confirmation.", "answerPlaceholder": "Tell us in your own words (e.g. \"plumbing subcontractor\", \"rent\")" },
   "dashboard": {
     "netIncomeLabel": "Net income this period",
