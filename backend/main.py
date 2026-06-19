@@ -7,6 +7,7 @@ ver `auth.py`); los endpoints validan que la empresa/transacción pertenezca al 
 tocarla. El `company_id` de la URL ya NO se confía a ciegas.
 """
 
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -35,6 +36,13 @@ class TransactionUpdate(BaseModel):
 
 class ClarifyPayload(BaseModel):
     """Respuesta del dueño en lenguaje simple ('¿qué fue / en qué consistió?')."""
+    answer: str
+
+
+class ClarifyGroupPayload(BaseModel):
+    """Una sola explicación del dueño que aplica a VARIAS transacciones de la misma contraparte
+    (p. ej. la renta mensual a WATSON YU): una pregunta → categoriza todas de una vez."""
+    transaction_ids: list[int]
     answer: str
 
 
@@ -201,12 +209,14 @@ def list_transactions(
 @app.get("/api/companies/{company_id}/income-statement")
 def get_income_statement(
     company_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Estado de resultados (P&L) calculado en SQL. Ver reports.income_statement."""
+    """Estado de resultados (P&L) calculado en SQL, opcional por rango `start`/`end` (YYYY-MM-DD)."""
     owned_company(company_id, user, session)
-    return income_statement(session, company_id)
+    return income_statement(session, company_id, start, end)
 
 
 @app.get("/api/companies/{company_id}/transactions/review")
@@ -294,3 +304,46 @@ def clarify_transaction(
     session.commit()
     session.refresh(tx)
     return tx
+
+
+@app.post("/api/transactions/clarify-group")
+def clarify_group(
+    payload: ClarifyGroupPayload,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """El dueño explica UNA vez y se categorizan TODAS las transacciones de la misma contraparte
+    (una sola llamada a la IA con un representante; el resultado se aplica al grupo). Evita repetir
+    la misma pregunta por cada movimiento (p. ej. la renta mensual)."""
+    if not payload.transaction_ids:
+        raise HTTPException(status_code=422, detail="no transactions")
+    txs = [owned_transaction(tid, user, session) for tid in payload.transaction_ids]
+    rep = txs[0]  # representante: misma contraparte → misma categoría
+
+    company = session.get(Company, rep.company_id)
+    sector = company.sector if company else "general"
+    income = rep.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
+    signed = float(rep.amount) if income else -float(rep.amount)
+
+    cat = recategorize_with_answer(rep.description, signed, sector, payload.answer)
+    sub = (cat.subcategory or "").upper() or None
+
+    for tx in txs:
+        tx.account_type = cat.account_type
+        tx.category = cat.category
+        tx.subcategory = sub
+        tx.confidence = cat.confidence
+        tx.needs_review = cat.needs_review
+        tx.review_question = cat.review_question or None
+        tx.ai_categorized = True
+        tx.source = "ai"
+        session.add(tx)
+
+    # Una sola regla de empresa para la contraparte (memoria).
+    upsert_company_rule(
+        session, rep.company_id, sector, cat.subcategory, cat.account_type, cat.category,
+        description=rep.description,
+    )
+
+    session.commit()
+    return {"updated": len(txs)}

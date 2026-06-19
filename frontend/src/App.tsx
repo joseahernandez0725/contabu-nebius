@@ -145,7 +145,11 @@ function App() {
         ) : (
           <>
             {view === "dashboard" && (
-              <Dashboard onUpload={() => setView("upload")} onSeeAll={() => setView("transactions")} />
+              <Dashboard
+                companyName={company.name}
+                onUpload={() => setView("upload")}
+                onSeeAll={() => setView("transactions")}
+              />
             )}
             {view === "transactions" && <Transactions />}
             {view === "review" && <Review items={reviewTxs} reload={reloadReview} />}

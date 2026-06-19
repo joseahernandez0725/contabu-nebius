@@ -2,8 +2,11 @@
   "nav": { "dashboard": "Resumo", "transactions": "Movimentos", "upload": "Enviar", "review": "Revisar" },
   "auth": { "error": "Falha ao entrar" },
   "login": {"subtitle": "Sua contabilidade, simples", "google": "Continuar com o Google", "or": "ou", "email": "E-mail", "password": "Senha", "signIn": "Entrar", "signUp": "Criar conta", "loading": "Um momento…", "noAccount": "Não tem conta?", "haveAccount": "Já tem conta?", "error": "Não foi possível entrar. Verifique seus dados.", "signupError": "Não foi possível criar a conta. O e-mail pode já estar em uso.", "logout": "Sair"},
-  "review": { "confirm": "Confirmar", "empty": "Nada para revisar", "emptyHint": "Quando a IA tiver dúvida sobre uma transação, ela aparecerá aqui.", "intro": "{{count}} transações precisam da sua confirmação.", "answerPlaceholder": "Conte com suas palavras (ex. \"subempreiteiro\", \"aluguel\")" },
+  "review": { "count": "{{count}} movimentos", "q": {"singleIn": "{{name}} te pagou {{amount}} em {{date}}. A que se refere?", "singleOut": "Você pagou {{amount}} a {{name}} em {{date}}. A que se refere?", "groupIn": "{{name}} te pagou {{count}} vezes ({{amount}} no total, {{from}}–{{to}}). A que se referem?", "groupOut": "{{count}} pagamentos a {{name}} ({{amount}} no total, {{from}}–{{to}}). A que se referem?"}, "confirm": "Confirmar", "empty": "Nada para revisar", "emptyHint": "Quando a IA tiver dúvida sobre uma transação, ela aparecerá aqui.", "intro": "{{count}} transações precisam da sua confirmação.", "answerPlaceholder": "Conte com suas palavras (ex. \"subempreiteiro\", \"aluguel\")" },
   "dashboard": {
+    "exportPdf": "Exportar P&L (PDF)",
+    "period": "Período",
+    "allTime": "Tudo",
     "netIncomeLabel": "Lucro líquido do período",
     "profitPositive": "Seu negócio está lucrando 🎉",
     "profitNegative": "Seu negócio teve prejuízo neste período",

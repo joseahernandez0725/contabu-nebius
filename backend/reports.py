@@ -8,7 +8,9 @@ transacciones ya categorizadas (account_type).
 Convención: `amount` es magnitud positiva; el signo lo decide account_type.
 """
 
+from datetime import date
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import func
 from sqlmodel import Session, select
@@ -19,19 +21,33 @@ from models import AccountType, Company, Transaction
 ZERO = Decimal("0.00")
 
 
-def _section_totals(session: Session, company_id: int) -> dict[AccountType, Decimal]:
-    """SUM(amount) agrupado por account_type (esto lo calcula SQL)."""
+def _section_totals(
+    session: Session,
+    company_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> dict[AccountType, Decimal]:
+    """SUM(amount) agrupado por account_type (esto lo calcula SQL), opcional por rango de fechas."""
     stmt = (
         select(Transaction.account_type, func.sum(Transaction.amount))
         .where(Transaction.company_id == company_id)
         .group_by(Transaction.account_type)
     )
+    if start is not None:
+        stmt = stmt.where(Transaction.date >= start)
+    if end is not None:
+        stmt = stmt.where(Transaction.date <= end)
     return {at: total for at, total in session.exec(stmt).all() if at is not None}
 
 
-def income_statement(session: Session, company_id: int) -> dict[str, Decimal]:
-    """Construye el P&L con la aritmética estándar. NON_PL se ignora."""
-    t = _section_totals(session, company_id)
+def income_statement(
+    session: Session,
+    company_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> dict[str, Decimal]:
+    """Construye el P&L con la aritmética estándar. NON_PL se ignora. Opcional: rango de fechas."""
+    t = _section_totals(session, company_id, start, end)
 
     revenue = t.get(AccountType.REVENUE, ZERO)
     cogs = t.get(AccountType.COGS, ZERO)

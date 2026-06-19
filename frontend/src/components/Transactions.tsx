@@ -128,9 +128,6 @@ export default function Transactions() {
                 <button onClick={() => toggleSort("date")} className="hover:text-slate-600">{t("tx.cols.date")}{arrow("date")}</button>
               </th>
               <th className="px-3 py-2 font-medium text-start">{t("tx.cols.movement")}</th>
-              {accounts.length > 0 && (
-                <th className="px-2 py-2 font-medium text-start">{t("tx.cols.account")}</th>
-              )}
               <th className="px-2 py-2 font-medium text-start">
                 <button onClick={() => toggleSort("category")} className="hover:text-slate-600">{t("tx.cols.category")}{arrow("category")}</button>
               </th>
@@ -138,28 +135,31 @@ export default function Transactions() {
                 <button onClick={() => toggleSort("subcategory")} className="hover:text-slate-600">{t("tx.cols.subcategory")}{arrow("subcategory")}</button>
               </th>
               <th className="px-3 py-2 font-medium text-end">{t("tx.cols.amount")}</th>
+              {accounts.length > 0 && (
+                <th className="px-2 py-2 font-medium text-start">{t("tx.cols.account")}</th>
+              )}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {visible.map((tx) => {
-              const lowConfidence = tx.confidence != null && tx.confidence < 0.9;
+              const conf = tx.confidence;
+              const lowConfidence = conf != null && conf < 0.9;
+              // Cuanto MENOR la confianza, MÁS intenso el rojo (de 0.9 tenue a ≤0.3 fuerte).
+              const redAlpha =
+                conf != null && conf < 0.9 ? 0.06 + Math.min(1, (0.9 - conf) / 0.6) * 0.34 : 0;
               return (
                 <tr
                   key={tx.id}
                   onClick={() => setEditing(tx)}
+                  style={lowConfidence ? { backgroundColor: `rgba(244, 63, 94, ${redAlpha.toFixed(2)})` } : undefined}
                   className={`cursor-pointer ${
-                    lowConfidence ? "bg-rose-50 hover:bg-rose-100" : "hover:bg-slate-50 active:bg-slate-100"
+                    lowConfidence ? "hover:brightness-95" : "hover:bg-slate-50 active:bg-slate-100"
                   }`}
                 >
                   <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap tabular-nums">{fmtDate(tx.date)}</td>
                   <td className="px-3 py-2.5 text-slate-500 max-w-[6.5rem] truncate" title={tx.description}>
                     {tx.description}
                   </td>
-                  {accounts.length > 0 && (
-                    <td className="px-2 py-2.5 text-slate-500 max-w-[7rem] truncate" title={tx.bank_account ?? undefined}>
-                      {tx.bank_account ?? "—"}
-                    </td>
-                  )}
                   <td className="px-2 py-2.5 text-slate-800 whitespace-nowrap">
                     {tx.category ?? "—"}
                     {tx.confidence != null && (
@@ -172,6 +172,11 @@ export default function Transactions() {
                   <td className="px-3 py-2.5 text-end tabular-nums font-medium text-slate-700 whitespace-nowrap">
                     {money(Number(tx.amount))}
                   </td>
+                  {accounts.length > 0 && (
+                    <td className="px-2 py-2.5 text-slate-500 max-w-[7rem] truncate" title={tx.bank_account ?? undefined}>
+                      {tx.bank_account ?? "—"}
+                    </td>
+                  )}
                 </tr>
               );
             })}

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getIncomeStatement, getTransactions, money } from "../api";
 import { KPI, SECTION_LABEL } from "../accounting";
+import { exportIncomeStatementPdf } from "../pdf";
 import type { IncomeStatement as IS, Transaction } from "../types";
 import IncomeStatementCard from "./IncomeStatement";
 
@@ -32,19 +33,27 @@ function BreakdownBar({ label, value, total, color }: {
   );
 }
 
-export default function Dashboard({ onUpload, onSeeAll }: {
-  onUpload: () => void; onSeeAll: () => void;
+export default function Dashboard({ onUpload, onSeeAll, companyName }: {
+  onUpload: () => void; onSeeAll: () => void; companyName: string;
 }) {
   const { t } = useTranslation();
   const [is, setIs] = useState<IS | null>(null);
   const [txs, setTxs] = useState<Transaction[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
 
+  // Las transacciones se cargan una vez (para el empty state y los recientes).
   useEffect(() => {
-    Promise.all([getIncomeStatement(), getTransactions()])
-      .then(([isData, txData]) => { setIs(isData); setTxs(txData); })
-      .catch((e) => setError(e instanceof Error ? e.message : "Error"));
+    getTransactions().then(setTxs).catch((e) => setError(e instanceof Error ? e.message : "Error"));
   }, []);
+
+  // El P&L se recalcula cuando cambia el rango de fechas (no se resetea a null → no parpadea).
+  useEffect(() => {
+    getIncomeStatement(start || undefined, end || undefined)
+      .then(setIs)
+      .catch((e) => setError(e instanceof Error ? e.message : "Error"));
+  }, [start, end]);
 
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!is || !txs)
@@ -83,6 +92,34 @@ export default function Dashboard({ onUpload, onSeeAll }: {
 
   return (
     <div className="space-y-4">
+      {/* Filtro por rango de fechas (acota el P&L) */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex items-center gap-2 text-sm flex-wrap">
+        <span className="text-slate-500 shrink-0">{t("dashboard.period")}</span>
+        <input
+          type="date"
+          value={start}
+          max={end || undefined}
+          onChange={(e) => setStart(e.target.value)}
+          className="rounded-lg border border-slate-200 px-2 py-1 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+        />
+        <span className="text-slate-400">–</span>
+        <input
+          type="date"
+          value={end}
+          min={start || undefined}
+          onChange={(e) => setEnd(e.target.value)}
+          className="rounded-lg border border-slate-200 px-2 py-1 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+        />
+        {(start || end) && (
+          <button
+            onClick={() => { setStart(""); setEnd(""); }}
+            className="ms-auto text-brand-green font-medium hover:underline"
+          >
+            {t("dashboard.allTime")}
+          </button>
+        )}
+      </div>
+
       {/* Héroe */}
       <div
         className="text-white rounded-3xl shadow-md p-6"
@@ -111,6 +148,17 @@ export default function Dashboard({ onUpload, onSeeAll }: {
 
       {/* Estado de resultados */}
       <IncomeStatementCard data={is} />
+
+      {/* Exportar el P&L a PDF (respeta el rango de fechas seleccionado) */}
+      <button
+        onClick={() => exportIncomeStatementPdf(companyName, is, start || undefined, end || undefined)}
+        className="w-full flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white text-slate-700 font-medium py-3 hover:bg-slate-50 transition-colors"
+      >
+        <svg viewBox="0 0 24 24" className="size-5 text-brand-green" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M12 18v-6M9 15l3 3 3-3" />
+        </svg>
+        {t("dashboard.exportPdf")}
+      </button>
 
       {/* Movimientos recientes */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">

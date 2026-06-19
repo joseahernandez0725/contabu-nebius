@@ -71,8 +71,13 @@ export async function getCategories(): Promise<ChartOfAccounts> {
   return res.json();
 }
 
-export async function getIncomeStatement(): Promise<IncomeStatement> {
-  const res = await fetch(`${API}/api/companies/${cid()}/income-statement`, { headers: await authHeaders() });
+// P&L, opcionalmente acotado por rango de fechas (YYYY-MM-DD).
+export async function getIncomeStatement(start?: string, end?: string): Promise<IncomeStatement> {
+  const q = new URLSearchParams();
+  if (start) q.set("start", start);
+  if (end) q.set("end", end);
+  const qs = q.toString() ? `?${q.toString()}` : "";
+  const res = await fetch(`${API}/api/companies/${cid()}/income-statement${qs}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error("No se pudo cargar el estado de resultados");
   return res.json();
 }
@@ -101,6 +106,17 @@ export async function clarifyTransaction(id: number, answer: string): Promise<Tr
     method: "POST",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },
     body: JSON.stringify({ answer }),
+  });
+  if (!res.ok) throw new Error("No se pudo procesar la respuesta");
+  return res.json();
+}
+
+// Una explicación que aplica a VARIAS transacciones de la misma contraparte (renta mensual, etc.).
+export async function clarifyGroup(transactionIds: number[], answer: string): Promise<{ updated: number }> {
+  const res = await fetch(`${API}/api/transactions/clarify-group`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_ids: transactionIds, answer }),
   });
   if (!res.ok) throw new Error("No se pudo procesar la respuesta");
   return res.json();
