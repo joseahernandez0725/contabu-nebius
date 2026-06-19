@@ -20,6 +20,7 @@ export default function Transactions() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [search, setSearch] = useState("");
+  const [account, setAccount] = useState<string>(""); // "" = todas las cuentas
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
@@ -37,14 +38,23 @@ export default function Transactions() {
     return m;
   }, [chart]);
 
+  // Cuentas bancarias distintas presentes en las transacciones (para el filtro).
+  const accounts = useMemo(() => {
+    if (!txs) return [];
+    return [...new Set(txs.map((tx) => tx.bank_account).filter((a): a is string => !!a))].sort();
+  }, [txs]);
+
   const visible = useMemo(() => {
     if (!txs) return [];
     const q = search.trim().toLowerCase();
-    const filtered = q
-      ? txs.filter((tx) =>
-          [tx.description, tx.category, tx.subcategory].some((f) => (f ?? "").toLowerCase().includes(q)),
-        )
-      : txs;
+    const filtered = txs.filter((tx) => {
+      if (account && tx.bank_account !== account) return false;
+      if (q)
+        return [tx.description, tx.category, tx.subcategory, tx.bank_account].some((f) =>
+          (f ?? "").toLowerCase().includes(q),
+        );
+      return true;
+    });
     const key = (tx: Transaction) =>
       sortKey === "date" ? tx.date : sortKey === "category" ? tx.category ?? "" : tx.subcategory ?? "";
     const sorted = [...filtered].sort((a, b) => {
@@ -54,7 +64,7 @@ export default function Transactions() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return sorted;
-  }, [txs, search, sortKey, sortDir]);
+  }, [txs, search, account, sortKey, sortDir]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -83,9 +93,21 @@ export default function Transactions() {
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-      <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3">
+      <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3 flex-wrap">
         <h2 className="font-semibold text-slate-900 shrink-0">{t("tx.title")}</h2>
-        <div className="relative flex-1 max-w-[14rem] ms-auto">
+        {accounts.length > 0 && (
+          <select
+            value={account}
+            onChange={(e) => setAccount(e.target.value)}
+            className="h-8 text-sm rounded-lg bg-slate-50 border border-slate-200 px-2 ms-auto focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+          >
+            <option value="">{t("tx.allAccounts")}</option>
+            {accounts.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+        )}
+        <div className={`relative flex-1 max-w-[14rem] ${accounts.length > 0 ? "" : "ms-auto"}`}>
           <svg viewBox="0 0 24 24" className="size-4 absolute start-2.5 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" strokeLinecap="round" />
           </svg>
@@ -106,6 +128,9 @@ export default function Transactions() {
                 <button onClick={() => toggleSort("date")} className="hover:text-slate-600">{t("tx.cols.date")}{arrow("date")}</button>
               </th>
               <th className="px-3 py-2 font-medium text-start">{t("tx.cols.movement")}</th>
+              {accounts.length > 0 && (
+                <th className="px-2 py-2 font-medium text-start">{t("tx.cols.account")}</th>
+              )}
               <th className="px-2 py-2 font-medium text-start">
                 <button onClick={() => toggleSort("category")} className="hover:text-slate-600">{t("tx.cols.category")}{arrow("category")}</button>
               </th>
@@ -130,6 +155,11 @@ export default function Transactions() {
                   <td className="px-3 py-2.5 text-slate-500 max-w-[6.5rem] truncate" title={tx.description}>
                     {tx.description}
                   </td>
+                  {accounts.length > 0 && (
+                    <td className="px-2 py-2.5 text-slate-500 max-w-[7rem] truncate" title={tx.bank_account ?? undefined}>
+                      {tx.bank_account ?? "—"}
+                    </td>
+                  )}
                   <td className="px-2 py-2.5 text-slate-800 whitespace-nowrap">
                     {tx.category ?? "—"}
                     {tx.confidence != null && (

@@ -46,10 +46,21 @@ class Categorization(BaseModel):
 
 
 class ColumnMapping(BaseModel):
-    """Qué encabezado del archivo corresponde a cada campo que necesitamos."""
+    """Qué encabezado del archivo corresponde a cada campo que necesitamos.
+
+    `account_column` / `account_label` permiten detectar la CUENTA BANCARIA de origen:
+    - account_column: encabezado con la cuenta por fila (export de agregadores tipo Plaid/Mint).
+      "" si el archivo no trae una columna de cuenta.
+    - account_label: nombre/identificador de la cuenta para TODO el archivo, inferido de los
+      encabezados o filas de muestra (ej. "Checking #4471"). "" si no se puede determinar.
+    """
     date_column: str
     description_column: str
     amount_column: str
+    account_column: str = ""
+    account_label: str = ""
+    # Columna de estado del movimiento (pending/posted), si el archivo la trae. "" si no existe.
+    status_column: str = ""
 
 
 def _generate(prompt: str, schema, *, max_retries: int = 4):
@@ -182,21 +193,37 @@ Transactions:
     return results
 
 
-def map_columns(headers: list[str], sample_row: list[str]) -> ColumnMapping:
-    """Mapea encabezados de un CSV bancario desordenado a date/description/amount."""
+def map_columns(headers: list[str], sample_rows: list[list[str]]) -> ColumnMapping:
+    """Mapea encabezados de un CSV bancario desordenado a date/description/amount y, si es
+    posible, detecta la cuenta bancaria de origen (columna por fila o etiqueta de todo el archivo)."""
+    sample = "\n".join(str(r) for r in sample_rows)
     prompt = f"""A user uploaded a messy bank CSV. Map its columns to the fields we need.
 
 Column headers: {headers}
-Example data row: {sample_row}
+Example data rows:
+{sample}
 
-Identify which header holds the transaction date, which holds the description,
-and which holds the transaction amount. Return the EXACT header names as given."""
+Return the EXACT header names as given:
+- date_column: header holding the transaction date.
+- description_column: header holding the description.
+- amount_column: header holding the transaction amount.
+
+Also detect the originating BANK ACCOUNT (a business may have several: checking, savings, cards):
+- account_column: if a column identifies the account PER ROW (common in aggregator exports
+  like Plaid/Mint), return that EXACT header name. Otherwise return "".
+- account_label: if the whole file belongs to ONE account and you can read a name or number
+  for it from the headers or sample rows (e.g. "Checking ****4471"), return a short label.
+  Otherwise return "". Do NOT guess; return "" when there is no clear account information.
+- status_column: if a column holds the transaction STATUS (e.g. "pending" vs "posted/cleared/
+  settled"), return that EXACT header name. Otherwise return ""."""
 
     response = _generate(prompt, ColumnMapping)
     result = response.parsed
     logger.info(
-        "map_columns | headers=%s -> date=%r description=%r amount=%r",
+        "map_columns | headers=%s -> date=%r description=%r amount=%r account_column=%r "
+        "account_label=%r status_column=%r",
         headers, result.date_column, result.description_column, result.amount_column,
+        result.account_column, result.account_label, result.status_column,
     )
     return result
 
@@ -213,6 +240,6 @@ if __name__ == "__main__":
 
     mapping = map_columns(
         ["TXN DT", "NARRATIVE", "DR/CR", "VALUE", "RUNNING BAL"],
-        ["2026-03-14", "HOME DEPOT #2745 BUILDING MATERIALS", "DR", "-342.18", "1250.00"],
+        [["2026-03-14", "HOME DEPOT #2745 BUILDING MATERIALS", "DR", "-342.18", "1250.00"]],
     )
     print("ColumnMapping:", mapping)

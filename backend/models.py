@@ -58,6 +58,9 @@ class Company(SQLModel, table=True):
     # Umbrales editables para desambiguar por monto (idea #14). None = usar el default del sistema.
     supermarket_threshold: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
     gas_station_threshold: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
+    # Ventana de asentamiento (días): se retienen las transacciones recientes/pending hasta que
+    # liquidan (base caja). None = usar el default del sistema. Ver docs/NOTAS IMPORTANTES.md.
+    settlement_buffer_days: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -77,6 +80,12 @@ class Transaction(SQLModel, table=True):
     # MAGNITUD positiva (valor absoluto). El signo en los cálculos lo determina account_type
     # (REVENUE/OTHER_INCOME suman; COGS/OPERATING_EXPENSE/OTHER_EXPENSE restan; NON_PL se excluye).
     amount: Decimal = Field(max_digits=14, decimal_places=2)
+    # Cuenta BANCARIA de origen (ej. "Chase Checking", "Savings #4471"). La detecta la IA del
+    # propio archivo al subirlo. Una empresa puede tener varias; permite ver/filtrar por cuenta.
+    bank_account: Optional[str] = Field(default=None, index=True)
+    # Huella de contenido para DEDUPLICAR re-subidas/solapamientos: identifica el movimiento por
+    # (date | description normalizada | monto con signo | cuenta). Ver docs/NOTAS IMPORTANTES.md.
+    fingerprint: Optional[str] = Field(default=None, index=True)
 
     # --- Datos que RELLENA ContaBu / la IA ---
     account_type: Optional[AccountType] = Field(default=None)  # sección del P&L (o NON_PL)

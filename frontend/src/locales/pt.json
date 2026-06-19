@@ -41,11 +41,12 @@
     "title": "Movimentos",
     "total": "{{count}} no total",
     "search": "Buscar",
+    "allAccounts": "Todas as contas",
     "empty": "Ainda não há movimentos.",
     "emptyHint": "Envie um extrato na aba \"Enviar\".",
     "source": { "rule": "Regra", "ai": "IA", "manual": "Você" },
     "confidence": "Confiança da IA",
-    "cols": { "date": "Data", "movement": "Movimento", "category": "Categoria", "subcategory": "Subcategoria", "amount": "Valor" },
+    "cols": { "date": "Data", "movement": "Movimento", "account": "Conta", "category": "Categoria", "subcategory": "Subcategoria", "amount": "Valor" },
     "edit": {
       "title": "Editar categoria",
       "category": "Categoria",
@@ -63,7 +64,7 @@
     "submit": "Enviar e categorizar",
     "done": "Pronto!",
     "result": "{{count}} movimentos categorizados",
-    "seeSummary": "Ver meu resumo →"
+    "seeSummary": "Ver meu resumo →", "held": "{{count}} transações recentes serão importadas quando compensarem", "skipped": "{{count}} duplicados ignorados (já importados)", "allDup": "Nada novo — já importado", "account": {"title": "De qual conta é?", "subtitle": "Não conseguimos ler a conta no arquivo. Informe para poder filtrar por ela.", "label": "Número da conta", "placeholder": "ex. 1234567890", "preview": "Salvo como {{masked}} (apenas os últimos 4 dígitos).", "save": "Salvar conta", "saving": "Salvando…"}
   },
   "settings": {
     "title": "Configurações",
@@ -71,7 +72,7 @@
     "gasLabel": "Limite de posto de gasolina",
     "gasHelp": "Abaixo de ${{amount}}: combustível de equipamentos. Acima: combustível do veículo.",
     "superLabel": "Limite de supermercado",
-    "superHelp": "Abaixo de ${{amount}}: uma refeição. Acima: uma despesa pessoal.",
+    "superHelp": "Abaixo de ${{amount}}: uma refeição. Acima: uma despesa pessoal.", "settleLabel": "Janela de compensação", "settleHelp": "Transações recentes (últimos {{count}} dias) ou pendentes ficam retidas até compensarem, depois são importadas automaticamente.", "days": "dias",
     "save": "Salvar",
     "saving": "Salvando…",
     "saved": "Salvo ✓"

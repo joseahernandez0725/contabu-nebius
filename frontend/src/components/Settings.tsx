@@ -3,8 +3,8 @@ import { useTranslation } from "react-i18next";
 import { updateThresholds } from "../api";
 import type { Company } from "../types";
 
-// Defaults del sistema (espejo de backend/rules.py) si la empresa aún no fijó los suyos.
-const DEFAULTS = { supermarket: 50, gas: 30 };
+// Defaults del sistema (espejo del backend) si la empresa aún no fijó los suyos.
+const DEFAULTS = { supermarket: 50, gas: 30, settlement: 5 };
 
 export default function Settings({
   company,
@@ -20,6 +20,9 @@ export default function Settings({
   const [gas, setGas] = useState(
     company?.gas_station_threshold != null ? Number(company.gas_station_threshold) : DEFAULTS.gas,
   );
+  const [settlement, setSettlement] = useState(
+    company?.settlement_buffer_days != null ? company.settlement_buffer_days : DEFAULTS.settlement,
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +35,7 @@ export default function Settings({
       const updated = await updateThresholds({
         supermarket_threshold: supermarket,
         gas_station_threshold: gas,
+        settlement_buffer_days: settlement,
       });
       onSaved(updated);
       setSaved(true);
@@ -63,6 +67,22 @@ export default function Settings({
           value={supermarket}
           onChange={(n) => { setSupermarket(n); setSaved(false); }}
         />
+        <div className="border-t border-slate-100" />
+        <div>
+          <label className="block text-sm font-medium text-slate-800">{t("settings.settleLabel")}</label>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              value={settlement}
+              onChange={(e) => { setSettlement(Number(e.target.value)); setSaved(false); }}
+              className="w-28 rounded-lg border border-slate-200 px-3 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+            />
+            <span className="text-slate-400">{t("settings.days")}</span>
+          </div>
+          <p className="text-xs text-slate-500 mt-2">{t("settings.settleHelp", { count: settlement })}</p>
+        </div>
       </div>
 
       {error && <div className="text-sm text-rose-600">{error}</div>}

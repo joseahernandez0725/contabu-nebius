@@ -12,7 +12,11 @@ export async function getCompany(): Promise<Company> {
 }
 
 export async function updateThresholds(
-  payload: Partial<{ supermarket_threshold: number; gas_station_threshold: number }>,
+  payload: Partial<{
+    supermarket_threshold: number;
+    gas_station_threshold: number;
+    settlement_buffer_days: number;
+  }>,
 ): Promise<Company> {
   const res = await fetch(`${API}/api/companies/${COMPANY_ID}/thresholds`, {
     method: "PATCH",
@@ -72,7 +76,16 @@ export async function clarifyTransaction(id: number, answer: string): Promise<Tr
   return res.json();
 }
 
-export async function uploadCsv(file: File) {
+export interface UploadResult {
+  inserted: number;
+  errors: number;
+  skipped_duplicates: number; // filas omitidas por ya existir (re-subida / rango solapado)
+  held_pending: number; // filas retenidas por pending / aún no asentadas
+  account_detected: boolean; // false → hay que pedirle la cuenta al usuario
+  transaction_ids: number[]; // transacciones creadas en esta subida
+}
+
+export async function uploadCsv(file: File): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
   const res = await fetch(
@@ -80,6 +93,21 @@ export async function uploadCsv(file: File) {
     { method: "POST", body: form },
   );
   if (!res.ok) throw new Error("Falló la subida del archivo");
+  return res.json();
+}
+
+// Asigna la cuenta (que indicó el usuario) a las transacciones recién subidas.
+// El backend la enmascara a los últimos 4 dígitos.
+export async function setTransactionsAccount(
+  transactionIds: number[],
+  account: string,
+): Promise<{ updated: number; bank_account: string }> {
+  const res = await fetch(`${API}/api/companies/${COMPANY_ID}/transactions/set-account`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_ids: transactionIds, account }),
+  });
+  if (!res.ok) throw new Error("No se pudo guardar la cuenta");
   return res.json();
 }
 

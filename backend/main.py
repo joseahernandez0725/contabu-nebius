@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from ai import recategorize_with_answer
 from categories import categories_for
 from db import get_session
-from ingestion import ingest_csv
+from ingestion import ingest_csv, mask_account
 from models import AccountType, Company, Transaction
 from reports import income_statement
 from rules import upsert_company_rule
@@ -33,10 +33,19 @@ class ClarifyPayload(BaseModel):
     answer: str
 
 
+class SetAccountPayload(BaseModel):
+    """Cuenta bancaria que el usuario indica cuando la IA no pudo detectarla del archivo.
+    Se aplica a las transacciones recién subidas (transaction_ids) y se guarda enmascarada."""
+    transaction_ids: list[int]
+    account: str
+
+
 class CompanyThresholds(BaseModel):
-    """Umbrales editables por empresa para desambiguar por monto (super/gasolinera)."""
+    """Ajustes editables por empresa: umbrales de monto (super/gasolinera) y ventana de
+    asentamiento (días que se retienen los movimientos recientes/pending)."""
     supermarket_threshold: Optional[Decimal] = None
     gas_station_threshold: Optional[Decimal] = None
+    settlement_buffer_days: Optional[int] = None
 
 # `app` es nuestra aplicación. uvicorn la "sirve" y queda esperando peticiones.
 app = FastAPI(title="ContaBu API")
@@ -77,6 +86,31 @@ async def upload_transactions(
         session, company_id, company.sector, content, limit=20
     )
     return result
+
+
+@app.post("/api/companies/{company_id}/transactions/set-account")
+def set_transactions_account(
+    company_id: int,
+    payload: SetAccountPayload,
+    session: Session = Depends(get_session),
+):
+    """Asigna la cuenta bancaria (que indicó el usuario) a varias transacciones de la empresa.
+    Se guarda enmascarada a los últimos 4 dígitos. Útil cuando la IA no la detectó del archivo."""
+    masked = mask_account(payload.account)
+    if masked is None:
+        raise HTTPException(status_code=422, detail="account must contain at least 4 digits")
+    if not payload.transaction_ids:
+        return {"updated": 0, "bank_account": masked}
+    rows = session.exec(
+        select(Transaction)
+        .where(Transaction.company_id == company_id)
+        .where(Transaction.id.in_(payload.transaction_ids))
+    ).all()
+    for tx in rows:
+        tx.bank_account = masked
+        session.add(tx)
+    session.commit()
+    return {"updated": len(rows), "bank_account": masked}
 
 
 @app.get("/api/companies/{company_id}")

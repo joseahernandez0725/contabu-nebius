@@ -10,14 +10,32 @@ se le pasa a la IA para que clasifique bien.
 
 import csv
 import io
-from datetime import date
+import re
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from dateutil import parser as dateparser
-from sqlmodel import Session
+from sqlalchemy import func
+from sqlmodel import Session, select
 
 from ai import categorize_batch, map_columns
 from models import CategoryRule, Company, Transaction
+
+# Ventana de asentamiento por defecto (días): cubre tarjeta/ACH normales (1-3 días hábiles) + un
+# fin de semana. Se retienen los movimientos recientes/pending hasta que liquidan (base caja).
+DEFAULT_SETTLEMENT_BUFFER_DAYS = 5
+
+# Palabras que indican que un movimiento aún NO liquidó (no debe entrar a los libros todavía).
+_PENDING_WORDS = ("pending", "hold", "authoriz", "processing", "unposted", "in process")
+
+
+def is_pending(status: str | None) -> bool:
+    """True si el valor de la columna de estado indica que el movimiento aún no liquidó."""
+    if not status:
+        return False
+    s = status.strip().lower()
+    return any(w in s for w in _PENDING_WORDS)
 from rules import amount_band_category, load_rules, match_rule
 
 
@@ -45,9 +63,44 @@ def parse_amount(raw: str) -> Decimal:
     return -abs(value) if negative else value
 
 
+def mask_account(raw: str | None) -> str | None:
+    """Normaliza una cuenta bancaria: conserva el NOMBRE del banco y enmascara el número a
+    los ÚLTIMOS 4 DÍGITOS. 'Chase Checking 001234567890' → 'Chase Checking ****7890';
+    '001234567890' → '****7890'; '****4471' → '****4471'.
+
+    No guardamos el número completo (es sensible y no hace falta): solo el nombre + los 4
+    últimos dígitos, lo justo para distinguir/filtrar cuentas. Si no hay al menos 4 dígitos,
+    devuelve None (no es una cuenta utilizable → habrá que pedírsela al usuario)."""
+    if not raw:
+        return None
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) < 4:
+        return None
+    # Nombre = el texto sin dígitos ni caracteres de máscara, con separadores colapsados.
+    name = re.sub(r"[\d*•]", "", raw)
+    name = re.sub(r"[#\-_\s]+", " ", name).strip()
+    masked = f"****{digits[-4:]}"
+    return f"{name} {masked}" if name else masked
+
+
 def parse_date(raw: str) -> date:
     """Fecha en formato variado de banco → date (asume mes primero, formato US)."""
     return dateparser.parse(raw.strip(), dayfirst=False).date()
+
+
+def make_fingerprint(d: date, description: str, signed: Decimal, account: str | None) -> str:
+    """Huella de contenido de un movimiento, para deduplicar re-subidas y solapamientos.
+
+    Identifica la transacción por (fecha | descripción normalizada | monto CON SIGNO | cuenta):
+    - descripción: espacios colapsados + MAYÚSCULAS (los bancos varían el espaciado entre exports).
+    - monto con signo: distingue una entrada de una salida del mismo importe el mismo día.
+    - cuenta: el mismo cargo en DOS cuentas distintas son movimientos distintos.
+    NO es única a propósito: dos movimientos idénticos legítimos (p. ej. dos cafés iguales el
+    mismo día) comparten huella; la deduplicación se hace por CONTEO. Ver docs/NOTAS IMPORTANTES.md.
+    """
+    desc = re.sub(r"\s+", " ", description).strip().upper()
+    acct = (account or "").strip().upper()
+    return f"{d.isoformat()}|{desc}|{signed:.2f}|{acct}"
 
 
 def ingest_csv(
@@ -65,8 +118,9 @@ def ingest_csv(
     if not rows:
         return {"inserted": 0, "errors": 0, "mapping": None, "message": "archivo vacío"}
 
-    # 1) La IA descubre qué columna es cuál (con una fila de muestra).
-    mapping = map_columns(headers, rows[0])
+    # 1) La IA descubre qué columna es cuál (con varias filas de muestra) y, si puede,
+    #    detecta la cuenta bancaria de origen (columna por fila o etiqueta de todo el archivo).
+    mapping = map_columns(headers, rows[:3])
     try:
         i_date = headers.index(mapping.date_column)
         i_desc = headers.index(mapping.description_column)
@@ -75,33 +129,84 @@ def ingest_csv(
         return {"inserted": 0, "errors": 0, "mapping": mapping.model_dump(),
                 "message": "la IA devolvió una columna que no existe en el archivo"}
 
+    # Cuenta bancaria: si hay columna por fila, la leemos de cada fila; si no, usamos la
+    # etiqueta detectada para todo el archivo. En ambos casos se guarda enmascarada a los
+    # últimos 4 dígitos ('****4471'); si no hay 4 dígitos, queda None y se la pediremos al usuario.
+    i_account = headers.index(mapping.account_column) if mapping.account_column in headers else None
+    file_account_raw = mapping.account_label or None
+    # Columna de estado (pending/posted), si el archivo la trae.
+    i_status = headers.index(mapping.status_column) if mapping.status_column in headers else None
+
+    # Ventana de asentamiento de la empresa (o el default del sistema). Se retienen los
+    # movimientos recientes/pending hasta que liquidan; entran solos en una subida posterior.
+    company = session.get(Company, company_id)
+    buffer_days = company.settlement_buffer_days if company and company.settlement_buffer_days is not None \
+        else DEFAULT_SETTLEMENT_BUFFER_DAYS
+    today = datetime.now(timezone.utc).date()
+
     to_process = rows[:limit] if limit else rows
 
-    # 1) Parsear todas las filas (fecha, descripción, monto con signo).
-    parsed: list[tuple] = []  # (date, description, signed_amount)
+    # 1) Parsear las filas y RETENER las que aún no liquidaron (pending o demasiado recientes).
+    #    Si hay columna de estado, mandan ella; si no, se usa la fecha (edad < buffer_days).
+    parsed: list[tuple] = []  # (date, description, signed_amount, bank_account, fingerprint)
     errors = 0
+    held_pending = 0
     for r in to_process:
         try:
             d = parse_date(r[i_date])
             description = r[i_desc].strip()
             signed = parse_amount(r[i_amount])  # con signo (dirección)
+            raw_account = r[i_account] if i_account is not None else file_account_raw
+            account = mask_account(raw_account)
+            status = r[i_status] if i_status is not None else None
         except (IndexError, ValueError, TypeError):
             errors += 1
             continue
-        parsed.append((d, description, signed))
+        held = is_pending(status) if i_status is not None else (today - d).days < buffer_days
+        if held:
+            held_pending += 1
+            continue  # no entra a los libros todavía (base caja)
+        fp = make_fingerprint(d, description, signed, account)
+        parsed.append((d, description, signed, account, fp))
+
+    # 1b) DEDUPLICACIÓN por huella (multiconjunto): omite las filas que YA existen en la BD de
+    #     esta empresa, para no duplicar al re-subir el mismo archivo o un rango solapado.
+    #     Se hace por CONTEO: si el archivo trae 2 movimientos idénticos y la BD ya tiene 2, se
+    #     omiten los 2; si tiene 0, se insertan los 2 → conserva repeticiones legítimas.
+    #     Va ANTES de reglas/IA para no gastar cuota de Gemini en lo que no se va a insertar.
+    skipped_duplicates = 0
+    if not dry_run and parsed:
+        fps = [row[4] for row in parsed]
+        existing: dict[str, int] = dict(
+            session.exec(
+                select(Transaction.fingerprint, func.count())
+                .where(Transaction.company_id == company_id)
+                .where(Transaction.fingerprint.in_(set(fps)))
+                .group_by(Transaction.fingerprint)
+            ).all()
+        )
+        remaining_skip = Counter(existing)  # ocurrencias de cada huella ya guardadas (a omitir)
+        kept: list[tuple] = []
+        for row in parsed:
+            fp = row[4]
+            if remaining_skip.get(fp, 0) > 0:
+                remaining_skip[fp] -= 1
+                skipped_duplicates += 1
+            else:
+                kept.append(row)
+        parsed = kept
 
     # 2) MOTOR DE REGLAS: lo que ya tiene regla (comercio conocido) o cae en una banda de monto
     #    (super/gasolinera) se resuelve SIN IA. Solo lo que no matchea nada va al batch de la IA.
     #    Precedencia: regla explícita de empresa → banda de monto → IA.
     rules: list[CategoryRule] = load_rules(session, company_id, sector) if categorize else []
-    company = session.get(Company, company_id) if categorize else None
     super_thr = company.supermarket_threshold if company else None
     gas_thr = company.gas_station_threshold if company else None
     rule_hits: dict[int, CategoryRule] = {}
     band_hits: dict[int, tuple] = {}  # idx -> (account_type, category)
     ai_indices: list[int] = []
     if categorize:
-        for idx, (_, desc, signed) in enumerate(parsed):
+        for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
             rule = match_rule(rules, desc)
             if rule is not None:
                 rule_hits[idx] = rule
@@ -125,8 +230,13 @@ def ingest_csv(
     by_band = 0
     by_ai = 0
     preview: list[dict] = []
-    for idx, (d, description, signed) in enumerate(parsed):
-        tx = Transaction(company_id=company_id, date=d, description=description, amount=abs(signed))
+    created: list[Transaction] = []
+    any_account = False
+    for idx, (d, description, signed, account, fp) in enumerate(parsed):
+        tx = Transaction(company_id=company_id, date=d, description=description,
+                         amount=abs(signed), bank_account=account, fingerprint=fp)
+        if account:
+            any_account = True
         source = None
         if idx in rule_hits:
             rule = rule_hits[idx]
@@ -166,6 +276,7 @@ def ingest_csv(
         if source is not None:
             preview.append({
                 "date": str(d), "description": description, "amount": str(abs(signed)),
+                "bank_account": account,
                 "source": source,
                 "account_type": tx.account_type.value if tx.account_type else None,
                 "category": tx.category, "subcategory": tx.subcategory,
@@ -173,11 +284,15 @@ def ingest_csv(
                 "review_question": tx.review_question,
             })
         session.add(tx)
+        created.append(tx)
         inserted += 1
 
     if dry_run:
         session.rollback()  # no persiste: solo prueba el pipeline
+        transaction_ids: list[int] = []
     else:
+        session.flush()  # asigna los IDs antes de cerrar la transacción
+        transaction_ids = [tx.id for tx in created]
         session.commit()
 
     return {
@@ -189,6 +304,14 @@ def ingest_csv(
         "dry_run": dry_run,
         "mapping": mapping.model_dump(),
         "preview": preview,
+        # Cuántas filas se omitieron por ya existir (re-subida / rango solapado).
+        "skipped_duplicates": skipped_duplicates,
+        # Cuántas se retuvieron por estar pending / aún no asentadas (entran en otra subida).
+        "held_pending": held_pending,
+        # Si la IA no pudo sacar la cuenta del archivo, el frontend la pide al usuario
+        # y la aplica con set-account sobre estos IDs.
+        "account_detected": any_account,
+        "transaction_ids": transaction_ids,
     }
 
 

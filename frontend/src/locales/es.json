@@ -41,11 +41,12 @@
     "title": "Movimientos",
     "total": "{{count}} en total",
     "search": "Buscar",
+    "allAccounts": "Todas las cuentas",
     "empty": "Aún no hay movimientos.",
     "emptyHint": "Sube un extracto en la pestaña \"Subir\".",
     "source": { "rule": "Regla", "ai": "IA", "manual": "Tú" },
     "confidence": "Confianza de la IA",
-    "cols": { "date": "Fecha", "movement": "Movimiento", "category": "Categoría", "subcategory": "Subcategoría", "amount": "Monto" },
+    "cols": { "date": "Fecha", "movement": "Movimiento", "account": "Cuenta", "category": "Categoría", "subcategory": "Subcategoría", "amount": "Monto" },
     "edit": {
       "title": "Editar categoría",
       "category": "Categoría",
@@ -63,7 +64,7 @@
     "submit": "Subir y categorizar",
     "done": "¡Listo!",
     "result": "{{count}} movimientos categorizados",
-    "seeSummary": "Ver mi resumen →"
+    "seeSummary": "Ver mi resumen →", "held": "{{count}} transacciones recientes se importarán cuando se asienten", "skipped": "{{count}} duplicados omitidos (ya estaban)", "allDup": "Nada nuevo: ya lo habías subido", "account": {"title": "¿De qué cuenta es?", "subtitle": "No pudimos leer la cuenta del archivo. Indícala para poder filtrar por ella.", "label": "Número de cuenta", "placeholder": "ej. 1234567890", "preview": "Se guarda como {{masked}} (solo los últimos 4 dígitos).", "save": "Guardar cuenta", "saving": "Guardando…"}
   },
   "settings": {
     "title": "Ajustes",
@@ -71,7 +72,7 @@
     "gasLabel": "Umbral de gasolinera",
     "gasHelp": "Menos de ${{amount}}: combustible de equipos. Más: gasolina del vehículo.",
     "superLabel": "Umbral de supermercado",
-    "superHelp": "Menos de ${{amount}}: una comida. Más: un gasto personal.",
+    "superHelp": "Menos de ${{amount}}: una comida. Más: un gasto personal.", "settleLabel": "Ventana de asentamiento", "settleHelp": "Las transacciones recientes (últimos {{count}} días) o pendientes se retienen hasta que liquidan, y luego se importan solas.", "days": "días",
     "save": "Guardar",
     "saving": "Guardando…",
     "saved": "Guardado ✓"

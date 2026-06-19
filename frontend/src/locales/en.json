@@ -41,11 +41,12 @@
     "title": "Activity",
     "total": "{{count}} total",
     "search": "Search",
+    "allAccounts": "All accounts",
     "empty": "No transactions yet.",
     "emptyHint": "Upload a statement in the \"Upload\" tab.",
     "source": { "rule": "Rule", "ai": "AI", "manual": "You" },
     "confidence": "AI confidence",
-    "cols": { "date": "Date", "movement": "Movement", "category": "Category", "subcategory": "Subcategory", "amount": "Amount" },
+    "cols": { "date": "Date", "movement": "Movement", "account": "Account", "category": "Category", "subcategory": "Subcategory", "amount": "Amount" },
     "edit": {
       "title": "Edit category",
       "category": "Category",
@@ -63,7 +64,7 @@
     "submit": "Upload and categorize",
     "done": "Done!",
     "result": "{{count}} transactions categorized",
-    "seeSummary": "See my summary →"
+    "seeSummary": "See my summary →", "held": "{{count}} recent transactions held until they clear", "skipped": "{{count}} duplicates skipped (already imported)", "allDup": "Nothing new — already imported", "account": {"title": "Which account is this?", "subtitle": "We couldn't read the account from the file. Tell us so you can filter by it.", "label": "Account number", "placeholder": "e.g. 1234567890", "preview": "Saved as {{masked}} (last 4 digits only).", "save": "Save account", "saving": "Saving…"}
   },
   "settings": {
     "title": "Settings",
@@ -71,7 +72,7 @@
     "gasLabel": "Gas station threshold",
     "gasHelp": "Under ${{amount}}: equipment fuel. Over: vehicle fuel.",
     "superLabel": "Supermarket threshold",
-    "superHelp": "Under ${{amount}}: a meal. Over: a personal expense.",
+    "superHelp": "Under ${{amount}}: a meal. Over: a personal expense.", "settleLabel": "Settlement window", "settleHelp": "Recent transactions (last {{count}} days) or pending ones are held until they clear, then imported automatically.", "days": "days",
     "save": "Save",
     "saving": "Saving…",
     "saved": "Saved ✓"

@@ -14,6 +14,7 @@ export interface Transaction {
   date: string;
   description: string;
   amount: string; // viene como string (Decimal); convertir con Number()
+  bank_account: string | null; // cuenta bancaria de origen (la detecta la IA del archivo)
   account_type: AccountType | null;
   category: string | null;
   subcategory: string | null;
@@ -31,6 +32,7 @@ export interface Company {
   plan: string;
   supermarket_threshold: string | null; // Decimal → string; null = usar default del sistema
   gas_station_threshold: string | null;
+  settlement_buffer_days: number | null; // días de retención; null = default del sistema
   created_at: string;
 }
 
