@@ -21,17 +21,24 @@ export function exportIncomeStatementPdf(
   const R = 556; // borde derecho (612 - 56)
   let y = 64;
 
-  // Encabezado
+  // Encabezado estándar de 3 líneas (empresa · título · periodo) — ver REFERENCIA CONTABLE §4.
   doc.setFont("helvetica", "bold").setFontSize(20).setTextColor(21, 128, 61); // brand green
   doc.text("ContaBu", L, y);
-  doc.setFont("helvetica", "normal").setFontSize(13).setTextColor(90);
-  doc.text("Income Statement (P&L)", L, y + 22);
-  doc.setFontSize(11).setTextColor(20);
-  doc.text(companyName, L, y + 44);
-  const period = start || end ? `${start || "…"}  to  ${end || "…"}` : "All time";
-  doc.setTextColor(120).setFontSize(10);
-  doc.text(`Period: ${period}`, L, y + 60);
-  doc.text(`Generated: ${new Date().toISOString().slice(0, 10)}`, R, y + 60, { align: "right" });
+  doc.setFont("helvetica", "bold").setFontSize(14).setTextColor(20);
+  doc.text(companyName, L, y + 26);
+  doc.setFont("helvetica", "normal").setFontSize(13).setTextColor(60);
+  doc.text("Income Statement (Profit & Loss)", L, y + 44);
+  // El income statement cubre un PERIODO, no una fecha puntual.
+  const period =
+    start && end ? `For the period ${start} to ${end}`
+    : end ? `For the period ended ${end}`
+    : start ? `For the period from ${start}`
+    : "For all available transactions";
+  doc.setTextColor(110).setFontSize(10);
+  doc.text(period, L, y + 60);
+  doc.text("Amounts in US dollars (USD) · Cash basis", L, y + 74);
+  doc.text(`Generated: ${new Date().toISOString().slice(0, 10)}`, R, y + 74, { align: "right" });
+  y += 14; // el encabezado creció una línea
 
   y += 90;
   doc.setDrawColor(220).line(L, y, R, y);

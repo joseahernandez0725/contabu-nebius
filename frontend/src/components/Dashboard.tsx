@@ -33,8 +33,8 @@ function BreakdownBar({ label, value, total, color }: {
   );
 }
 
-export default function Dashboard({ onUpload, onSeeAll, companyName }: {
-  onUpload: () => void; onSeeAll: () => void; companyName: string;
+export default function Dashboard({ onUpload, companyName }: {
+  onUpload: () => void; companyName: string;
 }) {
   const { t } = useTranslation();
   const [is, setIs] = useState<IS | null>(null);
@@ -159,29 +159,6 @@ export default function Dashboard({ onUpload, onSeeAll, companyName }: {
         </svg>
         {t("dashboard.exportPdf")}
       </button>
-
-      {/* Movimientos recientes */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-slate-900">{t("dashboard.recentActivity")}</h2>
-          <button onClick={onSeeAll} className="text-sm text-brand-green font-medium hover:underline">
-            {t("dashboard.seeAll")}
-          </button>
-        </div>
-        <ul className="divide-y divide-slate-100">
-          {txs.slice(0, 5).map((tx) => (
-            <li key={tx.id} className="flex items-center justify-between py-2.5">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-slate-800 truncate">{tx.subcategory ?? tx.description}</div>
-                <div className="text-xs text-slate-400">{tx.date} · {tx.category ?? "—"}</div>
-              </div>
-              <div className="text-sm font-semibold tabular-nums text-slate-700 shrink-0 ms-3">
-                {money(Number(tx.amount))}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
 
       {/* CTA subir */}
       <button

@@ -13,18 +13,24 @@ function fmtDay(iso: string, lang: string): string {
 const isIncome = (tx: Transaction) =>
   tx.account_type === "REVENUE" || tx.account_type === "OTHER_INCOME";
 
+// Un cheque es un método de pago, no una contraparte: cada uno puede ser distinto → no agrupar.
+const isCheck = (tx: Transaction) => /\b(check|chk|cheque|e-?check)\b/i.test(tx.description);
+
 function GroupCard({ group, onDone }: { group: Transaction[]; onDone: () => void }) {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || "en").split("-")[0];
   const [answer, setAnswer] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const rep = group[0];
   const name = rep.subcategory ?? rep.description;
   const count = group.length;
   const total = group.reduce((s, tx) => s + Number(tx.amount), 0);
   const dates = group.map((tx) => tx.date).sort();
-  const income = isIncome(rep);
+  // Dirección REAL del banco (si la tenemos); si no, caer al account_type. Así "te pagaron" vs
+  // "pagaste" sale de si entró/salió plata, no de una categorización incierta.
+  const income = rep.is_inflow ?? isIncome(rep);
 
   // Pregunta natural y específica (nombre + monto + fecha/rango + dirección).
   const question =
@@ -45,10 +51,12 @@ function GroupCard({ group, onDone }: { group: Transaction[]; onDone: () => void
   async function submit() {
     if (!answer.trim()) return;
     setSaving(true);
+    setError(null);
     try {
       await clarifyGroup(group.map((tx) => tx.id), answer.trim());
       onDone(); // recarga: el grupo entero queda categorizado y sale de revisión
-    } finally {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
       setSaving(false);
     }
   }
@@ -77,6 +85,8 @@ function GroupCard({ group, onDone }: { group: Transaction[]; onDone: () => void
         onChange={(e) => setAnswer(e.target.value)}
       />
 
+      {error && <p className="text-sm text-rose-600 mt-2">{error}</p>}
+
       <button
         onClick={submit}
         disabled={saving || !answer.trim()}
@@ -95,7 +105,10 @@ export default function Review({ items, reload }: { items: Transaction[]; reload
   const groups = useMemo(() => {
     const map = new Map<string, Transaction[]>();
     for (const tx of items) {
-      const key = (tx.subcategory ?? tx.description ?? "—").trim().toUpperCase();
+      // Los cheques quedan cada uno solo (clave única por id); el resto se agrupa por contraparte.
+      const key = isCheck(tx)
+        ? `chk-${tx.id}`
+        : (tx.subcategory ?? tx.description ?? "—").trim().toUpperCase();
       const arr = map.get(key);
       if (arr) arr.push(tx);
       else map.set(key, [tx]);

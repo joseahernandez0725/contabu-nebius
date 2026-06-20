@@ -27,6 +27,15 @@ from models import AccountType, CategoryRule, RuleScope
 DEFAULT_SUPERMARKET_THRESHOLD = Decimal("50")
 DEFAULT_GAS_STATION_THRESHOLD = Decimal("30")
 
+# Un CHEQUE es un método de pago, no una contraparte: cada cheque puede ser para algo distinto
+# (no se puede agrupar) y su descripción ("CHECK #1234") es única → NO sirve crear una regla.
+_CHECK_RE = re.compile(r"\b(check|chk|cheque|e-?check)\b", re.IGNORECASE)
+
+
+def is_check(description: Optional[str]) -> bool:
+    """True si la descripción parece un cheque (no agrupar, no crear regla)."""
+    return bool(description and _CHECK_RE.search(description))
+
 
 def normalize(text: str) -> str:
     """Normaliza una descripción para comparar: MAYÚSCULAS y solo alfanuméricos.

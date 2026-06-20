@@ -28,7 +28,9 @@ load_dotenv()
 
 logger = logging.getLogger("contabu.ai")
 
-MODEL = "gemini-2.5-flash-lite"  # cuota propia + más barato/rápido; suficiente para clasificar
+# Modelo de Gemini. Configurable por entorno (GEMINI_MODEL) para A/B sin tocar código.
+# flash-lite = más barato/rápido; flash = razona mejor en casos difíciles. Ver docs/FASE.
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Códigos HTTP transitorios que vale la pena reintentar (saturación, límites temporales).

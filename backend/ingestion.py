@@ -12,6 +12,7 @@ import csv
 import io
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -19,16 +20,26 @@ from dateutil import parser as dateparser
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from ai import categorize_batch, map_columns
+from ai import categorize_transaction, map_columns
 from models import CategoryRule, Company, Transaction
 
 # Ventana de asentamiento por defecto (días): cubre tarjeta/ACH normales (1-3 días hábiles) + un
 # fin de semana. Se retienen los movimientos recientes/pending hasta que liquidan (base caja).
 DEFAULT_SETTLEMENT_BUFFER_DAYS = 5
 
-# Tamaño de lote para categorizar con la IA: cada lote es UNA petición a Gemini. Se trocea para
-# que el JSON de salida no se trunque ni degrade en archivos grandes. Ver docs/FASE 6.E.md.
-AI_BATCH_SIZE = 50
+# Categorización LÍNEA POR LÍNEA: una petición a Gemini por transacción (cada una aislada → es
+# IMPOSIBLE que los resultados se desalineen, a diferencia del batch). Para que no sea lento, se
+# lanzan en paralelo con un límite de concurrencia. Requiere tier de pago de Gemini (el free es
+# insuficiente para archivos grandes). Ver docs/FASE 6.F / NOTAS IMPORTANTES.
+AI_CONCURRENCY = 16
+
+# Movimientos intrínsecamente AMBIGUOS: la IA no puede saber su propósito solo del texto
+# (cheques, depósitos sin pagador claro, retiros, remesas, transferencias). Se fuerzan a revisión
+# humana en vez de adivinar (adivinar corrompe el P&L). Los cheques además ni se agrupan ni crean
+# regla (ver rules.is_check).
+_AMBIGUOUS_RE = re.compile(
+    r"\b(deposit|withdrawal|remitly|rmtly|wire|transfer)\b", re.IGNORECASE
+)
 
 # Palabras que indican que un movimiento aún NO liquidó (no debe entrar a los libros todavía).
 _PENDING_WORDS = ("pending", "hold", "authoriz", "processing", "unposted", "in process")
@@ -40,7 +51,13 @@ def is_pending(status: str | None) -> bool:
         return False
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
-from rules import amount_band_category, load_rules, match_rule
+from rules import amount_band_category, is_check, load_rules, match_rule
+
+
+def needs_human_review(description: str) -> bool:
+    """True si el movimiento es ambiguo por naturaleza (cheque/depósito/retiro/remesa/transferencia)
+    → forzar revisión humana en vez de que la IA adivine."""
+    return is_check(description) or bool(_AMBIGUOUS_RE.search(description or ""))
 
 
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
@@ -221,15 +238,24 @@ def ingest_csv(
                 continue
             ai_indices.append(idx)
 
-    # 3) Categorizar con la IA SOLO lo que no matcheó regla, en LOTES (chunks) de AI_BATCH_SIZE:
-    #    cada lote es una sola petición a Gemini → procesa archivos grandes sin truncar el JSON.
+    # 3) Categorizar con la IA SOLO lo que no matcheó regla, LÍNEA POR LÍNEA (una petición por
+    #    transacción), en PARALELO con un límite de concurrencia. Cada llamada es independiente →
+    #    no hay forma de desalinear resultados. Si una falla tras los reintentos, queda sin
+    #    categorizar (no rompe la subida; aparecerá para revisión).
     ai_cats: dict[int, object] = {}
-    for start in range(0, len(ai_indices), AI_BATCH_SIZE):
-        chunk = ai_indices[start:start + AI_BATCH_SIZE]
-        items = [{"description": parsed[i][1], "amount": float(parsed[i][2])} for i in chunk]
-        results = categorize_batch(items, sector)
-        for i, cat in zip(chunk, results):
-            ai_cats[i] = cat
+
+    def _categorize_one(idx: int):
+        try:
+            cat = categorize_transaction(parsed[idx][1], float(parsed[idx][2]), sector)
+            return idx, cat
+        except Exception:
+            return idx, None
+
+    if ai_indices:
+        with ThreadPoolExecutor(max_workers=AI_CONCURRENCY) as pool:
+            for idx, cat in pool.map(_categorize_one, ai_indices):
+                if cat is not None:
+                    ai_cats[idx] = cat
 
     # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
@@ -241,7 +267,8 @@ def ingest_csv(
     any_account = False
     for idx, (d, description, signed, account, fp) in enumerate(parsed):
         tx = Transaction(company_id=company_id, date=d, description=description,
-                         amount=abs(signed), bank_account=account, fingerprint=fp)
+                         amount=abs(signed), bank_account=account, fingerprint=fp,
+                         is_inflow=signed > 0)  # dirección real del banco (entró/salió)
         if account:
             any_account = True
         source = None
@@ -280,6 +307,15 @@ def ingest_csv(
             tx.source = "ai"
             source = "ai"
             by_ai += 1
+
+        # Forzar revisión humana en movimientos AMBIGUOS por naturaleza (cheques, depósitos,
+        # retiros, remesas, transferencias) que resolvió la IA: no puede saber su propósito → que
+        # el dueño decida. Si ya había REGLA (source="rule"), el usuario ya decidió → NO re-preguntar.
+        if source == "ai" and needs_human_review(description):
+            tx.needs_review = True
+            if tx.confidence is None or tx.confidence > 0.5:
+                tx.confidence = 0.5
+
         if source is not None:
             preview.append({
                 "date": str(d), "description": description, "amount": str(abs(signed)),

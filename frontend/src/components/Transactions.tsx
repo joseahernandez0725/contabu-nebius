@@ -169,8 +169,12 @@ export default function Transactions() {
                     )}
                   </td>
                   <td className="px-2 py-2.5 text-slate-500 max-w-[6rem] truncate uppercase">{tx.subcategory ?? "—"}</td>
-                  <td className="px-3 py-2.5 text-end tabular-nums font-medium text-slate-700 whitespace-nowrap">
-                    {money(Number(tx.amount))}
+                  <td className={`px-3 py-2.5 text-end tabular-nums font-medium whitespace-nowrap ${
+                    tx.is_inflow ? "text-brand-green" : "text-slate-700"
+                  }`}>
+                    {tx.is_inflow == null
+                      ? money(Number(tx.amount))
+                      : `${tx.is_inflow ? "+" : "−"}${money(Number(tx.amount))}`}
                   </td>
                   {accounts.length > 0 && (
                     <td className="px-2 py-2.5 text-slate-500 max-w-[7rem] truncate" title={tx.bank_account ?? undefined}>

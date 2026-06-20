@@ -95,6 +95,10 @@ class Transaction(SQLModel, table=True):
     # MAGNITUD positiva (valor absoluto). El signo en los cálculos lo determina account_type
     # (REVENUE/OTHER_INCOME suman; COGS/OPERATING_EXPENSE/OTHER_EXPENSE restan; NON_PL se excluye).
     amount: Decimal = Field(max_digits=14, decimal_places=2)
+    # Dirección REAL del movimiento en el banco (hecho objetivo, no depende de la categorización):
+    # True = entró plata (crédito/depósito); False = salió (débito/pago). Sirve para mostrar el
+    # signo +/- y para redactar la pregunta de revisión ("te pagaron" vs "pagaste").
+    is_inflow: Optional[bool] = Field(default=None)
     # Cuenta BANCARIA de origen (ej. "Chase Checking", "Savings #4471"). La detecta la IA del
     # propio archivo al subirlo. Una empresa puede tener varias; permite ver/filtrar por cuenta.
     bank_account: Optional[str] = Field(default=None, index=True)

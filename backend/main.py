@@ -23,7 +23,7 @@ from db import get_session
 from ingestion import ingest_csv, mask_account
 from models import AccountType, Company, Transaction, User
 from reports import income_statement
-from rules import upsert_company_rule
+from rules import is_check, upsert_company_rule
 
 
 class TransactionUpdate(BaseModel):
@@ -253,12 +253,14 @@ def update_transaction(
     # igual que el flujo de "explicar". Así la próxima vez ese comercio se categoriza solo.
     if any(k in data for k in ("account_type", "category", "subcategory")):
         tx.source = "manual"
-        company = session.get(Company, tx.company_id)
-        upsert_company_rule(
-            session, tx.company_id, company.sector if company else "general",
-            tx.subcategory, tx.account_type, tx.category,
-            description=tx.description,
-        )
+        # Un cheque no genera regla (cada cheque es distinto; ver rules.is_check).
+        if not is_check(tx.description):
+            company = session.get(Company, tx.company_id)
+            upsert_company_rule(
+                session, tx.company_id, company.sector if company else "general",
+                tx.subcategory, tx.account_type, tx.category,
+                description=tx.description,
+            )
     session.add(tx)
     session.commit()
     session.refresh(tx)
@@ -296,10 +298,12 @@ def clarify_transaction(
     session.add(tx)
 
     # Memoria del cliente: crea/actualiza la regla de empresa (idempotente, frase específica).
-    upsert_company_rule(
-        session, tx.company_id, sector, cat.subcategory, cat.account_type, cat.category,
-        description=tx.description,
-    )
+    # Excepto cheques: cada uno es distinto, una regla sería errónea.
+    if not is_check(tx.description):
+        upsert_company_rule(
+            session, tx.company_id, sector, cat.subcategory, cat.account_type, cat.category,
+            description=tx.description,
+        )
 
     session.commit()
     session.refresh(tx)
@@ -339,11 +343,12 @@ def clarify_group(
         tx.source = "ai"
         session.add(tx)
 
-    # Una sola regla de empresa para la contraparte (memoria).
-    upsert_company_rule(
-        session, rep.company_id, sector, cat.subcategory, cat.account_type, cat.category,
-        description=rep.description,
-    )
+    # Una sola regla de empresa para la contraparte (memoria). Cheques no generan regla.
+    if not is_check(rep.description):
+        upsert_company_rule(
+            session, rep.company_id, sector, cat.subcategory, cat.account_type, cat.category,
+            description=rep.description,
+        )
 
     session.commit()
     return {"updated": len(txs)}
