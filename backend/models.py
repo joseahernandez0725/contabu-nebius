@@ -117,6 +117,9 @@ class Transaction(SQLModel, table=True):
     # Huella de contenido para DEDUPLICAR re-subidas/solapamientos: identifica el movimiento por
     # (date | description normalizada | monto con signo | cuenta). Ver docs/NOTAS IMPORTANTES.md.
     fingerprint: Optional[str] = Field(default=None, index=True)
+    # Número de CHEQUE (si el movimiento es un cheque). El banco da el número pero NO el beneficiario;
+    # se guarda para identificar el cheque (tu registro) y preguntar en revisión a qué corresponde.
+    check_number: Optional[str] = Field(default=None, index=True)
 
     # --- Datos que RELLENA ContaBu / la IA ---
     account_type: Optional[AccountType] = Field(default=None)  # sección del P&L (o NON_PL)

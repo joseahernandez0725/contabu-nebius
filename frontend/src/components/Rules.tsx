@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  getRules, updateRule, deleteRule, getCategories,
+  getRules, updateRule, deleteRule, cleanupRules, getCategories,
   type ChartOfAccounts, type Rule,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
@@ -48,6 +48,18 @@ export default function Rules() {
         <p className="text-sm text-slate-500 mt-1">
           {t("rules.subtitle", { defaultValue: "Your rulebook: each merchant maps to a category. Edit one and all its transactions update." })}
         </p>
+        {rules.some((r) => r.matches === 0) && (
+          <button
+            onClick={async () => {
+              const { removed } = await cleanupRules();
+              setNote(t("rules.cleaned", { defaultValue: "Removed {{count}} unused rules.", count: removed }));
+              load();
+            }}
+            className="mt-2 text-sm text-brand-green font-medium hover:underline"
+          >
+            {t("rules.cleanup", { defaultValue: "Clean unused rules" })} ({rules.filter((r) => r.matches === 0).length})
+          </button>
+        )}
       </div>
 
       {note && <div className="text-sm text-brand-green bg-brand-green/10 rounded-lg px-3 py-2">{note}</div>}

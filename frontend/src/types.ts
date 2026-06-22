@@ -16,6 +16,7 @@ export interface Transaction {
   amount: string; // viene como string (Decimal); convertir con Number()
   is_inflow: boolean | null; // dirección real del banco: true = entró plata, false = salió
   bank_account: string | null; // cuenta bancaria de origen (la detecta la IA del archivo)
+  check_number: string | null; // número de cheque (el banco lo da; el beneficiario no)
   account_type: AccountType | null;
   category: string | null;
   subcategory: string | null;

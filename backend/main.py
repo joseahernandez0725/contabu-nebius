@@ -551,6 +551,32 @@ def delete_rule(
     return {"deleted": rule_id}
 
 
+@app.post("/api/companies/{company_id}/rules/cleanup")
+def cleanup_rules(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Higiene: borra las reglas de empresa que **no matchean ninguna transacción** (afecta 0) —
+    reglas 'muertas' (ver IDEAS #4: las reglas se pudren). Devuelve cuántas eliminó."""
+    owned_company(company_id, user, session, write=True)
+    rules = session.exec(
+        select(CategoryRule)
+        .where(CategoryRule.scope == RuleScope.COMPANY)
+        .where(CategoryRule.company_id == company_id)
+    ).all()
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+    ).all()
+    removed = 0
+    for r in rules:
+        if not any(match_rule([r], t.description or "") is not None for t in txs):
+            session.delete(r)
+            removed += 1
+    session.commit()
+    return {"removed": removed}
+
+
 # --- P&L como PROYECTOS guardados (draft = recalcula en vivo · closed = congelado) ---
 
 def _pnl_jsonable(pnl: dict) -> dict:

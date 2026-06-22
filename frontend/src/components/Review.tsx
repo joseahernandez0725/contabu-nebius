@@ -24,7 +24,12 @@ function GroupCard({ group, onDone }: { group: Transaction[]; onDone: () => void
   const [error, setError] = useState<string | null>(null);
 
   const rep = group[0];
-  const name = rep.subcategory ?? rep.description;
+  // Cheque: el banco da el NÚMERO pero no el beneficiario → la pregunta se ancla al número
+  // ("¿a qué corresponde el cheque #X?") para que el usuario lo identifique en su registro.
+  const checkNo = isCheck(rep) ? rep.check_number : null;
+  const name = checkNo
+    ? `${t("review.checkLabel", { defaultValue: "Check" })} #${checkNo}`
+    : (rep.subcategory ?? rep.description);
   const count = group.length;
   const total = group.reduce((s, tx) => s + Number(tx.amount), 0);
   const dates = group.map((tx) => tx.date).sort();
@@ -32,9 +37,15 @@ function GroupCard({ group, onDone }: { group: Transaction[]; onDone: () => void
   // "pagaste" sale de si entró/salió plata, no de una categorización incierta.
   const income = rep.is_inflow ?? isIncome(rep);
 
-  // Pregunta natural y específica (nombre + monto + fecha/rango + dirección).
-  const question =
-    count === 1
+  // Pregunta natural y específica (nombre + monto + fecha/rango + dirección). Cheque = por número.
+  const question = checkNo
+    ? t("review.q.check", {
+        defaultValue: "Who was check #{{number}} paid to, and what for? ({{amount}} on {{date}})",
+        number: checkNo,
+        amount: money(total),
+        date: fmtDay(rep.date, lang),
+      })
+    : count === 1
       ? t(income ? "review.q.singleIn" : "review.q.singleOut", {
           name,
           amount: money(total),

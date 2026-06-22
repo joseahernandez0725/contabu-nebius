@@ -42,6 +42,20 @@ def is_check(description: Optional[str]) -> bool:
     return bool(description and _CHECK_RE.search(description))
 
 
+# Número de cheque tras la palabra "check" (ej. "CHECK 20169  04/01" → "20169"). Pide dígitos
+# inmediatamente después → NO matchea "ATM CHECK DEPOSIT" (un depósito, no un cheque emitido).
+_CHECK_NUM_RE = re.compile(r"\b(?:check|chk|cheque|e-?check)\s*#?\s*(\d+)", re.IGNORECASE)
+
+
+def check_number(description: Optional[str]) -> Optional[str]:
+    """Extrae el número de cheque de la descripción; None si no hay. El banco da el número pero
+    NO el beneficiario → se guarda para identificar el cheque y preguntar en revisión."""
+    if not description:
+        return None
+    m = _CHECK_NUM_RE.search(description)
+    return m.group(1) if m else None
+
+
 def normalize(text: str) -> str:
     """Normaliza una descripción para comparar: MAYÚSCULAS y solo alfanuméricos.
 
@@ -199,33 +213,52 @@ _STOPWORDS = {
 }
 
 
-def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
-    """Devuelve un `match_text` **específico**: una frase de ~2 palabras cuando sea posible,
-    para que el lookup no cree interferencias.
+def _phrase_in_description(dwords: list[str]) -> str:
+    """Una frase CONSECUTIVA presente en la descripción: 2 palabras significativas seguidas si las
+    hay, si no una sola palabra significativa, si no la primera palabra. Garantiza que `match_rule`
+    (que matchea por palabra/frase completa) **sí** la encuentre en la descripción."""
+    sig_idx = [i for i, w in enumerate(dwords)
+               if not w.isdigit() and len(w) >= 2 and w not in _STOPWORDS]
+    for i in sig_idx:  # 2 palabras significativas CONSECUTIVAS
+        if i + 1 < len(dwords):
+            nxt = dwords[i + 1]
+            if not nxt.isdigit() and len(nxt) >= 2 and nxt not in _STOPWORDS:
+                return f"{dwords[i]} {nxt}"
+    if sig_idx:
+        return dwords[sig_idx[0]]
+    return dwords[0] if dwords else ""
 
-    Prioriza el comercio (subcategory); si trae **una sola** palabra, intenta unirle una palabra
-    significativa contigua de la descripción → frase compuesta. Sin comercio: 2 palabras
-    significativas de la descripción. Devuelve MAYÚSCULAS (espejo de la subcategoría)."""
+
+def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
+    """Devuelve un `match_text` **específico** (~2 palabras) que **SÍ aparece en la descripción**,
+    para que la regla matchee al menos su transacción de origen (no nazca muerta).
+
+    Prioriza el comercio (subcategory) SOLO si sus palabras aparecen en la descripción; si el
+    comercio es un nombre sintetizado por la IA que no está en el texto crudo (p. ej. "CLIENT
+    PAYMENT" para "DEPOSIT ID NUMBER"), cae a una frase REAL tomada de la descripción."""
     mwords = _phrase(merchant or "").split()
     dwords = _phrase(description or "").split()
+    dtext = f" {' '.join(dwords)} "
 
+    # Comercio de ≥2 palabras: usarlo solo si aparece como frase consecutiva en la descripción.
     if len(mwords) >= 2:
-        return " ".join(mwords[:2])
+        cand = " ".join(mwords[:2])
+        if f" {cand} " in dtext:
+            return cand
 
-    if len(mwords) == 1:
+    # Comercio de 1 palabra: solo si está en la descripción. Se extiende con la palabra
+    # INMEDIATAMENTE siguiente (consecutiva) si es significativa; si no, se queda sola.
+    if len(mwords) == 1 and mwords[0] in dwords:
         w = mwords[0]
-        if w in dwords:
-            i = dwords.index(w)
-            for nxt in dwords[i + 1:]:
-                if not nxt.isdigit() and len(nxt) >= 2 and nxt not in _STOPWORDS:
-                    return f"{w} {nxt}"
-        return w  # comercio de una palabra sin vecino útil → se queda solo
+        i = dwords.index(w)
+        if i + 1 < len(dwords):
+            nxt = dwords[i + 1]
+            if not nxt.isdigit() and len(nxt) >= 2 and nxt not in _STOPWORDS:
+                return f"{w} {nxt}"
+        return w
 
-    # Sin comercio: primeras 2 palabras significativas de la descripción.
-    sig = [w for w in dwords if not w.isdigit() and len(w) >= 2 and w not in _STOPWORDS]
-    if len(sig) >= 2:
-        return " ".join(sig[:2])
-    return sig[0] if sig else (dwords[0] if dwords else "")
+    # El comercio no aparece en la descripción → tomar una frase real de la descripción.
+    return _phrase_in_description(dwords)
 
 
 def upsert_company_rule(

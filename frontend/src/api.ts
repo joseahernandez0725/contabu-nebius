@@ -235,6 +235,16 @@ export async function deleteRule(id: number): Promise<void> {
   if (!res.ok) throw new Error("No se pudo eliminar la regla");
 }
 
+// Higiene: borra las reglas que no matchean ninguna transacción (afecta 0). Devuelve cuántas borró.
+export async function cleanupRules(): Promise<{ removed: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/cleanup`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudieron limpiar las reglas");
+  return res.json();
+}
+
 // --- P&L como proyectos guardados (draft = recalcula · closed = congelado) ---
 export interface PnlReportMeta {
   id: number;

@@ -51,7 +51,7 @@ def is_pending(status: str | None) -> bool:
         return False
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
-from rules import amount_band_category, is_check, load_rules, match_rule
+from rules import amount_band_category, check_number, is_check, load_rules, match_rule
 
 
 def needs_human_review(description: str) -> bool:
@@ -329,7 +329,8 @@ def ingest_csv(
     for idx, (d, description, signed, account, fp) in enumerate(parsed):
         tx = Transaction(company_id=company_id, date=d, description=description,
                          amount=abs(signed), bank_account=account, fingerprint=fp,
-                         is_inflow=signed > 0)  # dirección real del banco (entró/salió)
+                         is_inflow=signed > 0,  # dirección real del banco (entró/salió)
+                         check_number=check_number(description))  # número de cheque (si lo es)
         if account:
             any_account = True
         source = None
