@@ -140,3 +140,34 @@ class CategoryRule(SQLModel, table=True):
     account_type: Optional[AccountType] = Field(default=None)  # sección a asignar
     category: str    # categoría a asignar
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CompanyCategory(SQLModel, table=True):
+    """Categoría PERSONALIZADA que una empresa agrega a su plan de cuentas (P&L personalizable, v1).
+
+    Se MEZCLA con el plan base del sector (ver `categories.categories_for_company`): aparece en el
+    selector de corrección y en el desglose del P&L. v1 = solo AGREGAR (no renombrar/ocultar/reordenar).
+    El `name` es el término contable (en inglés, regla de oro); el frontend lo traduce visualmente.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    account_type: AccountType  # sección del P&L a la que pertenece la categoría
+    name: str                  # nombre de la cuenta (inglés)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class PnlReport(SQLModel, table=True):
+    """Reporte de P&L guardado como 'proyecto'. Flujo de DOS estados:
+    - **draft**: se RECALCULA en vivo al abrirlo (refleja los datos actuales); `snapshot` = None.
+    - **closed**: CONGELADO; se guarda el P&L ya calculado en `snapshot` (JSON) y no cambia aunque
+      se suban más transacciones del período. Es el cierre profesional para presentar/declarar.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    name: str
+    start_date: Optional[date] = Field(default=None)
+    end_date: Optional[date] = Field(default=None)
+    status: str = Field(default="draft")             # "draft" | "closed"
+    snapshot: Optional[str] = Field(default=None)    # JSON del P&L congelado (solo si closed)
+    created_at: datetime = Field(default_factory=_utcnow)
+    closed_at: Optional[datetime] = Field(default=None)

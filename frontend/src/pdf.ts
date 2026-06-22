@@ -64,15 +64,33 @@ export function exportIncomeStatementPdf(
     y += opts.big ? 28 : 22;
   };
 
+  // Desglose por categoría de una sección (indentado, gris, más pequeño). Salto de página si hace falta.
+  const catLines = (section: string, expense = false) => {
+    const rows = is.breakdown?.[section] ?? [];
+    for (const r of rows) {
+      if (y > 720) { doc.addPage(); y = 64; }
+      doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(120);
+      doc.text(r.category, L + 16, y);
+      doc.text(acct(r.amount, expense), R, y, { align: "right" });
+      y += 15;
+    }
+    if (rows.length) y += 4;
+  };
+
   row("Revenue", is.revenue);
+  catLines("REVENUE");
   row("Cost of Goods Sold (COGS)", is.cogs, { expense: true });
+  catLines("COGS", true);
   row("Gross Profit", is.gross_profit, { strong: true });
   y += 6;
   row("Operating Expenses", is.operating_expenses, { expense: true });
+  catLines("OPERATING_EXPENSE", true);
   row("Operating Income", is.operating_income, { strong: true });
   y += 6;
   row("Other Income", is.other_income);
+  catLines("OTHER_INCOME");
   row("Other Expense", is.other_expense, { expense: true });
+  catLines("OTHER_EXPENSE", true);
   row("Net Income", is.net_income, { strong: true, big: true });
 
   // Pie

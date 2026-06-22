@@ -60,6 +60,63 @@ def needs_human_review(description: str) -> bool:
     return is_check(description) or bool(_AMBIGUOUS_RE.search(description or ""))
 
 
+# "Comercios" genéricos que NO representan una contraparte real (depósitos, pagadores desconocidos):
+# no se deben unificar entre sí (un "DEPOSIT" no es lo mismo que otro). Se comparan normalizados.
+_GENERIC_MERCHANTS = {
+    "UNKNOWN", "UNKNOWNPAYEE", "BANK", "BANKDEPOSIT", "DEPOSIT", "CASH", "CHECK", "OTHER", "NA",
+}
+
+
+def _merchant_key(subcategory: str | None) -> str | None:
+    """Clave normalizada del comercio para agrupar (solo alfanuméricos, MAYÚSCULAS).
+    Devuelve None si es vacío/corto o un 'comercio' genérico que no debe unificarse."""
+    if not subcategory:
+        return None
+    key = re.sub(r"[^A-Z0-9]", "", subcategory.upper())
+    if len(key) < 3 or key in _GENERIC_MERCHANTS:
+        return None
+    return key
+
+
+def unify_merchant_categorization(parsed: list[tuple], ai_cats: dict[int, object]) -> int:
+    """Consistencia INTRA-SUBIDA: el mismo comercio → la MISMA categorización en todo el archivo.
+
+    La IA categoriza fila por fila (aislada), así que el mismo comercio puede salir distinto
+    (ej. PAYROLL SERVICE como Direct Labor / Admin Wages / Legal & Professional). Aquí, para cada
+    comercio que aparece ≥2 veces, se toma la categorización de **mayor confianza** (su mejor
+    evidencia) y se aplica a TODAS sus apariciones (account_type, category, subcategory, confidence,
+    needs_review). Determinista, sin IA. Devuelve cuántas filas se ajustaron.
+
+    Se excluyen los movimientos ambiguos por naturaleza (cheques/depósitos/transferencias/remesas):
+    no son una contraparte recurrente y se resuelven en su propia capa de revisión."""
+    groups: dict[str, list[int]] = {}
+    for idx, cat in ai_cats.items():
+        if needs_human_review(parsed[idx][1]):
+            continue  # ambiguo por naturaleza → no se unifica
+        key = _merchant_key(getattr(cat, "subcategory", None))
+        if key:
+            groups.setdefault(key, []).append(idx)
+
+    adjusted = 0
+    for idxs in groups.values():
+        if len(idxs) < 2:
+            continue
+        canonical = max(idxs, key=lambda i: ai_cats[i].confidence or 0.0)
+        c = ai_cats[canonical]
+        for i in idxs:
+            cat = ai_cats[i]
+            if (cat.account_type, cat.category) != (c.account_type, c.category) \
+                    or cat.confidence != c.confidence:
+                adjusted += 1
+            cat.account_type = c.account_type
+            cat.category = c.category
+            cat.subcategory = c.subcategory
+            cat.confidence = c.confidence
+            cat.needs_review = c.needs_review
+            cat.review_question = c.review_question
+    return adjusted
+
+
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
     """Bytes de CSV → (headers, filas). Ignora líneas vacías. Maneja BOM de Excel."""
     text = content.decode("utf-8-sig", errors="replace")
@@ -257,6 +314,10 @@ def ingest_csv(
                 if cat is not None:
                     ai_cats[idx] = cat
 
+    # 3b) CONSISTENCIA intra-subida: el mismo comercio → la misma categorización (la de mayor
+    #     confianza) en todo el archivo. Corrige la incoherencia de categorizar fila por fila.
+    consistency_adjusted = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
+
     # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
     by_rule = 0
@@ -344,6 +405,8 @@ def ingest_csv(
         "by_rule": by_rule,
         "by_band": by_band,
         "by_ai": by_ai,
+        # Cuántas filas ajustó el pase de consistencia (mismo comercio → misma categoría).
+        "consistency_adjusted": consistency_adjusted,
         "dry_run": dry_run,
         "mapping": mapping.model_dump(),
         "preview": preview,

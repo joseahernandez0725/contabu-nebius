@@ -12,7 +12,8 @@ vocabulario de salida. Si algo genuinamente no encaja, la IA usa "Other" (no fue
 
 # Categorías comunes a TODOS los sectores (no dependen del giro).
 COMMON: dict[str, list[str]] = {
-    "OPERATING_EXPENSE": ["Office Expense", "Software", "Bank Fees", "Legal & Professional", "Meals"],
+    "OPERATING_EXPENSE": ["Office Expense", "Software", "Bank Fees", "Legal & Professional",
+                          "Meals", "Dues & Subscriptions", "Telephone & Internet", "Travel"],
     "OTHER_INCOME": ["Interest Income", "Refunds & Rebates"],
     "OTHER_EXPENSE": ["Interest Expense", "Taxes & Licenses"],
     "NON_PL": ["Owner Draw", "Owner Contribution", "Transfer", "Loan Proceeds",
@@ -22,30 +23,35 @@ COMMON: dict[str, list[str]] = {
 SECTOR_CATEGORIES: dict[str, dict[str, list[str]]] = {
     "construction": {
         "REVENUE": ["Construction Revenue"],
+        # COGS = costos DIRECTOS de obra (Schedule C "Supplies"/"Contract labor"). Small tools,
+        # trucking y disposal son COGS estándar del contratista (ver REFERENCIA CONTABLE §8).
         "COGS": ["Materials", "Subcontractors", "Direct Labor", "Equipment Rental",
-                 "Permits", "Equipment Fuel"],   # Equipment Fuel = combustible de maquinaria (en obra)
+                 "Small Tools & Equipment", "Permits", "Equipment Fuel",
+                 "Trucking & Hauling", "Dumping & Disposal"],   # Equipment Fuel = combustible de maquinaria
         "OPERATING_EXPENSE": ["Office Rent", "Insurance", "Marketing", "Admin Wages",
                               "Vehicle Fuel", "Vehicle Expenses", "Utilities",
                               "Repairs & Maintenance"],  # Vehicle Fuel = gasolina de auto/camión
     },
     "cleaning": {
         "REVENUE": ["Cleaning Revenue"],
-        "COGS": ["Cleaning Supplies", "Direct Labor", "Transportation"],
+        "COGS": ["Cleaning Supplies", "Direct Labor", "Subcontractors", "Transportation",
+                 "Small Tools & Equipment"],
         "OPERATING_EXPENSE": ["Insurance", "Marketing", "Equipment", "Admin Wages",
                               "Uniforms", "Vehicle Fuel", "Utilities"],
     },
     "restaurant": {
         "REVENUE": ["Food & Beverage Sales"],
         "COGS": ["Food Purchases", "Beverages", "Beer/Wine/Liquor", "Paper & Packaging"],
-        "OPERATING_EXPENSE": ["Rent", "Utilities", "Contract Cleaning", "Linens",
-                              "Repairs & Maintenance", "Marketing", "Front-of-House Wages"],
+        "OPERATING_EXPENSE": ["Rent", "Utilities", "Contract Cleaning", "Linens", "Smallwares",
+                              "Repairs & Maintenance", "Marketing", "Front-of-House Wages",
+                              "Kitchen Wages"],
     },
 }
 
 # Para sectores no reconocidos: un set genérico mínimo.
 GENERIC: dict[str, list[str]] = {
     "REVENUE": ["Sales Revenue", "Service Revenue"],
-    "COGS": ["Materials", "Direct Labor", "Subcontractors"],
+    "COGS": ["Materials", "Direct Labor", "Subcontractors", "Small Tools & Equipment"],
     "OPERATING_EXPENSE": ["Rent", "Insurance", "Marketing", "Wages", "Utilities",
                           "Vehicle Fuel", "Repairs & Maintenance"],
 }
@@ -70,6 +76,27 @@ def format_for_prompt(sector: str) -> str:
     return "\n".join(
         f"  {sec}: " + " | ".join(cats[sec]) for sec in _SECTIONS if cats[sec]
     )
+
+
+def categories_for_company(session, company_id: int, sector: str) -> dict[str, list[str]]:
+    """Plan de cuentas EFECTIVO de una empresa: el base del sector + sus categorías personalizadas
+    (P&L personalizable v1). Las personalizadas se agregan al final de su sección, sin duplicar.
+
+    Se usa en el endpoint de categorías (selector de corrección) y, así, en el P&L detallado.
+    """
+    from sqlmodel import select  # import local: categories.py se mantiene sin dependencias de DB salvo aquí
+    from models import CompanyCategory
+
+    out = {sec: list(cats) for sec, cats in categories_for(sector).items()}
+    customs = session.exec(
+        select(CompanyCategory).where(CompanyCategory.company_id == company_id)
+    ).all()
+    for c in customs:
+        sec = c.account_type.value
+        bucket = out.setdefault(sec, [])
+        if c.name not in bucket:
+            bucket.append(c.name)
+    return out
 
 
 if __name__ == "__main__":

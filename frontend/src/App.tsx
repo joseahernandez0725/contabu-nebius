@@ -5,6 +5,8 @@ import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
+import Rules from "./components/Rules";
+import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Login from "./components/Login";
 import LanguageSwitcher from "./components/LanguageSwitcher";
@@ -12,7 +14,7 @@ import { auth } from "./firebase";
 import { getMe, getReviewTransactions } from "./api";
 import type { Company, Transaction } from "./types";
 
-type View = "dashboard" | "transactions" | "review" | "upload" | "settings";
+type View = "dashboard" | "transactions" | "review" | "upload" | "pnl" | "rules" | "settings";
 
 function Logo() {
   return (
@@ -50,6 +52,16 @@ const ICONS: Partial<Record<View, ReactNode>> = {
       <path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" />
     </svg>
   ),
+  rules: (
+    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2" />
+    </svg>
+  ),
+  pnl: (
+    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19V5M4 19h16" /><path d="M8 16v-5M12 16V8M16 16v-3" />
+    </svg>
+  ),
 };
 
 function App() {
@@ -82,7 +94,7 @@ function App() {
       .catch(() => setAuthError(true));
   }, [fbUser, reloadReview]);
 
-  const views: View[] = ["dashboard", "transactions", "review", "upload"];
+  const views: View[] = ["dashboard", "transactions", "review", "pnl", "rules"];
 
   // Verificando sesión de Firebase.
   if (fbUser === undefined) {
@@ -145,10 +157,12 @@ function App() {
         ) : (
           <>
             {view === "dashboard" && (
-              <Dashboard companyName={company.name} onUpload={() => setView("upload")} />
+              <Dashboard onNavigate={setView} />
             )}
             {view === "transactions" && <Transactions />}
             {view === "review" && <Review items={reviewTxs} reload={reloadReview} />}
+            {view === "pnl" && <Pnl companyName={company.name} />}
+            {view === "rules" && <Rules />}
             {view === "upload" && (
               <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
             )}
@@ -158,7 +172,7 @@ function App() {
       </main>
 
       <nav className="fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-slate-200">
-        <div className="max-w-2xl mx-auto grid grid-cols-4">
+        <div className="max-w-2xl mx-auto grid grid-cols-5">
           {views.map((id) => {
             const active = view === id;
             const count = id === "review" ? reviewTxs.length : 0;

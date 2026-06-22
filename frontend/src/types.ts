@@ -37,6 +37,11 @@ export interface Company {
   created_at: string;
 }
 
+export interface CategoryAmount {
+  category: string;
+  amount: number;
+}
+
 export interface IncomeStatement {
   revenue: number;
   cogs: number;
@@ -46,4 +51,6 @@ export interface IncomeStatement {
   other_income: number;
   other_expense: number;
   net_income: number;
+  // Desglose por categoría de cada sección (clave = account_type: REVENUE, COGS, …).
+  breakdown?: Record<string, CategoryAmount[]>;
 }

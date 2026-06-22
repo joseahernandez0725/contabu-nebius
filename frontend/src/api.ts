@@ -71,6 +71,131 @@ export async function getCategories(): Promise<ChartOfAccounts> {
   return res.json();
 }
 
+// --- Categorías personalizadas (P&L personalizable v1) ---
+export interface CustomCategory {
+  id: number;
+  account_type: string;
+  name: string;
+}
+
+export async function getCustomCategories(): Promise<CustomCategory[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/custom-categories`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudieron cargar las categorías personalizadas");
+  return res.json();
+}
+
+export async function addCustomCategory(account_type: string, name: string): Promise<CustomCategory> {
+  const res = await fetch(`${API}/api/companies/${cid()}/custom-categories`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ account_type, name }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "No se pudo agregar la categoría");
+  }
+  return res.json();
+}
+
+export async function deleteCustomCategory(id: number): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/custom-categories/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudo eliminar la categoría");
+}
+
+// --- Tabla de reglas editable (comercio → categoría) ---
+export interface Rule {
+  id: number;
+  match_text: string;
+  account_type: string | null;
+  category: string;
+  matches: number; // cuántas transacciones afecta
+}
+
+export async function getRules(): Promise<Rule[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudieron cargar las reglas");
+  return res.json();
+}
+
+export async function updateRule(
+  id: number,
+  payload: { account_type: string; category: string },
+): Promise<{ applied: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("No se pudo actualizar la regla");
+  return res.json();
+}
+
+export async function deleteRule(id: number): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudo eliminar la regla");
+}
+
+// --- P&L como proyectos guardados (draft = recalcula · closed = congelado) ---
+export interface PnlReportMeta {
+  id: number;
+  name: string;
+  start: string | null;
+  end: string | null;
+  status: "draft" | "closed";
+  closed_at?: string | null;
+  net_income?: number;
+}
+export interface PnlReportDetail extends PnlReportMeta {
+  pnl: IncomeStatement;
+}
+
+const RBASE = () => `${API}/api/companies/${cid()}/pnl-reports`;
+
+export async function listPnlReports(): Promise<PnlReportMeta[]> {
+  const res = await fetch(RBASE(), { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudieron cargar los reportes");
+  return res.json();
+}
+
+export async function createPnlReport(name: string, start?: string, end?: string): Promise<PnlReportMeta> {
+  const res = await fetch(RBASE(), {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, start: start || null, end: end || null }),
+  });
+  if (!res.ok) throw new Error("No se pudo crear el reporte");
+  return res.json();
+}
+
+export async function getPnlReport(id: number): Promise<PnlReportDetail> {
+  const res = await fetch(`${RBASE()}/${id}`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo abrir el reporte");
+  return res.json();
+}
+
+export async function closePnlReport(id: number): Promise<PnlReportMeta> {
+  const res = await fetch(`${RBASE()}/${id}/close`, { method: "POST", headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo cerrar el reporte");
+  return res.json();
+}
+
+export async function reopenPnlReport(id: number): Promise<PnlReportMeta> {
+  const res = await fetch(`${RBASE()}/${id}/reopen`, { method: "POST", headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo reabrir el reporte");
+  return res.json();
+}
+
+export async function deletePnlReport(id: number): Promise<void> {
+  const res = await fetch(`${RBASE()}/${id}`, { method: "DELETE", headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo eliminar el reporte");
+}
+
 // P&L, opcionalmente acotado por rango de fechas (YYYY-MM-DD).
 export async function getIncomeStatement(start?: string, end?: string): Promise<IncomeStatement> {
   const q = new URLSearchParams();

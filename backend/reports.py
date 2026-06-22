@@ -16,7 +16,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from db import engine
-from models import AccountType, Company, Transaction
+from models import AccountType, Company, CompanyCategory, Transaction
 
 ZERO = Decimal("0.00")
 
@@ -40,13 +40,66 @@ def _section_totals(
     return {at: total for at, total in session.exec(stmt).all() if at is not None}
 
 
+# Secciones que SÍ se desglosan por categoría en el P&L (NON_PL se excluye del estado de resultados).
+_PL_SECTIONS = (
+    AccountType.REVENUE, AccountType.COGS, AccountType.OPERATING_EXPENSE,
+    AccountType.OTHER_INCOME, AccountType.OTHER_EXPENSE,
+)
+
+
+def _category_breakdown(
+    session: Session,
+    company_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> dict[str, list[dict]]:
+    """SUM(amount) agrupado por (account_type, category) — el desglose de cada sección del P&L.
+
+    Devuelve {section: [{"category": str, "amount": Decimal}, ...]} con las categorías
+    ordenadas de mayor a menor monto. Lo calcula SQL (regla de oro), no la IA.
+    """
+    stmt = (
+        select(Transaction.account_type, Transaction.category, func.sum(Transaction.amount))
+        .where(Transaction.company_id == company_id)
+        .group_by(Transaction.account_type, Transaction.category)
+    )
+    if start is not None:
+        stmt = stmt.where(Transaction.date >= start)
+    if end is not None:
+        stmt = stmt.where(Transaction.date <= end)
+
+    out: dict[str, list[dict]] = {s.value: [] for s in _PL_SECTIONS}
+    seen: dict[str, set[str]] = {s.value: set() for s in _PL_SECTIONS}
+    for at, category, total in session.exec(stmt).all():
+        if at in _PL_SECTIONS:
+            name = category or "Other"
+            out[at.value].append({"category": name, "amount": total or ZERO})
+            seen[at.value].add(name)
+
+    # Categorías PERSONALIZADAS de la empresa: aparecen SIEMPRE en el P&L (aunque estén en 0.00),
+    # para que el dueño pueda estructurar/personalizar su estado de resultados a su gusto.
+    customs = session.exec(
+        select(CompanyCategory).where(CompanyCategory.company_id == company_id)
+    ).all()
+    for c in customs:
+        sec = c.account_type.value
+        if sec in out and c.name not in seen[sec]:
+            out[sec].append({"category": c.name, "amount": ZERO})
+            seen[sec].add(c.name)
+
+    for rows in out.values():
+        rows.sort(key=lambda r: r["amount"], reverse=True)
+    return out
+
+
 def income_statement(
     session: Session,
     company_id: int,
     start: Optional[date] = None,
     end: Optional[date] = None,
-) -> dict[str, Decimal]:
-    """Construye el P&L con la aritmética estándar. NON_PL se ignora. Opcional: rango de fechas."""
+) -> dict[str, object]:
+    """Construye el P&L con la aritmética estándar + el desglose por categoría de cada sección.
+    NON_PL se ignora. Opcional: rango de fechas."""
     t = _section_totals(session, company_id, start, end)
 
     revenue = t.get(AccountType.REVENUE, ZERO)
@@ -69,6 +122,8 @@ def income_statement(
         "other_income": other_income,
         "other_expense": other_expense,
         "net_income": net_income,
+        # Desglose por categoría de cada sección (para el P&L detallado).
+        "breakdown": _category_breakdown(session, company_id, start, end),
     }
 
 

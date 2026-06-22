@@ -19,7 +19,7 @@ from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from merchants import GAS_STATIONS, SUPERMARKETS
-from models import AccountType, CategoryRule, RuleScope
+from models import AccountType, CategoryRule, RuleScope, Transaction
 
 # Umbrales por defecto si la empresa no fijó los suyos (editables por empresa, ver Company).
 # Gasolinera $30: bajo eso suele ser combustible de equipos o compras pequeñas en la tienda;
@@ -30,6 +30,11 @@ DEFAULT_GAS_STATION_THRESHOLD = Decimal("30")
 # Un CHEQUE es un método de pago, no una contraparte: cada cheque puede ser para algo distinto
 # (no se puede agrupar) y su descripción ("CHECK #1234") es única → NO sirve crear una regla.
 _CHECK_RE = re.compile(r"\b(check|chk|cheque|e-?check)\b", re.IGNORECASE)
+
+# Cargos que NO son una compra en el comercio sino una cuota/membresía/renovación (ej.
+# "COSTCO *ANNUAL RENEWAL"): la banda de monto por supermercado/gasolinera NO aplica (no es ni
+# comida ni combustible ni un retiro personal) → dejar que la IA lo categorice (Dues/Office Expense).
+_MEMBERSHIP_RE = re.compile(r"\b(membership|annual|renewal|renew|subscription|dues|fee)\b", re.IGNORECASE)
 
 
 def is_check(description: Optional[str]) -> bool:
@@ -100,6 +105,40 @@ def find_matching_rule(
     return match_rule(load_rules(session, company_id, sector), description)
 
 
+def apply_rule_to_transactions(
+    session: Session, company_id: int, rule: CategoryRule, exclude_id: int | None = None
+) -> int:
+    """Aplica una regla a las transacciones YA EXISTENTES del mismo comercio (corregir una → corregir
+    todas). Actualiza account_type/category de las que matchean la regla y aún no coinciden. Deja la
+    `subcategory` (el comercio específico) de cada una. Devuelve cuántas actualizó.
+
+    Se llama tras una corrección manual: el dueño arregla un movimiento y todas las demás del mismo
+    comercio se alinean de una vez (consistencia retroactiva)."""
+    if rule is None or rule.account_type is None:
+        return 0
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+    ).all()
+    updated = 0
+    for t in txs:
+        if exclude_id is not None and t.id == exclude_id:
+            continue
+        if is_check(t.description):
+            continue  # los cheques no se agrupan por comercio
+        if match_rule([rule], t.description or "") is None:
+            continue
+        if (t.account_type, t.category) == (rule.account_type, rule.category):
+            continue  # ya está alineada
+        t.account_type = rule.account_type
+        t.category = rule.category
+        t.source = "rule"
+        t.needs_review = False
+        t.review_question = None
+        session.add(t)
+        updated += 1
+    return updated
+
+
 def classify_merchant(description: str) -> Optional[str]:
     """¿La descripción es de una gasolinera o un supermercado? → "gas_station" | "supermarket" | None.
 
@@ -129,6 +168,11 @@ def amount_band_category(
     Supermercado:  < umbral → comida (Meals, OpEx) · ≥ umbral → personal (Owner Draw, NON_PL)
     Gasolinera:    < umbral → maquinaria (Equipment Fuel, COGS) · ≥ umbral → vehículo (Vehicle Fuel, OpEx)
     """
+    # Cuota/membresía/renovación (ej. "COSTCO *ANNUAL RENEWAL"): no es compra de comida/combustible
+    # ni retiro → la banda NO aplica; que la IA decida (evita el falso "Owner Draw @1.00").
+    if _MEMBERSHIP_RE.search(description or ""):
+        return None
+
     kind = classify_merchant(description)
     if kind is None:
         return None

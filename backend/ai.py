@@ -38,7 +38,13 @@ _RETRY_CODES = {429, 500, 502, 503, 504}
 
 
 class Categorization(BaseModel):
-    """Resultado de categorizar una transacción: los 3 niveles del plan de cuentas (en inglés)."""
+    """Resultado de categorizar una transacción: los 3 niveles del plan de cuentas (en inglés).
+
+    `reasoning` va PRIMERO a propósito: con structured output el orden de los campos = orden de
+    generación, así la IA expone la evidencia (comercio, dirección, monto) ANTES de decidir
+    account_type/category (chain-of-thought) → mejor precisión + transparencia para el dueño/firma.
+    """
+    reasoning: str             # evidencia breve antes de decidir (1 frase, en inglés)
     account_type: AccountType  # sección del P&L
     category: str              # cuenta contable, p. ej. "Materials"
     subcategory: str           # nombre del comercio/empresa, p. ej. "Home Depot"
@@ -96,6 +102,9 @@ def categorize_transaction(description: str, amount: float, sector: str) -> Cate
 3-level chart of accounts. The business operates in the "{sector}" sector.
 
 For the transaction below, return (all in English):
+- reasoning: FIRST, in ONE short sentence, state the evidence — who the merchant/counterparty is,
+  whether money came IN or OUT, and what the amount suggests — and which P&L section it implies.
+  Decide every field below FROM this reasoning (do not contradict it).
 - account_type: exactly one of:
   REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
   (COGS = direct costs of producing the product/service; OPERATING_EXPENSE = overhead.)
@@ -106,6 +115,14 @@ For the transaction below, return (all in English):
   belong to the account_type you assigned. If nothing truly fits, use "Other". Do NOT invent names.
 - subcategory: the SPECIFIC merchant or company name, e.g. "Home Depot", "Shell".
 - confidence: 0.0 to 1.0.
+- needs_review: true when the transaction is genuinely ambiguous and a human should confirm —
+  e.g. person-to-person transfers (Zelle/Venmo/Quickpay to a person could be a subcontractor, an
+  owner draw, or a customer payment), generic deposits with no identifiable payer, remittances,
+  unclear merchants, or whenever your confidence is below 0.8. When in doubt, prefer needs_review
+  over guessing — a wrong confident guess corrupts the books.
+- review_question: if needs_review is true, a short, friendly question for the business owner that
+  would resolve it (e.g. "Was the $1,920 Zelle to watson yu a subcontractor or your own draw?").
+  If needs_review is false, return an empty string "".
 
 Chart of accounts for the "{sector}" sector (pick category from the matching account_type):
 {format_for_prompt(sector)}
@@ -136,7 +153,8 @@ Choose `category` from the closed chart of accounts below; it MUST belong to the
 (if nothing fits, use "Other"):
 {format_for_prompt(sector)}
 
-Return account_type, category, subcategory, confidence, needs_review, review_question.
+Return reasoning (one short sentence with the evidence, FIRST), then account_type, category,
+subcategory, confidence, needs_review, review_question.
 (COGS = direct cost of the product/service sold; OPERATING_EXPENSE = overhead; NON_PL =
 transfers between the owner's own accounts, owner draws, loan principal, credit-card payments.)
 With the owner's explanation you should normally be confident: set needs_review=false and
@@ -165,9 +183,11 @@ def categorize_batch(items: list[dict], sector: str) -> list[Categorization]:
 3-level chart of accounts. The business operates in the "{sector}" sector.
 
 Categorize EACH transaction below. Return a JSON array with ONE object per transaction,
-in the SAME ORDER, each with: account_type, category, subcategory, confidence,
+in the SAME ORDER, each with: reasoning, account_type, category, subcategory, confidence,
 needs_review, review_question.
 
+- reasoning: FIRST, one short sentence with the evidence (merchant/counterparty, money in/out,
+  amount) and the P&L section it implies. Decide the other fields FROM it.
 - account_type: one of REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
   COGS = direct cost of producing the product/service sold. OPERATING_EXPENSE = overhead.
   NON_PL = transfers between the owner's own accounts, owner draws/contributions, loan

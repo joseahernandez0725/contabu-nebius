@@ -162,11 +162,16 @@ export default function Transactions() {
                   </td>
                   <td className="px-2 py-2.5 text-slate-800 whitespace-nowrap">
                     {tx.category ?? "—"}
-                    {tx.confidence != null && (
+                    {tx.source === "rule" ? (
+                      // Vino de la TABLA de reglas (no la IA): se marca "rule", sin porcentaje.
+                      <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-green/80 bg-brand-green/10 rounded px-1 py-0.5">
+                        rule
+                      </span>
+                    ) : tx.source === "ai" && tx.confidence != null ? (
                       <span className="ms-1 text-[10px] text-slate-400 tabular-nums">
                         {Math.round(tx.confidence * 100)}%
                       </span>
-                    )}
+                    ) : null}
                   </td>
                   <td className="px-2 py-2.5 text-slate-500 max-w-[6rem] truncate uppercase">{tx.subcategory ?? "—"}</td>
                   <td className={`px-3 py-2.5 text-end tabular-nums font-medium whitespace-nowrap ${
