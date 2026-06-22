@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   updateThresholds, getCategories, getCustomCategories, addCustomCategory,
-  deleteCustomCategory, type ChartOfAccounts, type CustomCategory,
+  deleteCustomCategory, updateCompany, deleteCompany,
+  getMembers, inviteMember, updateMemberRole, removeMember,
+  type ChartOfAccounts, type CustomCategory, type Member,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import type { Company } from "../types";
@@ -16,9 +18,13 @@ const PL_SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OT
 export default function Settings({
   company,
   onSaved,
+  onDeleted,
+  canDelete,
 }: {
   company: Company | null;
   onSaved: (c: Company) => void;
+  onDeleted: () => void;
+  canDelete: boolean;
 }) {
   const { t } = useTranslation();
   const [supermarket, setSupermarket] = useState(
@@ -53,6 +59,10 @@ export default function Settings({
     }
   }
 
+  const role = company?.role ?? "OWNER";
+  const isOwner = role === "OWNER";
+  const canEdit = role !== "VIEWER";
+
   return (
     <div className="space-y-5">
       <div>
@@ -60,50 +70,204 @@ export default function Settings({
         <p className="text-sm text-slate-500 mt-1">{t("settings.subtitle")}</p>
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-5">
-        <ThresholdField
-          label={t("settings.gasLabel")}
-          help={t("settings.gasHelp", { amount: gas })}
-          value={gas}
-          onChange={(n) => { setGas(n); setSaved(false); }}
-        />
-        <div className="border-t border-slate-100" />
-        <ThresholdField
-          label={t("settings.superLabel")}
-          help={t("settings.superHelp", { amount: supermarket })}
-          value={supermarket}
-          onChange={(n) => { setSupermarket(n); setSaved(false); }}
-        />
-        <div className="border-t border-slate-100" />
-        <div>
-          <label className="block text-sm font-medium text-slate-800">{t("settings.settleLabel")}</label>
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              type="number"
-              min={0}
-              inputMode="numeric"
-              value={settlement}
-              onChange={(e) => { setSettlement(Number(e.target.value)); setSaved(false); }}
-              className="w-28 rounded-lg border border-slate-200 px-3 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+      {isOwner && company && (
+        <BusinessProfile company={company} canDelete={canDelete} onSaved={onSaved} onDeleted={onDeleted} />
+      )}
+
+      {canEdit && (
+        <>
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-5">
+            <ThresholdField
+              label={t("settings.gasLabel")}
+              help={t("settings.gasHelp", { amount: gas })}
+              value={gas}
+              onChange={(n) => { setGas(n); setSaved(false); }}
             />
-            <span className="text-slate-400">{t("settings.days")}</span>
+            <div className="border-t border-slate-100" />
+            <ThresholdField
+              label={t("settings.superLabel")}
+              help={t("settings.superHelp", { amount: supermarket })}
+              value={supermarket}
+              onChange={(n) => { setSupermarket(n); setSaved(false); }}
+            />
+            <div className="border-t border-slate-100" />
+            <div>
+              <label className="block text-sm font-medium text-slate-800">{t("settings.settleLabel")}</label>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  inputMode="numeric"
+                  value={settlement}
+                  onChange={(e) => { setSettlement(Number(e.target.value)); setSaved(false); }}
+                  className="w-28 rounded-lg border border-slate-200 px-3 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+                />
+                <span className="text-slate-400">{t("settings.days")}</span>
+              </div>
+              <p className="text-xs text-slate-500 mt-2">{t("settings.settleHelp", { count: settlement })}</p>
+            </div>
           </div>
-          <p className="text-xs text-slate-500 mt-2">{t("settings.settleHelp", { count: settlement })}</p>
+
+          {error && <div className="text-sm text-rose-600">{error}</div>}
+
+          <button
+            onClick={save}
+            disabled={saving}
+            className="w-full py-3 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
+            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+          >
+            {saving ? t("settings.saving") : saved ? t("settings.saved") : t("settings.save")}
+          </button>
+
+          <ChartEditor />
+        </>
+      )}
+
+      {isOwner && company && <TeamSection />}
+
+      {!canEdit && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 text-sm text-slate-500">
+          {t("settings.viewerNote", { defaultValue: "You have view-only access to this business." })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Equipo de la empresa (roles y permisos). Solo el OWNER. Invitar por email, cambiar rol, quitar.
+function TeamSection() {
+  const { t } = useTranslation();
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("MEMBER");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = () => getMembers().then(setMembers).catch(() => setMembers([]));
+  useEffect(() => { load(); }, []);
+
+  async function invite() {
+    if (!email.trim()) return;
+    setBusy(true); setErr(null);
+    try { await inviteMember(email.trim(), role); setEmail(""); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : "Error"); }
+    finally { setBusy(false); }
+  }
+
+  const roleLabel = (r: string) => t(`settings.role.${r}`, { defaultValue: r });
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
+      <div>
+        <h3 className="font-semibold text-slate-900">{t("settings.team", { defaultValue: "Team" })}</h3>
+        <p className="text-xs text-slate-500 mt-1">
+          {t("settings.teamHelp", { defaultValue: "Invite your team. Member = can edit · Viewer = read-only." })}
+        </p>
       </div>
 
-      {error && <div className="text-sm text-rose-600">{error}</div>}
+      <div className="space-y-1">
+        {(members ?? []).map((m) => (
+          <div key={m.id ?? "owner"} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+            <span className="min-w-0 flex-1 truncate text-slate-700">
+              {m.email ?? "—"}
+              {m.pending && <span className="ms-1 text-[10px] uppercase text-amber-600 bg-amber-50 rounded px-1">{t("settings.pending", { defaultValue: "pending" })}</span>}
+            </span>
+            {m.is_owner ? (
+              <span className="text-xs text-slate-500">{roleLabel("OWNER")}</span>
+            ) : (
+              <>
+                <select
+                  value={m.role}
+                  onChange={async (e) => { await updateMemberRole(m.id!, e.target.value); load(); }}
+                  className="text-xs rounded-lg border border-slate-200 px-2 py-1 focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+                >
+                  <option value="MEMBER">{roleLabel("MEMBER")}</option>
+                  <option value="VIEWER">{roleLabel("VIEWER")}</option>
+                </select>
+                <button onClick={async () => { await removeMember(m.id!); load(); }}
+                  className="text-slate-400 hover:text-rose-600" aria-label="remove">
+                  <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" />
+                  </svg>
+                </button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
 
-      <button
-        onClick={save}
-        disabled={saving}
-        className="w-full py-3 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
-        style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-      >
-        {saving ? t("settings.saving") : saved ? t("settings.saved") : t("settings.save")}
-      </button>
+      {err && <div className="text-sm text-rose-600">{err}</div>}
 
-      <ChartEditor />
+      <div className="flex items-center gap-2 border-t border-slate-100 pt-3">
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder={t("settings.invitePlaceholder", { defaultValue: "teammate@email.com" })}
+          className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+        />
+        <select value={role} onChange={(e) => setRole(e.target.value)}
+          className="text-sm rounded-lg border border-slate-200 px-2 py-2 focus:outline-none focus:ring-2 focus:ring-brand-green/40">
+          <option value="MEMBER">{roleLabel("MEMBER")}</option>
+          <option value="VIEWER">{roleLabel("VIEWER")}</option>
+        </select>
+        <button onClick={invite} disabled={busy || !email.trim()}
+          className="px-3 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
+          style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
+          {t("settings.invite", { defaultValue: "Invite" })}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Perfil de la empresa activa: renombrar + eliminar (con todos sus datos).
+function BusinessProfile({ company, canDelete, onSaved, onDeleted }: {
+  company: Company; canDelete: boolean; onSaved: (c: Company) => void; onDeleted: () => void;
+}) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(company.name);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function rename() {
+    if (!name.trim() || name.trim() === company.name) return;
+    setSaving(true); setErr(null);
+    try { onSaved(await updateCompany({ name: name.trim() })); }
+    catch (e) { setErr(e instanceof Error ? e.message : "Error"); }
+    finally { setSaving(false); }
+  }
+  async function remove() {
+    if (!confirm(t("settings.confirmDelete", { defaultValue: "Delete this business and ALL its data? This can't be undone." }))) return;
+    setDeleting(true); setErr(null);
+    try { await deleteCompany(company.id); onDeleted(); }
+    catch (e) { setErr(e instanceof Error ? e.message : "Error"); setDeleting(false); }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
+      <h3 className="font-semibold text-slate-900">{t("settings.business", { defaultValue: "Business" })}</h3>
+      <div>
+        <label className="block text-sm font-medium text-slate-800 mb-1">{t("settings.nameLabel", { defaultValue: "Name" })}</label>
+        <div className="flex gap-2">
+          <input value={name} onChange={(e) => setName(e.target.value)}
+            className="flex-1 rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
+          <button onClick={rename} disabled={saving || !name.trim() || name.trim() === company.name}
+            className="px-4 rounded-lg font-medium text-white disabled:opacity-50"
+            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
+            {saving ? t("settings.saving") : t("settings.rename", { defaultValue: "Rename" })}
+          </button>
+        </div>
+      </div>
+      {err && <div className="text-sm text-rose-600">{err}</div>}
+      <div className="border-t border-slate-100 pt-3">
+        <button onClick={remove} disabled={!canDelete || deleting}
+          className="text-sm text-rose-600 font-medium disabled:opacity-40 disabled:cursor-not-allowed">
+          {deleting ? t("settings.deleting", { defaultValue: "Deleting…" }) : t("settings.deleteBusiness", { defaultValue: "Delete this business" })}
+        </button>
+        {!canDelete && <p className="text-xs text-slate-400 mt-1">{t("settings.cantDeleteLast", { defaultValue: "You can't delete your only business." })}</p>}
+      </div>
     </div>
   );
 }

@@ -34,6 +34,18 @@ class RuleScope(str, Enum):
     COMPANY = "COMPANY"  # privada de una empresa (plan Pro); la IA la propone
 
 
+class Role(str, Enum):
+    """Rol de un usuario sobre una empresa (roles y permisos por empresa).
+
+    - OWNER: control total (gestiona el equipo, renombra, elimina). Es `Company.user_id` (implícito).
+    - MEMBER: puede editar (subir, categorizar, reglas, P&L), pero NO gestionar equipo ni eliminar.
+    - VIEWER: solo lectura (ver P&L/movimientos/reglas); el backend rechaza sus escrituras.
+    """
+    OWNER = "OWNER"
+    MEMBER = "MEMBER"
+    VIEWER = "VIEWER"
+
+
 class AccountType(str, Enum):
     """Sección del estado de resultados (P&L). Conjunto ESTÁNDAR y cerrado.
 
@@ -153,6 +165,22 @@ class CompanyCategory(SQLModel, table=True):
     company_id: int = Field(foreign_key="company.id", index=True)
     account_type: AccountType  # sección del P&L a la que pertenece la categoría
     name: str                  # nombre de la cuenta (inglés)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CompanyMember(SQLModel, table=True):
+    """Miembro INVITADO de una empresa (roles y permisos por empresa).
+
+    El **dueño** (OWNER) es `Company.user_id` y NO se guarda aquí. Esta tabla son los invitados
+    (MEMBER/VIEWER) — el caso de una firma de bookkeeping que da acceso a su equipo. `user_id` es
+    null mientras la invitación está **pendiente** (solo se conoce el email); al hacer login con ese
+    email se enlaza el `user_id` (ver `auth.current_user`). Único por (company_id, email).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    email: str = Field(index=True)  # email del invitado (para enlazar al hacer login)
+    role: Role = Field(default=Role.MEMBER)  # MEMBER | VIEWER (OWNER es el Company.user_id)
     created_at: datetime = Field(default_factory=_utcnow)
 
 

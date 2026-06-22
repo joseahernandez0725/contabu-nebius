@@ -8,10 +8,12 @@ import Review from "./components/Review";
 import Rules from "./components/Rules";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
+import Onboarding from "./components/Onboarding";
 import Login from "./components/Login";
 import LanguageSwitcher from "./components/LanguageSwitcher";
+import CompanySwitcher from "./components/CompanySwitcher";
 import { auth } from "./firebase";
-import { getMe, getReviewTransactions } from "./api";
+import { getCompanies, setActiveCompany, createCompany, getReviewTransactions } from "./api";
 import type { Company, Transaction } from "./types";
 
 type View = "dashboard" | "transactions" | "review" | "upload" | "pnl" | "rules" | "settings";
@@ -68,6 +70,7 @@ function App() {
   const { t } = useTranslation();
   const [view, setView] = useState<View>("dashboard");
   const [company, setCompany] = useState<Company | null>(null);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [authError, setAuthError] = useState(false);
   const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
@@ -81,16 +84,48 @@ function App() {
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setFbUser(u);
-      if (!u) { setCompany(null); setReviewTxs([]); }
+      if (!u) { setCompany(null); setCompanies([]); setReviewTxs([]); }
     });
   }, []);
+
+  // Cambia la empresa activa (todas las llamadas usan la activa). El `key` del main fuerza recarga.
+  const switchCompany = (c: Company) => {
+    setActiveCompany(c.id);
+    setCompany(c);
+    setView("dashboard");
+    reloadReview();
+  };
+
+  // Crea una empresa nueva bajo la cuenta → se vuelve activa (sin sector → onboarding).
+  const addCompany = async () => {
+    const c = await createCompany();
+    setActiveCompany(c.id);
+    setCompanies((prev) => [...prev, c]);
+    setCompany(c);
+    setView("dashboard");
+    setReviewTxs([]);
+  };
+
+  // Tras el onboarding o renombrar: refleja nombre/sector en la empresa activa y en la lista.
+  const onCompanyReady = (c: Company) => {
+    setCompany(c);
+    setCompanies((prev) => (prev.some((p) => p.id === c.id) ? prev.map((p) => (p.id === c.id ? c : p)) : [...prev, c]));
+  };
+
+  // Tras eliminar la empresa activa: quitarla de la lista y cambiar a otra (el backend impide borrar la última).
+  const onCompanyDeleted = () => {
+    if (!company) return;
+    const remaining = companies.filter((c) => c.id !== company.id);
+    setCompanies(remaining);
+    if (remaining.length > 0) switchCompany(remaining[0]);
+  };
 
   // Con sesión, inicia la app (getMe fija la empresa activa) y carga las revisiones.
   useEffect(() => {
     if (!fbUser) return;
     setAuthError(false);
-    getMe()
-      .then((c) => { setCompany(c); reloadReview(); })
+    getCompanies()
+      .then((cs) => { setCompanies(cs); setCompany(cs[0] ?? null); reloadReview(); })
       .catch(() => setAuthError(true));
   }, [fbUser, reloadReview]);
 
@@ -107,6 +142,9 @@ function App() {
   // Sin sesión → pantalla de acceso.
   if (fbUser === null) return <Login />;
 
+  // Empresa cargada pero SIN sector elegido → onboarding (elegir sector antes de usar la app).
+  if (company && !company.sector) return <Onboarding company={company} onDone={onCompanyReady} />;
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-200">
@@ -117,7 +155,11 @@ function App() {
               <span className="text-brand-amber">Conta</span>
               <span className="text-brand-green">Bu</span>
             </div>
-            <div className="text-xs text-slate-500 truncate">{company?.name ?? "…"}</div>
+            {company && companies.length > 0 ? (
+              <CompanySwitcher companies={companies} activeId={company.id} onSwitch={switchCompany} onAdd={addCompany} />
+            ) : (
+              <div className="text-xs text-slate-500 truncate">{company?.name ?? "…"}</div>
+            )}
           </div>
           <LanguageSwitcher />
           <button
@@ -155,7 +197,7 @@ function App() {
             )}
           </div>
         ) : (
-          <>
+          <div key={company.id}>
             {view === "dashboard" && (
               <Dashboard onNavigate={setView} />
             )}
@@ -166,8 +208,10 @@ function App() {
             {view === "upload" && (
               <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
             )}
-            {view === "settings" && <Settings company={company} onSaved={setCompany} />}
-          </>
+            {view === "settings" && (
+              <Settings company={company} onSaved={onCompanyReady} onDeleted={onCompanyDeleted} canDelete={companies.length > 1} />
+            )}
+          </div>
         )}
       </main>
 

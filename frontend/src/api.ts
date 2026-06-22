@@ -23,6 +23,7 @@ function cid(): number {
 interface Me {
   user: { id: number; firebase_uid: string; email: string | null };
   companies: Company[];
+  roles?: Record<number, string>; // company_id → rol del usuario (OWNER/MEMBER/VIEWER)
 }
 
 // Inicia la sesión: trae el usuario y sus empresas; fija la empresa activa. Devuelve la empresa.
@@ -35,10 +36,103 @@ export async function getMe(): Promise<Company> {
   return me.companies[0];
 }
 
+// Multi-empresa: todas las empresas de la cuenta (con el rol del usuario). Fija la activa si no hay.
+export async function getCompanies(): Promise<Company[]> {
+  const res = await fetch(`${API}/api/me`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo iniciar sesión");
+  const me: Me = await res.json();
+  if (companyId == null) companyId = me.companies[0]?.id ?? null;
+  const roles = me.roles || {};
+  return me.companies.map((c) => ({ ...c, role: roles[c.id] as Company["role"] }));
+}
+
+// --- Equipo: roles y permisos por empresa ---
+export interface Member {
+  id: number | null; // null = el dueño (OWNER)
+  email: string | null;
+  role: "OWNER" | "MEMBER" | "VIEWER";
+  is_owner: boolean;
+  pending: boolean; // invitado que aún no inicia sesión
+}
+
+export async function getMembers(): Promise<Member[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/members`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo cargar el equipo");
+  return res.json();
+}
+
+export async function inviteMember(email: string, role: string): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/members`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ email, role }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({}));
+    throw new Error(b.detail || "No se pudo invitar");
+  }
+}
+
+export async function updateMemberRole(id: number, role: string): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/members/${id}`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error("No se pudo cambiar el rol");
+}
+
+export async function removeMember(id: number): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/members/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudo quitar al miembro");
+}
+
+// Cambia la empresa ACTIVA (la que usan todas las llamadas vía cid()).
+export function setActiveCompany(id: number) {
+  companyId = id;
+}
+
+// Crea una empresa nueva bajo la misma cuenta (se crea sin sector → onboarding).
+export async function createCompany(name?: string): Promise<Company> {
+  const res = await fetch(`${API}/api/companies`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name || null }),
+  });
+  if (!res.ok) throw new Error("No se pudo crear la empresa");
+  return res.json();
+}
+
 export async function getCompany(): Promise<Company> {
   const res = await fetch(`${API}/api/companies/${cid()}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error("No se pudo cargar la empresa");
   return res.json();
+}
+
+// Edita el perfil de la empresa (nombre/sector). Lo usa el onboarding y el renombrar.
+export async function updateCompany(payload: { name?: string; sector?: string }): Promise<Company> {
+  const res = await fetch(`${API}/api/companies/${cid()}`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("No se pudo actualizar la empresa");
+  return res.json();
+}
+
+// Elimina una empresa y todos sus datos. El backend rechaza borrar la única.
+export async function deleteCompany(id: number): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${id}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "No se pudo eliminar la empresa");
+  }
 }
 
 export async function updateThresholds(

@@ -35,6 +35,7 @@ export interface Company {
   gas_station_threshold: string | null;
   settlement_buffer_days: number | null; // días de retención; null = default del sistema
   created_at: string;
+  role?: "OWNER" | "MEMBER" | "VIEWER"; // rol del usuario actual sobre esta empresa
 }
 
 export interface CategoryAmount {

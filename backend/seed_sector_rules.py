@@ -77,6 +77,66 @@ SECTOR_RULES: dict[str, list[tuple[str, AccountType, str]]] = {
         ("Xfinity", OPEX, "Telephone & Internet"),
         ("Spectrum", OPEX, "Telephone & Internet"),
     ],
+
+    # LIMPIEZA (cleaning).
+    "cleaning": [
+        # --- Insumos de limpieza (COGS): distribuidores janitoriales / químicos ---
+        ("Ecolab", COGS, "Cleaning Supplies"),
+        ("Uline", COGS, "Cleaning Supplies"),
+        ("WAXIE", COGS, "Cleaning Supplies"),
+        ("Zep", COGS, "Cleaning Supplies"),
+        ("Grainger", COGS, "Cleaning Supplies"),
+        ("Staples", COGS, "Cleaning Supplies"),
+        # --- Uniformes (OpEx): servicios de uniformes ---
+        ("Cintas", OPEX, "Uniforms"),       # mismo comercio, categoría DISTINTA por sector (vs. restaurant→Linens)
+        ("UniFirst", OPEX, "Uniforms"),
+        ("Aramark", OPEX, "Uniforms"),
+        # --- Software (OpEx): agendamiento de limpieza + contabilidad ---
+        ("QuickBooks", OPEX, "Software"),
+        ("Intuit", OPEX, "Software"),
+        ("Jobber", OPEX, "Software"),
+        ("ZenMaid", OPEX, "Software"),
+        # --- Teléfono e internet (OpEx) ---
+        ("Verizon", OPEX, "Telephone & Internet"),
+        ("T-Mobile", OPEX, "Telephone & Internet"),
+        ("Comcast", OPEX, "Telephone & Internet"),
+        ("Xfinity", OPEX, "Telephone & Internet"),
+        ("Spectrum", OPEX, "Telephone & Internet"),
+    ],
+
+    # RESTAURANTE (restaurant).
+    "restaurant": [
+        # --- Compras de comida (COGS): distribuidores de food service ---
+        ("Sysco", COGS, "Food Purchases"),
+        ("US Foods", COGS, "Food Purchases"),
+        ("Restaurant Depot", COGS, "Food Purchases"),
+        ("Gordon Food", COGS, "Food Purchases"),
+        ("Performance Food", COGS, "Food Purchases"),
+        ("Shamrock Foods", COGS, "Food Purchases"),
+        ("Cheney Brothers", COGS, "Food Purchases"),
+        # --- Alcohol (COGS) ---
+        ("Southern Glazer's", COGS, "Beer/Wine/Liquor"),
+        ("Breakthru Beverage", COGS, "Beer/Wine/Liquor"),
+        # --- Bebidas (COGS) ---
+        ("Coca-Cola", COGS, "Beverages"),
+        ("Pepsi", COGS, "Beverages"),
+        # --- Papel y empaques (COGS) ---
+        ("Uline", COGS, "Paper & Packaging"),
+        # --- Utensilios de cocina (OpEx) ---
+        ("WebstaurantStore", OPEX, "Smallwares"),
+        # --- Mantelería (OpEx): mismo comercio que en limpieza, categoría distinta ---
+        ("Cintas", OPEX, "Linens"),
+        ("Aramark", OPEX, "Linens"),
+        # --- Software (OpEx) ---
+        ("QuickBooks", OPEX, "Software"),
+        ("Intuit", OPEX, "Software"),
+        ("Toast", OPEX, "Software"),        # POS de restaurantes
+        # --- Teléfono e internet (OpEx) ---
+        ("Verizon", OPEX, "Telephone & Internet"),
+        ("Comcast", OPEX, "Telephone & Internet"),
+        ("Xfinity", OPEX, "Telephone & Internet"),
+        ("Spectrum", OPEX, "Telephone & Internet"),
+    ],
 }
 
 

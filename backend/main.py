@@ -15,15 +15,16 @@ from typing import Optional
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from ai import recategorize_with_answer
-from auth import current_user, owned_company, owned_transaction
+from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
 from ingestion import ingest_csv, mask_account
 from models import (
-    AccountType, CategoryRule, Company, CompanyCategory, PnlReport, RuleScope, Transaction, User,
+    AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
+    Transaction, User,
 )
 from reports import income_statement
 from rules import apply_rule_to_transactions, is_check, match_rule, upsert_company_rule
@@ -61,6 +62,28 @@ class CompanyThresholds(BaseModel):
     asentamiento (días que se retienen los movimientos recientes/pending)."""
     supermarket_threshold: Optional[Decimal] = None
     gas_station_threshold: Optional[Decimal] = None
+
+
+class CompanyProfile(BaseModel):
+    """Perfil de la empresa que se edita en el onboarding / ajustes (nombre y sector)."""
+    name: Optional[str] = None
+    sector: Optional[str] = None
+
+
+class CompanyCreate(BaseModel):
+    """Crea una empresa NUEVA bajo la misma cuenta (gestionar varias empresas)."""
+    name: Optional[str] = None
+
+
+class MemberInvite(BaseModel):
+    """Invitar a un usuario (por email) a una empresa con un rol (MEMBER o VIEWER)."""
+    email: str
+    role: Role = Role.MEMBER
+
+
+class MemberRoleUpdate(BaseModel):
+    """Cambiar el rol de un miembro."""
+    role: Role
 
 
 class CustomCategoryCreate(BaseModel):
@@ -115,14 +138,49 @@ def get_me(
     """Devuelve el usuario autenticado y SUS empresas. En el primer login (sin empresa) crea una
     empresa por defecto para que el flujo funcione de inmediato. El frontend usa esto en vez de
     un `company_id` fijo."""
-    companies = session.exec(select(Company).where(Company.user_id == user.id)).all()
+    owned = session.exec(select(Company).where(Company.user_id == user.id)).all()
+    roles: dict[int, str] = {c.id: Role.OWNER.value for c in owned}
+
+    # Empresas donde el usuario es MIEMBRO invitado (roles por empresa).
+    member_rows = session.exec(
+        select(CompanyMember).where(CompanyMember.user_id == user.id)
+    ).all()
+    member_companies: list[Company] = []
+    if member_rows:
+        ids = [m.company_id for m in member_rows]
+        member_companies = session.exec(select(Company).where(Company.id.in_(ids))).all()
+        for m in member_rows:
+            roles.setdefault(m.company_id, m.role.value)
+
+    owned_ids = {c.id for c in owned}
+    companies = owned + [c for c in member_companies if c.id not in owned_ids]
+
     if not companies:
-        company = Company(name="My Business", sector="construction", user_id=user.id)
+        # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector)
+        # antes de dejar usar la app. El sector decide reglas de sector + plan de cuentas.
+        company = Company(name="My Business", sector="", user_id=user.id)
         session.add(company)
         session.commit()
         session.refresh(company)
         companies = [company]
-    return {"user": user, "companies": companies}
+        roles[company.id] = Role.OWNER.value
+    return {"user": user, "companies": companies, "roles": roles}
+
+
+@app.post("/api/companies")
+def create_company(
+    payload: CompanyCreate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Crea una empresa NUEVA bajo la cuenta del usuario (gestionar varias desde una sola cuenta).
+    Se crea con `sector=""` → el frontend la lleva al onboarding para elegir su sector."""
+    name = (payload.name or "").strip() or "New Business"
+    company = Company(name=name, sector="", user_id=user.id)
+    session.add(company)
+    session.commit()
+    session.refresh(company)
+    return company
 
 
 @app.post("/api/companies/{company_id}/transactions/upload")
@@ -139,7 +197,7 @@ async def upload_transactions(
     disparar la cuota gratis por accidente); el bulk asíncrono real queda para post-deploy
     (deuda técnica #8).
     """
-    company = owned_company(company_id, user, session)
+    company = owned_company(company_id, user, session, write=True)
     content = await file.read()
     result = ingest_csv(
         session, company_id, company.sector, content, limit=1000
@@ -156,7 +214,7 @@ def set_transactions_account(
 ):
     """Asigna la cuenta bancaria (que indicó el usuario) a varias transacciones de la empresa.
     Se guarda enmascarada a los últimos 4 dígitos. Útil cuando la IA no la detectó del archivo."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     masked = mask_account(payload.account)
     if masked is None:
         raise HTTPException(status_code=422, detail="account must contain at least 4 digits")
@@ -184,6 +242,144 @@ def get_company(
     return owned_company(company_id, user, session)
 
 
+@app.patch("/api/companies/{company_id}")
+def update_company(
+    company_id: int,
+    payload: CompanyProfile,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Edita el perfil de la empresa (nombre/sector). Lo usa el onboarding y el renombrar en Ajustes.
+    Solo el OWNER (es un ajuste de la empresa)."""
+    company = owner_company(company_id, user, session)
+    data = payload.model_dump(exclude_unset=True)
+    if data.get("name"):
+        company.name = data["name"].strip()
+    if data.get("sector"):
+        company.sector = data["sector"].strip().lower()
+    session.add(company)
+    session.commit()
+    session.refresh(company)
+    return company
+
+
+@app.delete("/api/companies/{company_id}")
+def delete_company(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Elimina una empresa y TODOS sus datos (transacciones, reglas de empresa, categorías
+    personalizadas, reportes P&L, miembros). Solo el OWNER. No borra su ÚNICA empresa."""
+    owner_company(company_id, user, session)
+    mine = session.exec(select(Company).where(Company.user_id == user.id)).all()
+    if len(mine) <= 1:
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu única empresa.")
+    # Borrar los datos hijos (reglas de SECTOR no se tocan: tienen company_id NULL).
+    for model in (Transaction, CategoryRule, CompanyCategory, PnlReport, CompanyMember):
+        session.exec(delete(model).where(model.company_id == company_id))
+    company = session.get(Company, company_id)
+    session.delete(company)
+    session.commit()
+    return {"deleted": company_id}
+
+
+# --- Equipo: roles y permisos por empresa (gestión por el OWNER) ---
+
+@app.get("/api/companies/{company_id}/members")
+def list_members(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Equipo de la empresa: el dueño (OWNER) + los miembros invitados. Cualquier miembro lo ve."""
+    company = owned_company(company_id, user, session)
+    owner = session.get(User, company.user_id) if company.user_id else None
+    out = [{"id": None, "email": owner.email if owner else None,
+            "role": Role.OWNER.value, "is_owner": True, "pending": False}]
+    members = session.exec(
+        select(CompanyMember).where(CompanyMember.company_id == company_id)
+    ).all()
+    for m in members:
+        out.append({"id": m.id, "email": m.email, "role": m.role.value,
+                    "is_owner": False, "pending": m.user_id is None})
+    return out
+
+
+@app.post("/api/companies/{company_id}/members")
+def invite_member(
+    company_id: int,
+    payload: MemberInvite,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Invita (por email) a un usuario con rol MEMBER o VIEWER. Solo el OWNER. Si el email ya tiene
+    cuenta, queda enlazado al instante; si no, queda pendiente y se enlaza cuando inicie sesión."""
+    owner_company(company_id, user, session)
+    email = payload.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=422, detail="Email requerido.")
+    if payload.role == Role.OWNER:
+        raise HTTPException(status_code=422, detail="El dueño no se invita; transferir dueño no está soportado.")
+    existing = session.exec(
+        select(CompanyMember)
+        .where(CompanyMember.company_id == company_id)
+        .where(CompanyMember.email == email)
+    ).first()
+    if existing:
+        existing.role = payload.role
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    invited = session.exec(select(User).where(User.email == email)).first()
+    m = CompanyMember(company_id=company_id, email=email, role=payload.role,
+                      user_id=invited.id if invited else None)
+    session.add(m)
+    session.commit()
+    session.refresh(m)
+    return m
+
+
+@app.patch("/api/companies/{company_id}/members/{member_id}")
+def update_member_role(
+    company_id: int,
+    member_id: int,
+    payload: MemberRoleUpdate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Cambia el rol (MEMBER/VIEWER) de un miembro. Solo el OWNER."""
+    owner_company(company_id, user, session)
+    if payload.role == Role.OWNER:
+        raise HTTPException(status_code=422, detail="No se puede asignar OWNER.")
+    m = session.get(CompanyMember, member_id)
+    if m is None or m.company_id != company_id:
+        raise HTTPException(status_code=404, detail="Miembro no encontrado.")
+    m.role = payload.role
+    session.add(m)
+    session.commit()
+    session.refresh(m)
+    return m
+
+
+@app.delete("/api/companies/{company_id}/members/{member_id}")
+def remove_member(
+    company_id: int,
+    member_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Quita a un miembro de la empresa (pierde el acceso). Solo el OWNER."""
+    owner_company(company_id, user, session)
+    m = session.get(CompanyMember, member_id)
+    if m is None or m.company_id != company_id:
+        raise HTTPException(status_code=404, detail="Miembro no encontrado.")
+    session.delete(m)
+    session.commit()
+    return {"deleted": member_id}
+
+
 @app.patch("/api/companies/{company_id}/thresholds")
 def update_thresholds(
     company_id: int,
@@ -192,7 +388,7 @@ def update_thresholds(
     session: Session = Depends(get_session),
 ):
     """Edita los umbrales de monto (super/gasolinera) que usa la desambiguación por banda."""
-    company = owned_company(company_id, user, session)
+    company = owned_company(company_id, user, session, write=True)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(company, field, value)
     session.add(company)
@@ -235,7 +431,7 @@ def add_custom_category(
 ):
     """Agrega una categoría personalizada (P&L personalizable v1). Idempotente: si ya existe esa
     categoría (mismo nombre y sección, o ya está en el plan base), no la duplica."""
-    company = owned_company(company_id, user, session)
+    company = owned_company(company_id, user, session, write=True)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="El nombre de la categoría no puede estar vacío.")
@@ -268,7 +464,7 @@ def delete_custom_category(
     session: Session = Depends(get_session),
 ):
     """Elimina una categoría personalizada. No afecta transacciones ya categorizadas con ese nombre."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     cat = session.get(CompanyCategory, category_id)
     if cat is None or cat.company_id != company_id:
         raise HTTPException(status_code=404, detail="Categoría no encontrada.")
@@ -326,7 +522,7 @@ def update_rule(
 ):
     """Edita una regla y la re-aplica a las transacciones existentes del comercio (cambia el
     reglamento → los libros se ajustan al instante). Devuelve la regla y cuántas alineó."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     rule = _owned_company_rule(company_id, rule_id, session)
     data = payload.model_dump(exclude_unset=True)
     for field, value in data.items():
@@ -348,7 +544,7 @@ def delete_rule(
     session: Session = Depends(get_session),
 ):
     """Elimina una regla del reglamento. No re-categoriza lo ya hecho (solo deja de aplicar a futuro)."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     rule = _owned_company_rule(company_id, rule_id, session)
     session.delete(rule)
     session.commit()
@@ -415,7 +611,7 @@ def create_pnl_report(
     session: Session = Depends(get_session),
 ):
     """Crea un proyecto de P&L como BORRADOR (recalcula en vivo hasta que se cierra)."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     if not payload.name.strip():
         raise HTTPException(status_code=422, detail="El nombre no puede estar vacío.")
     r = PnlReport(company_id=company_id, name=payload.name.strip(),
@@ -447,7 +643,7 @@ def close_pnl_report(
     session: Session = Depends(get_session),
 ):
     """CIERRA el período: calcula el P&L ahora y lo CONGELA (snapshot). Ya no cambia."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     r = _owned_report(company_id, report_id, session)
     r.snapshot = json.dumps(_pnl_jsonable(income_statement(session, company_id, r.start_date, r.end_date)))
     r.status = "closed"
@@ -466,7 +662,7 @@ def reopen_pnl_report(
     session: Session = Depends(get_session),
 ):
     """Reabre un proyecto cerrado → vuelve a BORRADOR (recalcula en vivo); descarta el snapshot."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     r = _owned_report(company_id, report_id, session)
     r.status = "draft"
     r.snapshot = None
@@ -485,7 +681,7 @@ def delete_pnl_report(
     session: Session = Depends(get_session),
 ):
     """Elimina un proyecto de P&L."""
-    owned_company(company_id, user, session)
+    owned_company(company_id, user, session, write=True)
     r = _owned_report(company_id, report_id, session)
     session.delete(r)
     session.commit()
@@ -544,7 +740,7 @@ def update_transaction(
     session: Session = Depends(get_session),
 ):
     """Actualiza una transacción (confirmar o corregir una revisión)."""
-    tx = owned_transaction(transaction_id, user, session)
+    tx = owned_transaction(transaction_id, user, session, write=True)
     data = payload.model_dump(exclude_unset=True)
     if data.get("subcategory"):
         data["subcategory"] = data["subcategory"].upper()  # subcategorías siempre en MAYÚSCULA
@@ -580,7 +776,7 @@ def clarify_transaction(
 ):
     """El dueño explica en lenguaje simple qué fue el movimiento → la IA re-categoriza
     con esa info y se guarda una REGLA de empresa (memoria) para la próxima vez."""
-    tx = owned_transaction(transaction_id, user, session)
+    tx = owned_transaction(transaction_id, user, session, write=True)
 
     company = session.get(Company, tx.company_id)
     sector = company.sector if company else "general"
@@ -628,7 +824,7 @@ def clarify_group(
     la misma pregunta por cada movimiento (p. ej. la renta mensual)."""
     if not payload.transaction_ids:
         raise HTTPException(status_code=422, detail="no transactions")
-    txs = [owned_transaction(tid, user, session) for tid in payload.transaction_ids]
+    txs = [owned_transaction(tid, user, session, write=True) for tid in payload.transaction_ids]
     rep = txs[0]  # representante: misma contraparte → misma categoría
 
     company = session.get(Company, rep.company_id)

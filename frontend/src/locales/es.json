@@ -1,5 +1,8 @@
 {
   "nav": { "dashboard": "Resumen", "transactions": "Movimientos", "upload": "Subir", "review": "Por revisar", "pnl": "P&L", "rules": "Reglas" },
+  "sectors": { "construction": "Construcción", "cleaning": "Limpieza", "restaurant": "Restaurante", "other": "Otro" },
+  "onboarding": { "title": "Configura tu negocio", "subtitle": "Tu sector adapta las categorías y reglas a tu oficio.", "nameLabel": "Nombre del negocio", "namePlaceholder": "ej. García Construcción LLC", "sectorLabel": "¿Cuál es el sector de tu negocio?", "continue": "Continuar", "saving": "Configurando…" },
+  "company": { "yours": "Tus empresas", "add": "Agregar empresa" },
   "auth": { "error": "No se pudo iniciar sesión" },
   "login": {"subtitle": "Tu contabilidad, simple", "google": "Continuar con Google", "or": "o", "email": "Correo", "password": "Contraseña", "signIn": "Entrar", "signUp": "Crear cuenta", "loading": "Un momento…", "noAccount": "¿No tienes cuenta?", "haveAccount": "¿Ya tienes cuenta?", "error": "No se pudo entrar. Revisa tus datos.", "signupError": "No se pudo crear la cuenta. El correo ya podría estar en uso.", "logout": "Salir"},
   "review": { "count": "{{count}} movimientos", "q": {"singleIn": "{{name}} te pagó {{amount}} el {{date}}. ¿A qué corresponde?", "singleOut": "Pagaste {{amount}} a {{name}} el {{date}}. ¿A qué corresponde?", "groupIn": "{{name}} te pagó {{count}} veces ({{amount}} en total, {{from}}–{{to}}). ¿A qué corresponden?", "groupOut": "{{count}} pagos a {{name}} ({{amount}} en total, {{from}}–{{to}}). ¿A qué corresponden?"}, "confirm": "Confirmar", "empty": "Nada por revisar", "emptyHint": "Cuando la IA dude de una transacción, aparecerá aquí.", "intro": "{{count}} transacciones necesitan tu confirmación.", "answerPlaceholder": "Cuéntanos en tus palabras (ej. \"subcontratista de plomería\", \"renta\")" },
@@ -105,7 +108,21 @@
     "chartName": "Nombre de la categoría",
     "chartAdd": "Agregar",
     "chartCancel": "Cancelar",
-    "chartCustom": "tuya"
+    "chartCustom": "tuya",
+    "business": "Empresa",
+    "nameLabel": "Nombre",
+    "rename": "Renombrar",
+    "deleteBusiness": "Eliminar esta empresa",
+    "deleting": "Eliminando…",
+    "confirmDelete": "¿Eliminar esta empresa y TODOS sus datos? No se puede deshacer.",
+    "cantDeleteLast": "No puedes eliminar tu única empresa.",
+    "team": "Equipo",
+    "teamHelp": "Invita a tu equipo. Miembro = puede editar · Visor = solo lectura.",
+    "invite": "Invitar",
+    "invitePlaceholder": "compañero@email.com",
+    "pending": "pendiente",
+    "viewerNote": "Tienes acceso de solo lectura a esta empresa.",
+    "role": { "OWNER": "Dueño", "MEMBER": "Miembro", "VIEWER": "Visor" }
   },
   "rules": {
     "title": "Reglas",
