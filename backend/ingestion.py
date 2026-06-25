@@ -21,7 +21,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ai import categorize_transaction, map_columns
-from models import CategoryRule, Company, Transaction
+from models import AccountType, CategoryRule, Company, Transaction
 
 # Ventana de asentamiento por defecto (días): cubre tarjeta/ACH normales (1-3 días hábiles) + un
 # fin de semana. Se retienen los movimientos recientes/pending hasta que liquidan (base caja).
@@ -377,6 +377,22 @@ def ingest_csv(
             tx.needs_review = True
             if tx.confidence is None or tx.confidence > 0.5:
                 tx.confidence = 0.5
+
+        # Detector de SIGNO (vale para regla, banda e IA): si la dirección del banco contradice la
+        # sección del P&L, casi seguro es un return/reembolso o un cobro mal clasificado → revisar.
+        # Cubre el caso "return de Home Depot": entró plata pero la regla lo etiquetó como gasto
+        # (COGS/Materials) → sin esto sumaría como gasto en vez de restarlo. NON_PL se exime
+        # (transferencias/retiros/aportes van en cualquier dirección legítimamente).
+        if tx.account_type is not None and tx.account_type != AccountType.NON_PL:
+            is_income = tx.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
+            if is_income != tx.is_inflow:  # plata que entró etiquetada como gasto, o al revés
+                tx.needs_review = True
+                if tx.review_question is None:
+                    tx.review_question = (
+                        "Money came IN but this looks like an expense — is it a refund/return?"
+                        if tx.is_inflow else
+                        "Money went OUT but this looks like income — is it categorized right?"
+                    )
 
         if source is not None:
             preview.append({

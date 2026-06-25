@@ -156,13 +156,18 @@ def apply_rule_to_transactions(
 def classify_merchant(description: str) -> Optional[str]:
     """¿La descripción es de una gasolinera o un supermercado? → "gas_station" | "supermarket" | None.
 
-    Se evalúa GASOLINERA primero (ej. "COSTCO GAS" es gasolinera, no supermercado)."""
-    norm = normalize(description)
-    if not norm:
+    Se evalúa GASOLINERA primero (ej. "COSTCO GAS" es gasolinera, no supermercado).
+
+    Match por **palabra/frase completa** (igual que `match_rule`), NO subcadena suelta: así
+    "ARCO" (gasolinera) NO matchea "MARCOS" (un Zelle a una persona). Antes se usaba subcadena
+    (`normalize(m) in norm`) y "MARCOS" → "MARCOSGARCIA" contenía "ARCO" → falso positivo que
+    clasificaba el Zelle como combustible. Ver `docs/MEJORAS Y HALLAZGOS.md`."""
+    phrase = f" {_phrase(description)} "
+    if phrase == "  ":
         return None
-    if any(normalize(m) in norm for m in GAS_STATIONS):
+    if any(f" {_phrase(m)} " in phrase for m in GAS_STATIONS):
         return "gas_station"
-    if any(normalize(m) in norm for m in SUPERMARKETS):
+    if any(f" {_phrase(m)} " in phrase for m in SUPERMARKETS):
         return "supermarket"
     return None
 
