@@ -31,7 +31,20 @@ logger = logging.getLogger("contabu.ai")
 # Modelo de Gemini. Configurable por entorno (GEMINI_MODEL) para A/B sin tocar código.
 # flash-lite = más barato/rápido; flash = razona mejor en casos difíciles. Ver docs/FASE.
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+# Backend de Gemini, configurable por entorno (sin tocar código):
+# - VERTEX AI (GEMINI_USE_VERTEX=true): factura como servicio de GCP → lo cubre el crédito de $300.
+#   Autentica con Application Default Credentials (NO API key): en local `gcloud auth
+#   application-default login`; en Cloud Run, la service account con rol `roles/aiplatform.user`.
+# - AI STUDIO (por defecto): usa GEMINI_API_KEY; se cobra de los créditos PREPAGADOS de Gemini.
+if os.getenv("GEMINI_USE_VERTEX", "").lower() in ("1", "true", "yes"):
+    _client = genai.Client(
+        vertexai=True,
+        project=os.getenv("GOOGLE_CLOUD_PROJECT", "contabu-prod"),
+        location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+    )
+else:
+    _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Códigos HTTP transitorios que vale la pena reintentar (saturación, límites temporales).
 _RETRY_CODES = {429, 500, 502, 503, 504}

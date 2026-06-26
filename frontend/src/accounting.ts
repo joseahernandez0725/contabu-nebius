@@ -11,6 +11,24 @@ export const SECTION_LABEL: Record<string, string> = {
   NON_PL: "Non-P&L",
 };
 
+// Familia de la sección para colorear la tabla de reglas: ingreso (verde), egreso (rojo),
+// no-P&L (gris). Refuerza visualmente el signo: una regla "roja" con dinero que ENTRÓ es la
+// contradicción que el backend manda a revisión (detector de signo).
+export type SectionFamily = "income" | "expense" | "nonpl";
+
+export function sectionFamily(accountType: string | null | undefined): SectionFamily {
+  if (accountType === "REVENUE" || accountType === "OTHER_INCOME") return "income";
+  if (accountType === "COGS" || accountType === "OPERATING_EXPENSE" || accountType === "OTHER_EXPENSE")
+    return "expense";
+  return "nonpl"; // NON_PL o sin tipo
+}
+
+export const FAMILY_STYLE: Record<SectionFamily, { dot: string; text: string; label: string }> = {
+  income: { dot: "bg-emerald-500", text: "text-emerald-700", label: "Income" },
+  expense: { dot: "bg-rose-500", text: "text-rose-700", label: "Expense" },
+  nonpl: { dot: "bg-slate-400", text: "text-slate-500", label: "Non-P&L" },
+};
+
 // Estado de resultados (income statement)
 export const PNL = {
   title: "Income statement",

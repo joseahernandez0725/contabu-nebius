@@ -157,6 +157,26 @@ class CategoryRule(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+class LearnedMerchant(SQLModel, table=True):
+    """Comercio (gasolinera/supermercado) que la IA DESCUBRIÓ y se aprende para que la **banda de
+    monto** lo reconozca en las próximas subidas SIN volver a llamar a la IA (ahorro + consistencia).
+
+    Igual que `CategoryRule`, el `scope` separa lo privado de la empresa (`COMPANY`) de lo compartido
+    por sector (`SECTOR`). Aprender en la **DB** (no en la lista hardcodeada de Python) es a propósito:
+    así un error de la IA NO contamina a TODAS las empresas en silencio — por defecto es `COMPANY`
+    (privado), y promover a `SECTOR` (compartido) es un paso aparte y confirmado.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scope: RuleScope = Field(default=RuleScope.COMPANY)
+    company_id: Optional[int] = Field(
+        default=None, foreign_key="company.id", index=True
+    )  # null si es de SECTOR
+    sector: Optional[str] = Field(default=None)  # se usa cuando scope == SECTOR
+    match_text: str  # frase normalizada del comercio (aparece en la descripción del banco)
+    kind: str        # "gas_station" | "supermarket"
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class CompanyCategory(SQLModel, table=True):
     """Categoría PERSONALIZADA que una empresa agrega a su plan de cuentas (P&L personalizable, v1).
 

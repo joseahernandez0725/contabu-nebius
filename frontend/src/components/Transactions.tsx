@@ -143,7 +143,8 @@ export default function Transactions() {
           <tbody className="divide-y divide-slate-100">
             {visible.map((tx) => {
               const conf = tx.confidence;
-              const lowConfidence = conf != null && conf < 0.9;
+              // Una categoría puesta A MANO está decidida → nunca se pinta como "incierta" (roja).
+              const lowConfidence = tx.source !== "manual" && conf != null && conf < 0.9;
               // Cuanto MENOR la confianza, MÁS intenso el rojo (de 0.9 tenue a ≤0.3 fuerte).
               const redAlpha =
                 conf != null && conf < 0.9 ? 0.06 + Math.min(1, (0.9 - conf) / 0.6) * 0.34 : 0;
@@ -160,12 +161,19 @@ export default function Transactions() {
                   <td className="px-3 py-2.5 text-slate-500 max-w-[6.5rem] truncate" title={tx.description}>
                     {tx.description}
                   </td>
-                  <td className="px-2 py-2.5 text-slate-800 whitespace-nowrap">
-                    {tx.category ?? "—"}
+                  <td className="px-2 py-2.5 whitespace-nowrap">
+                    <span className={tx.source === "manual" ? "text-violet-700 font-medium" : "text-slate-800"}>
+                      {tx.category ?? "—"}
+                    </span>
                     {tx.source === "rule" ? (
                       // Vino de la TABLA de reglas (no la IA): se marca "rule", sin porcentaje.
                       <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-green/80 bg-brand-green/10 rounded px-1 py-0.5">
                         rule
+                      </span>
+                    ) : tx.source === "manual" ? (
+                      // Puesta A MANO por el dueño → color distinto (violeta) para distinguirla.
+                      <span className="ms-1 text-[10px] uppercase tracking-wide text-violet-700/80 bg-violet-100 rounded px-1 py-0.5">
+                        manual
                       </span>
                     ) : tx.source === "ai" && tx.confidence != null ? (
                       <span className="ms-1 text-[10px] text-slate-400 tabular-nums">

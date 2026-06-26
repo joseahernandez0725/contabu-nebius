@@ -19,13 +19,18 @@ from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from merchants import GAS_STATIONS, SUPERMARKETS
-from models import AccountType, CategoryRule, RuleScope, Transaction
+from models import AccountType, CategoryRule, LearnedMerchant, RuleScope, Transaction
 
 # Umbrales por defecto si la empresa no fijó los suyos (editables por empresa, ver Company).
 # Gasolinera $30: bajo eso suele ser combustible de equipos o compras pequeñas en la tienda;
 # por encima, llenar el tanque del vehículo (auto expense).
 DEFAULT_SUPERMARKET_THRESHOLD = Decimal("50")
 DEFAULT_GAS_STATION_THRESHOLD = Decimal("30")
+
+# Cerca del umbral la decisión binaria de la banda es poco confiable (un $28 vs $32 en gasolinera
+# no es obvio): en esa "zona gris" (±25% del umbral) la banda PROPONE una categoría pero marca
+# revisión humana en vez de decidir con confianza. Ataca el error silencioso de las bandas.
+GRAY_ZONE_RATIO = Decimal("0.25")
 
 # Un CHEQUE es un método de pago, no una contraparte: cada cheque puede ser para algo distinto
 # (no se puede agrupar) y su descripción ("CHECK #1234") es única → NO sirve crear una regla.
@@ -67,26 +72,26 @@ def normalize(text: str) -> str:
 
 
 def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryRule]:
-    """Carga (en UNA query) las reglas aplicables, ya ordenadas por prioridad.
+    """Carga las reglas **COMPANY** de la empresa, ordenadas por especificidad (más largo primero).
 
-    Solo devuelve reglas con `account_type` definido (necesario para clasificar el P&L)
-    y `match_text` no vacío. Orden: COMPANY antes que SECTOR; dentro de cada grupo, el
-    `match_text` más largo primero (más específico gana).
+    Decisión 26-jun-2026: por ahora **solo reglas COMPANY** (privadas de la empresa). Las reglas
+    **SECTOR** (compartidas) se desactivaron hasta tener volumen de datos — sin él meten ruido.
+    Ver `DEUDA TECNICA #14` y `PROPUESTA DE REGLAS.md`. El campo `scope` se conserva en el modelo
+    para reactivarlas **sin migración**: bastaría con volver a agregar la rama SECTOR a este query.
+    (`sector` se mantiene en la firma para cuando se reactiven.)
+
+    Solo devuelve reglas con `account_type` definido (necesario para el P&L) y `match_text` no vacío.
+    El `match_text` más largo va primero → la regla **más específica gana** (`match_rule` toma el
+    primero que matchea); las genéricas quedan para el final.
     """
     rules = session.exec(
         select(CategoryRule).where(
-            or_(
-                (CategoryRule.scope == RuleScope.COMPANY)
-                & (CategoryRule.company_id == company_id),
-                (CategoryRule.scope == RuleScope.SECTOR)
-                & (CategoryRule.sector == sector),
-            )
+            (CategoryRule.scope == RuleScope.COMPANY)
+            & (CategoryRule.company_id == company_id)
         )
     ).all()
     usable = [r for r in rules if r.account_type is not None and normalize(r.match_text)]
-    usable.sort(
-        key=lambda r: (0 if r.scope == RuleScope.COMPANY else 1, -len(normalize(r.match_text)))
-    )
+    usable.sort(key=lambda r: -len(normalize(r.match_text)))  # más específico (largo) primero
     return usable
 
 
@@ -153,10 +158,17 @@ def apply_rule_to_transactions(
     return updated
 
 
-def classify_merchant(description: str) -> Optional[str]:
+def classify_merchant(
+    description: str,
+    extra_gas: Optional[list[str]] = None,
+    extra_super: Optional[list[str]] = None,
+) -> Optional[str]:
     """¿La descripción es de una gasolinera o un supermercado? → "gas_station" | "supermarket" | None.
 
     Se evalúa GASOLINERA primero (ej. "COSTCO GAS" es gasolinera, no supermercado).
+
+    `extra_gas`/`extra_super`: comercios **aprendidos** (de la DB, por empresa) que se suman a las
+    listas base. Así una gasolinera nueva que descubrió la IA se reconoce **sin tocar el código**.
 
     Match por **palabra/frase completa** (igual que `match_rule`), NO subcadena suelta: así
     "ARCO" (gasolinera) NO matchea "MARCOS" (un Zelle a una persona). Antes se usaba subcadena
@@ -165,9 +177,11 @@ def classify_merchant(description: str) -> Optional[str]:
     phrase = f" {_phrase(description)} "
     if phrase == "  ":
         return None
-    if any(f" {_phrase(m)} " in phrase for m in GAS_STATIONS):
+    gas = [*GAS_STATIONS, *extra_gas] if extra_gas else GAS_STATIONS
+    sup = [*SUPERMARKETS, *extra_super] if extra_super else SUPERMARKETS
+    if any(f" {_phrase(m)} " in phrase for m in gas):
         return "gas_station"
-    if any(f" {_phrase(m)} " in phrase for m in SUPERMARKETS):
+    if any(f" {_phrase(m)} " in phrase for m in sup):
         return "supermarket"
     return None
 
@@ -177,11 +191,15 @@ def amount_band_category(
     amount: float,
     supermarket_threshold: Optional[Decimal] = None,
     gas_station_threshold: Optional[Decimal] = None,
-) -> Optional[tuple[AccountType, str]]:
+    extra_gas: Optional[list[str]] = None,
+    extra_super: Optional[list[str]] = None,
+) -> Optional[tuple[AccountType, str, bool]]:
     """Desambigua por MONTO en comercios mixtos (super/gasolinera). Determinista, antes de la IA.
 
-    Devuelve `(account_type, category)` o `None` si el comercio no es super/gasolinera.
-    `amount` puede venir con signo; se usa su magnitud.
+    Devuelve `(account_type, category, near_threshold)` o `None` si el comercio no es super/gasolinera.
+    `near_threshold=True` cuando el monto cae en la **zona gris** (±25% del umbral): la banda propone
+    una categoría pero pide revisión (su decisión binaria ahí es poco confiable).
+    `amount` puede venir con signo; se usa su magnitud. `extra_gas`/`extra_super`: comercios aprendidos.
 
     --- MAPEO (centralizado aquí; ajustar cuando se defina el esquema final) ---
     Supermercado:  < umbral → comida (Meals, OpEx) · ≥ umbral → personal (Owner Draw, NON_PL)
@@ -192,7 +210,7 @@ def amount_band_category(
     if _MEMBERSHIP_RE.search(description or ""):
         return None
 
-    kind = classify_merchant(description)
+    kind = classify_merchant(description, extra_gas, extra_super)
     if kind is None:
         return None
 
@@ -200,15 +218,64 @@ def amount_band_category(
 
     if kind == "supermarket":
         threshold = supermarket_threshold or DEFAULT_SUPERMARKET_THRESHOLD
-        if magnitude < threshold:
-            return (AccountType.OPERATING_EXPENSE, "Meals")
-        return (AccountType.NON_PL, "Owner Draw")
+        result = ((AccountType.OPERATING_EXPENSE, "Meals") if magnitude < threshold
+                  else (AccountType.NON_PL, "Owner Draw"))
+    else:  # gas_station
+        threshold = gas_station_threshold or DEFAULT_GAS_STATION_THRESHOLD
+        result = ((AccountType.COGS, "Equipment Fuel") if magnitude < threshold
+                  else (AccountType.OPERATING_EXPENSE, "Vehicle Fuel"))
 
-    # gas_station
-    threshold = gas_station_threshold or DEFAULT_GAS_STATION_THRESHOLD
-    if magnitude < threshold:
-        return (AccountType.COGS, "Equipment Fuel")
-    return (AccountType.OPERATING_EXPENSE, "Vehicle Fuel")
+    near = abs(magnitude - threshold) <= threshold * GRAY_ZONE_RATIO
+    return (result[0], result[1], near)
+
+
+def load_learned_merchants(
+    session: Session, company_id: int, sector: str
+) -> tuple[list[str], list[str]]:
+    """Comercios APRENDIDOS aplicables: los de la empresa (COMPANY) + los compartidos del sector
+    (SECTOR). Devuelve `(gasolineras, supermercados)` como listas de `match_text`, listas para
+    pasarlas a `classify_merchant`/`amount_band_category` como `extra_gas`/`extra_super`."""
+    rows = session.exec(
+        select(LearnedMerchant).where(
+            or_(
+                (LearnedMerchant.scope == RuleScope.COMPANY)
+                & (LearnedMerchant.company_id == company_id),
+                (LearnedMerchant.scope == RuleScope.SECTOR)
+                & (LearnedMerchant.sector == sector),
+            )
+        )
+    ).all()
+    gas = [r.match_text for r in rows if r.kind == "gas_station"]
+    sup = [r.match_text for r in rows if r.kind == "supermarket"]
+    return gas, sup
+
+
+def upsert_learned_merchant(
+    session: Session, company_id: int, sector: str, match_text: str, kind: str
+) -> Optional[LearnedMerchant]:
+    """Aprende un comercio nuevo a scope **COMPANY** (privado, reversible). Idempotente: no duplica,
+    y no aprende lo que ya reconoce la lista base (`classify_merchant`). Devuelve la fila o None."""
+    phrase = _phrase(match_text or "")
+    if not phrase or kind not in ("gas_station", "supermarket"):
+        return None
+    if classify_merchant(match_text) is not None:
+        return None  # ya es un comercio conocido (built-in) → no hace falta aprenderlo
+    existing = session.exec(
+        select(LearnedMerchant).where(
+            (LearnedMerchant.scope == RuleScope.COMPANY)
+            & (LearnedMerchant.company_id == company_id)
+            & (LearnedMerchant.kind == kind)
+        )
+    ).all()
+    for m in existing:
+        if _phrase(m.match_text) == phrase:
+            return m  # ya aprendido
+    m = LearnedMerchant(
+        scope=RuleScope.COMPANY, company_id=company_id, sector=sector,
+        match_text=phrase, kind=kind,
+    )
+    session.add(m)
+    return m
 
 
 # Palabras genéricas que no aportan especificidad (no deben quedar como regla por sí solas).

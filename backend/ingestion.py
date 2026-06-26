@@ -51,13 +51,26 @@ def is_pending(status: str | None) -> bool:
         return False
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
-from rules import amount_band_category, check_number, is_check, load_rules, match_rule
+from rules import (
+    amount_band_category, check_number, is_check, load_learned_merchants, load_rules,
+    match_rule, specific_phrase, upsert_learned_merchant,
+)
 
 
 def needs_human_review(description: str) -> bool:
     """True si el movimiento es ambiguo por naturaleza (cheque/depósito/retiro/remesa/transferencia)
     → forzar revisión humana en vez de que la IA adivine."""
     return is_check(description) or bool(_AMBIGUOUS_RE.search(description or ""))
+
+
+# Preguntas para la zona gris de las bandas de monto (cuando el monto cae cerca del umbral y la
+# decisión binaria no es confiable). En inglés (dato contable interno).
+_BAND_REVIEW_QUESTIONS = {
+    "Equipment Fuel": "Is this fuel for equipment/machinery or for a vehicle?",
+    "Vehicle Fuel": "Is this fuel for a vehicle or for equipment/machinery?",
+    "Meals": "Is this a business meal or a personal purchase?",
+    "Owner Draw": "Is this a personal purchase (owner draw) or a business expense?",
+}
 
 
 # "Comercios" genéricos que NO representan una contraparte real (depósitos, pagadores desconocidos):
@@ -115,6 +128,32 @@ def unify_merchant_categorization(parsed: list[tuple], ai_cats: dict[int, object
             cat.needs_review = c.needs_review
             cat.review_question = c.review_question
     return adjusted
+
+
+# Categorías de combustible → la IA confirmó que el comercio es una gasolinera. (Solo gasolineras:
+# los supermercados se inferirían de "Meals"/"Owner Draw", señales demasiado ambiguas para aprender
+# automáticamente — un "Meals" puede ser un restaurante, no un supermercado.)
+_FUEL_CATEGORIES_TO_KIND = {"Equipment Fuel": "gas_station", "Vehicle Fuel": "gas_station"}
+
+
+def learn_merchants_from_ai(
+    session: Session, company_id: int, sector: str, parsed: list[tuple], ai_cats: dict[int, object]
+) -> int:
+    """Aprende gasolineras nuevas: por cada tx que la IA clasificó como combustible **con confianza**
+    (no needs_review, confidence ≥ 0.8), guarda su comercio como `LearnedMerchant` (scope COMPANY)
+    para que la banda lo reconozca en la próxima subida. Idempotente. Devuelve cuántas aprendió."""
+    learned = 0
+    for idx, cat in ai_cats.items():
+        kind = _FUEL_CATEGORIES_TO_KIND.get(getattr(cat, "category", None))
+        if kind is None:
+            continue
+        if getattr(cat, "needs_review", False) or (getattr(cat, "confidence", 0) or 0) < 0.8:
+            continue  # solo aprender cuando la IA está segura
+        # Una frase que SÍ aparece en la descripción → la banda la encontrará la próxima vez.
+        phrase = specific_phrase(parsed[idx][1], getattr(cat, "subcategory", None))
+        if phrase and upsert_learned_merchant(session, company_id, sector, phrase, kind) is not None:
+            learned += 1
+    return learned
 
 
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
@@ -280,8 +319,11 @@ def ingest_csv(
     rules: list[CategoryRule] = load_rules(session, company_id, sector) if categorize else []
     super_thr = company.supermarket_threshold if company else None
     gas_thr = company.gas_station_threshold if company else None
+    # Comercios APRENDIDOS (gasolineras/supermercados que descubrió la IA en subidas pasadas): se
+    # suman a las listas base para que la banda los reconozca sin volver a llamar a la IA.
+    extra_gas, extra_super = load_learned_merchants(session, company_id, sector) if categorize else ([], [])
     rule_hits: dict[int, CategoryRule] = {}
-    band_hits: dict[int, tuple] = {}  # idx -> (account_type, category)
+    band_hits: dict[int, tuple] = {}  # idx -> (account_type, category, near_threshold)
     ai_indices: list[int] = []
     if categorize:
         for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
@@ -289,7 +331,7 @@ def ingest_csv(
             if rule is not None:
                 rule_hits[idx] = rule
                 continue
-            band = amount_band_category(desc, float(signed), super_thr, gas_thr)
+            band = amount_band_category(desc, float(signed), super_thr, gas_thr, extra_gas, extra_super)
             if band is not None:
                 band_hits[idx] = band
                 continue
@@ -317,6 +359,12 @@ def ingest_csv(
     # 3b) CONSISTENCIA intra-subida: el mismo comercio → la misma categorización (la de mayor
     #     confianza) en todo el archivo. Corrige la incoherencia de categorizar fila por fila.
     consistency_adjusted = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
+
+    # 3c) APRENDER comercios nuevos: si la IA clasificó algo como combustible (Equipment/Vehicle
+    #     Fuel) con confianza, el comercio es una GASOLINERA que la banda no conocía → aprenderla
+    #     (scope COMPANY) para que la próxima subida la resuelva sin IA. Reversible y privado.
+    if categorize and not dry_run and ai_cats:
+        learn_merchants_from_ai(session, company_id, sector, parsed, ai_cats)
 
     # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
@@ -347,15 +395,20 @@ def ingest_csv(
             source = "rule"
             by_rule += 1
         elif idx in band_hits:
-            at, cat = band_hits[idx]
+            at, cat, near = band_hits[idx]
             tx.account_type = at
             tx.category = cat
-            tx.confidence = 1.0
-            tx.needs_review = False
-            tx.review_question = None
             tx.ai_categorized = False  # banda de monto determinista, no IA
             tx.source = "rule"
             source = "rule"
+            if near:  # zona gris alrededor del umbral → la banda no está segura, que el dueño confirme
+                tx.confidence = 0.5
+                tx.needs_review = True
+                tx.review_question = _BAND_REVIEW_QUESTIONS.get(cat)
+            else:
+                tx.confidence = 0.85  # banda = heurística, no certeza absoluta (era 1.0)
+                tx.needs_review = False
+                tx.review_question = None
             by_band += 1
         elif idx in ai_cats:
             cat = ai_cats[idx]

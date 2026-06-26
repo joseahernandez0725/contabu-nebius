@@ -4,7 +4,7 @@ import {
   getRules, updateRule, deleteRule, cleanupRules, getCategories,
   type ChartOfAccounts, type Rule,
 } from "../api";
-import { SECTION_LABEL } from "../accounting";
+import { SECTION_LABEL, sectionFamily, FAMILY_STYLE } from "../accounting";
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
@@ -48,6 +48,16 @@ export default function Rules() {
         <p className="text-sm text-slate-500 mt-1">
           {t("rules.subtitle", { defaultValue: "Your rulebook: each merchant maps to a category. Edit one and all its transactions update." })}
         </p>
+        {rules.length > 0 && (
+          <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-500">
+            {(["income", "expense", "nonpl"] as const).map((f) => (
+              <span key={f} className="flex items-center gap-1.5">
+                <span className={`inline-block size-2 rounded-full ${FAMILY_STYLE[f].dot}`} />
+                {t(`rules.family.${f}`, { defaultValue: FAMILY_STYLE[f].label })}
+              </span>
+            ))}
+          </div>
+        )}
         {rules.some((r) => r.matches === 0) && (
           <button
             onClick={async () => {
@@ -83,16 +93,26 @@ export default function Rules() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {rules.map((r) => (
+              {rules.map((r) => {
+                const fam = sectionFamily(r.account_type);
+                const style = FAMILY_STYLE[fam];
+                return (
                 <tr key={r.id} className="hover:bg-slate-50">
                   <td
                     className="px-3 py-2.5 font-medium text-slate-800 cursor-pointer uppercase"
                     onClick={() => { setEditing(r); setNote(null); }}
                   >
-                    {r.match_text}
+                    <span className="flex items-center gap-2">
+                      <span
+                        className={`inline-block size-2 shrink-0 rounded-full ${style.dot}`}
+                        title={style.label}
+                        aria-label={style.label}
+                      />
+                      {r.match_text}
+                    </span>
                   </td>
                   <td
-                    className="px-2 py-2.5 text-slate-600 cursor-pointer"
+                    className={`px-2 py-2.5 cursor-pointer ${style.text}`}
                     onClick={() => { setEditing(r); setNote(null); }}
                   >
                     {r.category}
@@ -114,7 +134,8 @@ export default function Rules() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
