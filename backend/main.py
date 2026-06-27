@@ -17,19 +17,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
-from ai import propose_rules, recategorize_with_answer
+from ai import map_rule_columns, propose_rules, recategorize_with_answer
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
-from ingestion import ingest_csv, mask_account
+from ingestion import ingest_csv, mask_account, parse_csv
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
 )
 from reports import income_statement
 from rules import (
-    apply_rule_to_transactions, create_company_rule, find_rule_candidates, is_check,
-    load_rules, match_rule, upsert_company_rule,
+    apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
+    is_check, load_rules, match_rule, upsert_company_rule,
 )
 
 
@@ -615,6 +615,37 @@ def apply_rule_proposals(
             applied += apply_rule_to_transactions(session, company_id, rule)
     session.commit()
     return {"created": created, "applied": applied}
+
+
+@app.post("/api/companies/{company_id}/rules/import")
+async def import_rules_preview(
+    company_id: int,
+    file: UploadFile,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Sube el archivo de REGLAS del usuario (CSV, columnas COMO SEA). La IA mapea las columnas y
+    devuelve un PREVIEW (keyword, category, account_type, status) para que el usuario confirme. NO
+    crea nada — las aprobadas se crean con `/rule-proposals/apply` (misma forma)."""
+    company = owned_company(company_id, user, session)
+    sector = company.sector if company else "general"
+    content = await file.read()
+    headers, rows = parse_csv(content)
+    if not headers or not rows:
+        raise HTTPException(status_code=422, detail="Archivo vacío o ilegible.")
+    mapping = map_rule_columns(headers, rows[:5])
+    existing = [r.match_text for r in load_rules(session, company_id, sector)]
+    preview = build_import_rules(
+        headers, rows, mapping.keyword_column, mapping.category_column,
+        mapping.account_type_column, sector, existing,
+    )
+    return {
+        "mapping": {
+            "keyword": mapping.keyword_column, "category": mapping.category_column,
+            "account_type": mapping.account_type_column, "subcategory": mapping.subcategory_column,
+        },
+        "rules": preview,
+    }
 
 
 @app.post("/api/companies/{company_id}/rules/cleanup")

@@ -84,6 +84,15 @@ class ColumnMapping(BaseModel):
     status_column: str = ""
 
 
+class RuleColumnMapping(BaseModel):
+    """Mapea las columnas de un archivo de REGLAS del usuario (keyword→categoría) a nuestros campos.
+    El bookkeeper sube su Excel/CSV **como sea**; la IA identifica qué columna es cada cosa."""
+    keyword_column: str            # comercio/keyword/patrón a matchear (requerida)
+    category_column: str           # categoría / cuenta contable (requerida)
+    account_type_column: str = ""  # SECCIÓN del P&L (REVENUE/COGS/…), "" si no existe
+    subcategory_column: str = ""   # beneficiario/subcategoría, "" si no existe
+
+
 class ProposedRule(BaseModel):
     """Una regla COMPANY que el AGENTE PROPONEDOR sugiere (el usuario la aprueba). El proponedor toma
     los comercios recurrentes sin regla y propone reglas: mergeando variantes de marca, evitando
@@ -324,6 +333,38 @@ Also detect the originating BANK ACCOUNT (a business may have several: checking,
         "account_label=%r status_column=%r",
         headers, result.date_column, result.description_column, result.amount_column,
         result.account_column, result.account_label, result.status_column,
+    )
+    return result
+
+
+def map_rule_columns(headers: list[str], sample_rows: list[list[str]]) -> RuleColumnMapping:
+    """Mapea las columnas de un archivo de REGLAS del usuario (lo sube como sea) a
+    keyword / category / (opcional) account_type / subcategory. La IA lee headers + filas de muestra."""
+    sample = "\n".join(str(r) for r in sample_rows)
+    prompt = f"""A bookkeeper uploaded their existing RULES file: a list mapping a merchant/keyword to a
+bookkeeping category. Map its columns to the fields we need.
+
+Column headers: {headers}
+Example data rows:
+{sample}
+
+Return the EXACT header names as given:
+- keyword_column: the column holding the MERCHANT or keyword/pattern to match in bank descriptions
+  (e.g. "Home Depot", "SHELL", "ONLINE TRANSFER*TO*XXXX2961"). Required.
+- category_column: the column holding the CATEGORY / account name (e.g. "Materials", "Rent"). Required.
+- account_type_column: if a column holds the P&L SECTION (REVENUE, COGS, OPERATING_EXPENSE,
+  OTHER_INCOME, OTHER_EXPENSE, NON_PL, or words like "income"/"expense"/"COGS"), return that EXACT
+  header. Otherwise "".
+- subcategory_column: if a column holds a sub-detail / payee, return that EXACT header. Otherwise "".
+
+Do NOT guess; return "" for optional columns that are not clearly present."""
+
+    response = _generate(prompt, RuleColumnMapping)
+    result = response.parsed
+    logger.info(
+        "map_rule_columns | headers=%s -> keyword=%r category=%r account_type=%r subcategory=%r",
+        headers, result.keyword_column, result.category_column,
+        result.account_type_column, result.subcategory_column,
     )
     return result
 

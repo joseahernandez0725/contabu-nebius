@@ -446,6 +446,70 @@ def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
     return _phrase_in_description(dwords)
 
 
+# Sinónimos de sección del P&L → valor del enum (para importar reglas con vocabulario libre del usuario).
+_SECTION_SYNONYMS = {
+    "INCOME": "REVENUE", "SALES": "REVENUE",
+    "COSTOFGOODSSOLD": "COGS", "COSTOFGOODS": "COGS", "DIRECTCOST": "COGS",
+    "OPERATINGEXPENSE": "OPERATING_EXPENSE", "OPEX": "OPERATING_EXPENSE",
+    "EXPENSE": "OPERATING_EXPENSE", "OVERHEAD": "OPERATING_EXPENSE",
+    "OTHERINCOME": "OTHER_INCOME", "OTHEREXPENSE": "OTHER_EXPENSE",
+    "NONPL": "NON_PL", "NONPANDL": "NON_PL", "TRANSFER": "NON_PL", "BALANCESHEET": "NON_PL",
+}
+
+
+def normalize_account_type(label: Optional[str]) -> str:
+    """Texto libre de sección del usuario ("Income", "Operating Expense", "COGS") → valor del enum
+    (`REVENUE`/`COGS`/…) o `""` si no se reconoce. Para importar reglas con vocabulario propio."""
+    if not label:
+        return ""
+    key = re.sub(r"[^A-Z]", "", label.upper())
+    for at in AccountType:
+        if re.sub(r"[^A-Z]", "", at.value) == key:
+            return at.value
+    return _SECTION_SYNONYMS.get(key, "")
+
+
+def build_import_rules(
+    headers: list[str], rows: list[list[str]], keyword_col: str, category_col: str,
+    account_type_col: str, sector: str, existing_keywords: list[str],
+) -> list[dict]:
+    """Construye el PREVIEW del import: por cada fila del archivo del usuario (ya mapeado por la IA),
+    extrae keyword + categoría, **resuelve la sección** (del archivo si la trae, si no por el plan de
+    cuentas), y marca un `status`: `ok` · `needs_section` (no se pudo resolver) · `exists` (ya hay
+    regla con ese keyword) · `duplicate` (repetido dentro del archivo)."""
+    from categories import categories_for  # local: evita ciclo de import
+    idx = {h: i for i, h in enumerate(headers)}
+    ki, ci = idx.get(keyword_col), idx.get(category_col)
+    ti = idx.get(account_type_col) if account_type_col else None
+    if ki is None or ci is None:
+        return []
+    cat_to_type = {normalize(c): at for at, cats in categories_for(sector).items() for c in cats}
+    existing_norm = {normalize(k) for k in existing_keywords}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        if ki >= len(r) or ci >= len(r):
+            continue
+        kw, cat = (r[ki] or "").strip(), (r[ci] or "").strip()
+        nkw = normalize(kw)
+        if not kw or not cat or not nkw:
+            continue
+        at = normalize_account_type(r[ti]) if (ti is not None and ti < len(r)) else ""
+        if not at:
+            at = cat_to_type.get(normalize(cat), "")
+        if nkw in seen:
+            status = "duplicate"
+        elif nkw in existing_norm:
+            status = "exists"
+        elif not at:
+            status = "needs_section"
+        else:
+            status = "ok"
+        seen.add(nkw)
+        out.append({"keyword": kw, "category": cat, "account_type": at, "status": status})
+    return out
+
+
 def create_company_rule(
     session: Session, company_id: int, sector: str,
     match_text: str, account_type: Optional[AccountType], category: Optional[str],

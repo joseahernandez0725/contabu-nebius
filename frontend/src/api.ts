@@ -264,6 +264,28 @@ export async function generateRuleProposals(): Promise<RuleProposal[]> {
   return res.json();
 }
 
+// --- Importar el banco de reglas del usuario (sube su Excel/CSV; la IA mapea las columnas) ---
+export interface RuleImportRow {
+  keyword: string;
+  account_type: string;       // "" si no se pudo resolver la sección
+  category: string;
+  status: string;             // ok | exists | duplicate | needs_section
+}
+
+export async function importRules(
+  file: File,
+): Promise<{ mapping: Record<string, string>; rules: RuleImportRow[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/import`, {
+    method: "POST",
+    headers: await authHeaders(), // sin Content-Type: el navegador pone el boundary de multipart
+    body: form,
+  });
+  if (!res.ok) throw new Error("No se pudo importar el archivo de reglas");
+  return res.json();
+}
+
 // Crea las reglas APROBADAS por el dueño y las aplica a lo existente.
 export async function applyRuleProposals(
   rules: { keyword: string; account_type: string; category: string }[],

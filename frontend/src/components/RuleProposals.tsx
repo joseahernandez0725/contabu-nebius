@@ -1,17 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  generateRuleProposals, applyRuleProposals, getCategories,
-  type RuleProposal, type ChartOfAccounts,
+  generateRuleProposals, applyRuleProposals, importRules, getCategories,
+  type ChartOfAccounts,
 } from "../api";
 import { SECTION_LABEL, sectionFamily, FAMILY_STYLE } from "../accounting";
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
-type Row = RuleProposal & { approved: boolean };
+type Row = {
+  keyword: string;
+  account_type: string;   // "" si la sección no se pudo resolver (import)
+  category: string;
+  covers: string[];       // comercios que mergea (proponedor); vacío en import
+  approved: boolean;
+  status?: string;        // import: ok | exists | duplicate | needs_section
+};
 
-// Proponedor proactivo: la IA mira las transacciones y SUGIERE reglas (mergea marcas, salta
-// gas/persona-a-persona). El dueño aprueba/edita/rechaza; al aplicar, se crean y se re-aplican.
+// Estado de las filas importadas → color del badge.
+const STATUS_STYLE: Record<string, string> = {
+  exists: "text-amber-700 bg-amber-100",
+  duplicate: "text-slate-500 bg-slate-100",
+  needs_section: "text-rose-700 bg-rose-100",
+};
+
+// Reglas para el dueño: la IA SUGIERE (proponedor) o el usuario IMPORTA su archivo. Aprueba/edita/aplica.
 export default function RuleProposals() {
   const { t } = useTranslation();
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -43,20 +56,39 @@ export default function RuleProposals() {
     }
   }
 
+  async function onImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // permite re-subir el mismo archivo
+    if (!file) return;
+    setLoading(true); setError(null); setNote(null);
+    try {
+      const { rules } = await importRules(file);
+      setRows(rules.map((r) => ({
+        keyword: r.keyword, account_type: r.account_type, category: r.category,
+        covers: [], approved: r.status === "ok", status: r.status,
+      })));
+      if (rules.length === 0)
+        setNote(t("proposals.importEmpty", { defaultValue: "Couldn't read any rules from that file." }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function setRow(i: number, patch: Partial<Row>) {
     setRows((rs) => rs && rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
 
-  const approvedCount = rows?.filter((r) => r.approved).length ?? 0;
+  // Solo se aplican las aprobadas CON sección resuelta (las needs_section sin arreglar se omiten).
+  const applicable = rows?.filter((r) => r.approved && r.account_type) ?? [];
 
   async function apply() {
-    if (!rows) return;
-    const approved = rows.filter((r) => r.approved);
-    if (approved.length === 0) return;
+    if (applicable.length === 0) return;
     setApplying(true); setError(null);
     try {
       const res = await applyRuleProposals(
-        approved.map((r) => ({ keyword: r.keyword, account_type: r.account_type, category: r.category })),
+        applicable.map((r) => ({ keyword: r.keyword, account_type: r.account_type, category: r.category })),
       );
       setNote(t("proposals.applied", {
         defaultValue: "Created {{c}} rules and aligned {{a}} transactions.",
@@ -77,7 +109,7 @@ export default function RuleProposals() {
           {t("proposals.title", { defaultValue: "Suggested rules" })}
         </h2>
         <p className="text-sm text-slate-500 mt-1">
-          {t("proposals.subtitle", { defaultValue: "ContaBu's AI scans your transactions and proposes rules for recurring merchants. Approve the ones you want." })}
+          {t("proposals.subtitle", { defaultValue: "Let ContaBu's AI propose rules from your transactions, or import your own rules file — the AI reads the columns." })}
         </p>
       </div>
 
@@ -85,16 +117,22 @@ export default function RuleProposals() {
       {note && <div className="text-sm text-brand-green bg-brand-green/10 rounded-lg px-3 py-2">{note}</div>}
 
       {rows == null ? (
-        <button
-          onClick={generate}
-          disabled={loading}
-          className="px-4 py-2.5 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
-          style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-        >
-          {loading
-            ? t("proposals.analyzing", { defaultValue: "AI is analyzing your transactions…" })
-            : t("proposals.generate", { defaultValue: "Suggest rules with AI" })}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={generate}
+            disabled={loading}
+            className="px-4 py-2.5 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
+            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+          >
+            {loading
+              ? t("proposals.analyzing", { defaultValue: "AI is working…" })
+              : t("proposals.generate", { defaultValue: "Suggest rules with AI" })}
+          </button>
+          <label className={`px-4 py-2.5 rounded-xl border border-slate-200 font-medium text-slate-700 ${loading ? "opacity-60" : "cursor-pointer hover:bg-slate-50"}`}>
+            {t("proposals.import", { defaultValue: "Import my rules file" })}
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onImportFile} disabled={loading} />
+          </label>
+        </div>
       ) : (
         <>
           <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
@@ -108,7 +146,7 @@ export default function RuleProposals() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((r, i) => {
-                  const style = FAMILY_STYLE[sectionFamily(r.account_type)];
+                  const style = FAMILY_STYLE[sectionFamily(r.account_type || null)];
                   return (
                     <tr key={i} className={r.approved ? "" : "opacity-40"}>
                       <td className="px-3 py-2.5 align-top">
@@ -129,13 +167,21 @@ export default function RuleProposals() {
                             {t("proposals.merges", { defaultValue: "merges" })}: {r.covers.join(", ")}
                           </div>
                         )}
+                        {r.status && r.status !== "ok" && (
+                          <div className="mt-0.5">
+                            <span className={`text-[10px] uppercase tracking-wide rounded px-1 py-0.5 ${STATUS_STYLE[r.status] ?? "text-slate-500 bg-slate-100"}`}>
+                              {t(`proposals.status.${r.status}`, { defaultValue: r.status.replace("_", " ") })}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-2 py-2.5 align-top">
                         <select
                           value={r.category}
                           onChange={(e) => setRow(i, { category: e.target.value, account_type: catToType[e.target.value] ?? r.account_type })}
-                          className={`rounded-lg border border-slate-200 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green/40 ${style.text}`}
+                          className={`rounded-lg border px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green/40 ${r.account_type ? `border-slate-200 ${style.text}` : "border-rose-300 text-rose-700"}`}
                         >
+                          {!r.account_type && <option value={r.category}>{r.category} — ?</option>}
                           {SECTIONS.filter((s) => chart[s]?.length).map((s) => (
                             <optgroup key={s} label={SECTION_LABEL[s] ?? s}>
                               {chart[s].map((c) => (
@@ -161,13 +207,13 @@ export default function RuleProposals() {
             </button>
             <button
               onClick={apply}
-              disabled={applying || approvedCount === 0}
+              disabled={applying || applicable.length === 0}
               className="px-4 py-2.5 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
               style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
             >
               {applying
                 ? t("proposals.applying", { defaultValue: "Applying…" })
-                : t("proposals.apply", { defaultValue: "Approve {{n}} rules", n: approvedCount })}
+                : t("proposals.apply", { defaultValue: "Approve {{n}} rules", n: applicable.length })}
             </button>
           </div>
         </>
