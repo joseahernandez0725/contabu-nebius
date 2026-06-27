@@ -12,6 +12,7 @@ a igualdad, gana la de `match_text` más específico (más largo).
 """
 
 import re
+from collections import Counter, defaultdict
 from decimal import Decimal
 from typing import Optional
 
@@ -71,6 +72,47 @@ def normalize(text: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", text.upper())
 
 
+# --- Identidad de comercio (merchant signature) -------------------------------------------------
+# Prefijos de pasarela/procesador: el COMERCIO real viene DESPUÉS (SQ *JOES COFFEE → JOES COFFEE).
+_PROCESSOR_PREFIXES = {
+    "SQ", "TST", "SPO", "DD", "DOORDASH", "UBER", "INTUIT", "GOOGLE", "MICROSOFT", "MSFT",
+    "GEICO", "HIS", "AMZN", "AMAZON", "PAYPAL", "PP", "PY", "EB", "WL", "CKE", "GUSTO", "WPY",
+}
+# Palabras de ruido del banco que NO identifican al comercio (se descartan de la firma).
+_MERCHANT_NOISE = {
+    "POS", "DEBIT", "CREDIT", "PURCHASE", "PAYMENT", "PMT", "ONLINE", "RECURRING", "ACH",
+    "CARD", "VISA", "MASTERCARD", "MC", "ID", "REF", "TRANSACTION", "AUTH", "PENDING",
+    "THE", "AND", "INC", "LLC", "CO", "CORP", "LTD", "OF", "FOR", "COM", "WWW", "NET", "BILL",
+}
+
+
+def merchant_signature(description: Optional[str], tokens: int = 2) -> str:
+    """Firma del COMERCIO: agrupa transacciones del mismo comercio pese al ruido del banco
+    (número de tienda `#1234`, ref#, fechas, cuentas enmascaradas `XXXX2961`, prefijos de procesador
+    `SQ*`/`TST*`). Dos descripciones del mismo comercio → la **misma firma**. `''` si no hay señal.
+
+    Devuelve hasta `tokens` palabras significativas concatenadas (sin espacios). Sirve para (1) agrupar
+    transacciones por comercio y (2) detectar si una regla ya lo cubre (dedup / keyword muerto).
+
+    Limitación honesta: NO resuelve nombres truncados/garbleados sin tokens en común (ej. `# DAY` vs
+    `DAY DARMET`) — esos se dejan a la **aprobación humana** del proponedor (un merge falso miscategoriza,
+    peor que no mergear)."""
+    if not description:
+        return ""
+    text = description.upper()
+    text = _CHECK_RE.sub(" ", text)                       # cheques
+    text = re.sub(r"X{2,}\d+", " ", text)                 # cuentas enmascaradas XXXX2961
+    text = re.sub(r"#\s*\d+", " ", text)                  # número de tienda / ref #1234
+    text = re.sub(r"\bREF\s*#?\s*\w+", " ", text)         # REF# dinámico
+    text = re.sub(r"\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?", " ", text)  # fechas
+    words = re.sub(r"[^A-Z0-9]+", " ", text).split()
+    if words and words[0] in _PROCESSOR_PREFIXES:         # quitar prefijo de procesador
+        words = words[1:]
+    sig = [w for w in words
+           if any(c.isalpha() for c in w) and len(w) >= 2 and w not in _MERCHANT_NOISE]
+    return "".join(sig[:tokens])
+
+
 def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryRule]:
     """Carga las reglas **COMPANY** de la empresa, ordenadas por especificidad (más largo primero).
 
@@ -101,18 +143,42 @@ def _phrase(text: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", text.upper())).strip()
 
 
+def _matches(match_text: str, desc_padded: str) -> bool:
+    """¿El `match_text` aparece en la descripción (ya en forma ` _phrase ` con espacios a los lados)?
+
+    - Sin `*`: la **frase completa** debe aparecer como palabra/frase (límite de palabra).
+    - Con `*` (comodín = "lo que sea en medio"): cada parte debe aparecer **EN ORDEN**, con cualquier
+      cosa entre ellas. Ej. `ONLINE TRANSFER*TO*7581` matchea
+      "ONLINE TRANSFER REF #ABC TO CARD XXXX7581" (útil para transferencias/ACH con basura intercalada).
+
+    Cada parte se compara por **límite de palabra** (la seguridad de `match_rule`: "Shell" ≠ "MICHELLE")."""
+    pos = 0
+    matched_any = False
+    for part in match_text.split("*"):
+        token = _phrase(part)
+        if not token:
+            continue  # parte vacía (`*` doble o al borde) → se ignora
+        matched_any = True
+        needle = f" {token} "
+        idx = desc_padded.find(needle, pos)
+        if idx == -1:
+            return False
+        pos = idx + len(needle) - 1  # -1: el espacio final sirve de espacio inicial del siguiente token
+    return matched_any  # False si el keyword no tenía ninguna palabra real (ej. solo "*")
+
+
 def match_rule(rules: list[CategoryRule], description: str) -> CategoryRule | None:
     """Primera regla (de la lista ya ordenada por prioridad) cuyo `match_text` aparece como
-    **palabra/frase completa** en la descripción. `None` si ninguna aplica.
+    **palabra/frase completa** en la descripción (con soporte de comodín `*`). `None` si ninguna aplica.
 
     Match por límite de palabra (no subcadena suelta) → reglas **específicas, sin conflicto**:
-    "Shell" matchea "SHELL OIL 4471" pero NO "MICHELLE"; "Home Depot" matchea "HOME DEPOT 1234"."""
+    "Shell" matchea "SHELL OIL 4471" pero NO "MICHELLE"; "Home Depot" matchea "HOME DEPOT 1234".
+    Con `*`, ver `_matches` (anclas en orden, comodín en medio)."""
     desc = f" {_phrase(description)} "
     if desc == "  ":
         return None
     for rule in rules:
-        token = _phrase(rule.match_text)
-        if token and f" {token} " in desc:
+        if _matches(rule.match_text, desc):
             return rule
     return None
 
@@ -122,6 +188,50 @@ def find_matching_rule(
 ) -> CategoryRule | None:
     """Conveniencia para un solo lookup: carga las reglas y matchea una descripción."""
     return match_rule(load_rules(session, company_id, sector), description)
+
+
+# Un comercio que aparece ≥ este nº de veces (y no tiene regla) es candidato a regla.
+MIN_RULE_CANDIDATE_COUNT = 2
+
+
+def find_rule_candidates(rules: list[CategoryRule], items: list[dict]) -> list[dict]:
+    """Base del PROPONEDOR (determinista, sin IA). Dada una lista de transacciones ya categorizadas
+    (`items`: dicts con `description`, `account_type`, `category`, `is_inflow`), agrupa por **comercio**
+    (`merchant_signature`) y devuelve los comercios **recurrentes que NINGUNA regla cubre** → candidatos
+    a regla, para que la IA/usuario los confirmen.
+
+    - Salta cheques/genéricos (firma vacía) y lo ya cubierto por una regla (`match_rule`).
+    - **Split por signo (§B.8):** un comercio con entradas Y salidas se separa en dos candidatos
+      (ej. Clover: depósitos +REVENUE vs fees −EXPENSE).
+    - Marca `mixed=True` si la IA categorizó el grupo de forma inconsistente (más razón para una regla).
+    """
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for it in items:
+        sig = merchant_signature(it.get("description"))
+        if not sig:
+            continue  # cheque/genérico → no se agrupa por comercio
+        if match_rule(rules, it.get("description") or "") is not None:
+            continue  # ya cubierto por una regla existente
+        sign = "in" if it.get("is_inflow") else "out"
+        groups[(sig, sign)].append(it)
+
+    candidates: list[dict] = []
+    for (sig, sign), its in groups.items():
+        if len(its) < MIN_RULE_CANDIDATE_COUNT:
+            continue
+        cats = Counter((it.get("account_type"), it.get("category")) for it in its)
+        (at, cat), _ = cats.most_common(1)[0]  # categoría mayoritaria = sugerencia
+        candidates.append({
+            "signature": sig,
+            "sign": sign,
+            "count": len(its),
+            "suggested_account_type": at,
+            "suggested_category": cat,
+            "examples": [it.get("description") for it in its[:3]],
+            "mixed": len(cats) > 1,
+        })
+    candidates.sort(key=lambda c: -c["count"])
+    return candidates
 
 
 def apply_rule_to_transactions(
