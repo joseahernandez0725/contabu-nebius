@@ -84,6 +84,18 @@ class ColumnMapping(BaseModel):
     status_column: str = ""
 
 
+class ProposedRule(BaseModel):
+    """Una regla COMPANY que el AGENTE PROPONEDOR sugiere (el usuario la aprueba). El proponedor toma
+    los comercios recurrentes sin regla y propone reglas: mergeando variantes de marca, evitando
+    duplicar reglas existentes, marcando gas/super como `skip` (los manejan las bandas de monto)."""
+    reasoning: str            # 1 frase: por qué / qué candidatos junta
+    keyword: str              # match_text específico (puede usar `*` como comodín)
+    account_type: AccountType
+    category: str
+    covers: list[str]         # firmas de candidato que esta regla cubre (auditar el merge)
+    kind: str                 # "rule" (proponer regla) | "skip" (gas/super→banda, o ya cubierto)
+
+
 def _generate(prompt: str, schema, *, max_retries: int = 4):
     """Llama a Gemini con structured output (schema puede ser un modelo o una lista de modelos).
     Reintenta ante errores transitorios (backoff)."""
@@ -178,6 +190,59 @@ review_question="" unless the explanation is still genuinely unclear."""
     logger.info(
         "recategorize | desc=%r answer=%r -> type=%s category=%r confidence=%s",
         description, answer, result.account_type.value, result.category, result.confidence,
+    )
+    return result
+
+
+def propose_rules(candidates: list[dict], existing_keywords: list[str], sector: str) -> list[ProposedRule]:
+    """AGENTE PROPONEDOR (1 llamada): toma los candidatos deterministas (`rules.find_rule_candidates`)
+    y devuelve reglas COMPANY propuestas para que el usuario apruebe. Mergea variantes de marca,
+    no duplica las reglas existentes, usa `*` para transferencias/ACH, y marca gas/super como `skip`."""
+    if not candidates:
+        return []
+    cand_lines = "\n".join(
+        f"- signature={c['signature']} count={c['count']} sign={c['sign']} "
+        f"suggested={c['suggested_account_type']}/{c['suggested_category']} examples={c['examples']}"
+        for c in candidates
+    )
+    existing = ", ".join(existing_keywords) or "(none yet)"
+    prompt = f"""You are a bookkeeping rule-proposer for a "{sector}" small business. From the recurring
+merchants below (each seen >=2 times and NOT yet covered by a rule), propose COMPANY categorization
+rules for the owner to approve.
+
+Rules of the game:
+- MERGE brand variants into ONE rule. "CHEVRONSAN", "CHEVRONBAY", "CHEVRONCONCORD" are all Chevron ->
+  one rule. Drop store numbers and city/state from the keyword.
+- keyword: the SHORTEST text that identifies the merchant without being generic. For transfers/ACH
+  with junk in the middle, use `*` as a wildcard (e.g. "ONLINE TRANSFER*TO*XXXX2961"); keep the exact
+  masked digits.
+- account_type: exactly one of REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
+- category: from the closed chart of accounts below; it MUST belong to the account_type. Use the
+  suggested category unless it is clearly wrong.
+- Do NOT duplicate an existing rule keyword (listed below); if a merchant is already covered or
+  conflicts, set kind="skip".
+- GAS STATIONS and SUPERMARKETS are handled by amount bands -> set kind="skip" for them.
+- NEVER propose a blanket rule for ambiguous PERSON-TO-PERSON payments (Zelle/Venmo/Quickpay/Cash App
+  to or from a PERSON): the same channel can be a customer payment, a subcontractor, an owner draw or a
+  contribution -> set kind="skip" (those go to human review). Only propose a rule when the counterparty
+  is a clear BUSINESS/vendor name (e.g. "Zelle to ABC Plumbing" is fine; "Zelle to/from <person>" is not).
+- covers: list the candidate signatures this entry merges.
+
+Existing rule keywords (do not duplicate): {existing}
+
+Chart of accounts for "{sector}":
+{format_for_prompt(sector)}
+
+Recurring merchants (candidates):
+{cand_lines}
+
+Return one object per proposed rule (kind="rule") or per merchant to skip (kind="skip")."""
+
+    response = _generate(prompt, list[ProposedRule])
+    result = response.parsed
+    logger.info(
+        "propose_rules | sector=%s candidates=%d -> proposed=%d",
+        sector, len(candidates), len([r for r in result if r.kind == "rule"]),
     )
     return result
 

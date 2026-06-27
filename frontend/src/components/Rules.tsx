@@ -5,6 +5,7 @@ import {
   type ChartOfAccounts, type Rule,
 } from "../api";
 import { SECTION_LABEL, sectionFamily, FAMILY_STYLE } from "../accounting";
+import RuleProposals from "./RuleProposals";
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
@@ -41,6 +42,8 @@ export default function Rules() {
 
   return (
     <div className="space-y-4">
+      <RuleProposals />
+      <div className="border-t border-slate-100" />
       <div>
         <h2 className="text-lg font-bold text-slate-900">
           {t("rules.title", { defaultValue: "Rules" })}

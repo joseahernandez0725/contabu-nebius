@@ -245,6 +245,38 @@ export async function cleanupRules(): Promise<{ removed: number }> {
   return res.json();
 }
 
+// --- Proponedor proactivo: la IA sugiere reglas para que el dueño apruebe ---
+export interface RuleProposal {
+  keyword: string;
+  account_type: string;
+  category: string;
+  covers: string[];   // firmas de comercio que la regla cubre (para auditar el merge)
+  reasoning: string;
+}
+
+// Dispara el agente proponedor (IA): devuelve reglas sugeridas. NO crea nada (solo propone).
+export async function generateRuleProposals(): Promise<RuleProposal[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudieron generar las propuestas");
+  return res.json();
+}
+
+// Crea las reglas APROBADAS por el dueño y las aplica a lo existente.
+export async function applyRuleProposals(
+  rules: { keyword: string; account_type: string; category: string }[],
+): Promise<{ created: number; applied: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals/apply`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ rules }),
+  });
+  if (!res.ok) throw new Error("No se pudieron aplicar las reglas");
+  return res.json();
+}
+
 // --- P&L como proyectos guardados (draft = recalcula · closed = congelado) ---
 export interface PnlReportMeta {
   id: number;

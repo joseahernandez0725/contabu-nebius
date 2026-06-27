@@ -207,11 +207,14 @@ def find_rule_candidates(rules: list[CategoryRule], items: list[dict]) -> list[d
     """
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for it in items:
-        sig = merchant_signature(it.get("description"))
+        desc = it.get("description") or ""
+        sig = merchant_signature(desc)
         if not sig:
             continue  # cheque/genérico → no se agrupa por comercio
-        if match_rule(rules, it.get("description") or "") is not None:
+        if match_rule(rules, desc) is not None:
             continue  # ya cubierto por una regla existente
+        if classify_merchant(desc) is not None:
+            continue  # gasolinera/super → lo maneja la banda de monto, no una regla (§3.7)
         sign = "in" if it.get("is_inflow") else "out"
         groups[(sig, sign)].append(it)
 
@@ -441,6 +444,39 @@ def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
 
     # El comercio no aparece en la descripción → tomar una frase real de la descripción.
     return _phrase_in_description(dwords)
+
+
+def create_company_rule(
+    session: Session, company_id: int, sector: str,
+    match_text: str, account_type: Optional[AccountType], category: Optional[str],
+) -> Optional[CategoryRule]:
+    """Crea una regla COMPANY con el keyword **TAL CUAL** (preserva el comodín `*`, a diferencia de
+    `upsert_company_rule` que lo normaliza con `specific_phrase`). Para reglas ya listas del
+    **proponedor** o del **import**. Idempotente por keyword normalizado. Devuelve la regla o None."""
+    kw = (match_text or "").strip()
+    if not kw or account_type is None or not category:
+        return None
+    norm = normalize(kw)
+    if not norm:
+        return None
+    existing = session.exec(
+        select(CategoryRule).where(
+            (CategoryRule.scope == RuleScope.COMPANY) & (CategoryRule.company_id == company_id)
+        )
+    ).all()
+    for r in existing:
+        if normalize(r.match_text) == norm:  # ya existe ese comercio → actualizar
+            r.account_type = account_type
+            r.category = category
+            r.match_text = kw
+            session.add(r)
+            return r
+    rule = CategoryRule(
+        scope=RuleScope.COMPANY, company_id=company_id, sector=sector,
+        match_text=kw, account_type=account_type, category=category,
+    )
+    session.add(rule)
+    return rule
 
 
 def upsert_company_rule(

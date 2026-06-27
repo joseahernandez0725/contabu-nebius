@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
-from ai import recategorize_with_answer
+from ai import propose_rules, recategorize_with_answer
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
@@ -27,7 +27,10 @@ from models import (
     Transaction, User,
 )
 from reports import income_statement
-from rules import apply_rule_to_transactions, is_check, match_rule, upsert_company_rule
+from rules import (
+    apply_rule_to_transactions, create_company_rule, find_rule_candidates, is_check,
+    load_rules, match_rule, upsert_company_rule,
+)
 
 
 class TransactionUpdate(BaseModel):
@@ -549,6 +552,69 @@ def delete_rule(
     session.delete(rule)
     session.commit()
     return {"deleted": rule_id}
+
+
+@app.post("/api/companies/{company_id}/rule-proposals")
+def generate_rule_proposals(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """AGENTE PROPONEDOR: mira las transacciones ya categorizadas, encuentra los comercios recurrentes
+    SIN regla (determinista) y pide a la IA reglas COMPANY propuestas (mergea marcas, no duplica las
+    existentes, salta gas/super y persona-a-persona). Devuelve propuestas para que el dueño APRUEBE
+    (no crea nada todavía)."""
+    company = owned_company(company_id, user, session)
+    sector = company.sector if company else "general"
+    rules = load_rules(session, company_id, sector)
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+    ).all()
+    items = [{
+        "description": t.description, "account_type": t.account_type.value if t.account_type else None,
+        "category": t.category, "is_inflow": t.is_inflow,
+    } for t in txs]
+    candidates = find_rule_candidates(rules, items)
+    proposals = propose_rules(candidates, [r.match_text for r in rules], sector)
+    return [{
+        "keyword": p.keyword, "account_type": p.account_type.value, "category": p.category,
+        "covers": p.covers, "reasoning": p.reasoning,
+    } for p in proposals if p.kind == "rule"]
+
+
+class RuleProposalApply(BaseModel):
+    """Una regla aprobada del proponedor (lista para crear)."""
+    keyword: str
+    account_type: AccountType
+    category: str
+
+
+class RuleProposalsApply(BaseModel):
+    rules: list[RuleProposalApply]
+
+
+@app.post("/api/companies/{company_id}/rule-proposals/apply")
+def apply_rule_proposals(
+    company_id: int,
+    payload: RuleProposalsApply,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Crea las reglas que el dueño APROBÓ del proponedor (keyword tal cual, preserva `*`) y las
+    re-aplica a las transacciones existentes (los libros se ajustan). Devuelve cuántas reglas creó
+    y cuántas transacciones alineó."""
+    company = owned_company(company_id, user, session, write=True)
+    sector = company.sector if company else "general"
+    created = 0
+    applied = 0
+    for p in payload.rules:
+        rule = create_company_rule(session, company_id, sector, p.keyword, p.account_type, p.category)
+        if rule is not None:
+            created += 1
+            session.flush()  # asigna id para apply_rule_to_transactions
+            applied += apply_rule_to_transactions(session, company_id, rule)
+    session.commit()
+    return {"created": created, "applied": applied}
 
 
 @app.post("/api/companies/{company_id}/rules/cleanup")
