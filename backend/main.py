@@ -21,7 +21,7 @@ from ai import map_rule_columns, propose_rules, recategorize_with_answer
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
-from ingestion import ingest_csv, mask_account, parse_csv
+from ingestion import ingest_csv, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
@@ -630,7 +630,7 @@ async def import_rules_preview(
     company = owned_company(company_id, user, session)
     sector = company.sector if company else "general"
     content = await file.read()
-    headers, rows = parse_csv(content)
+    headers, rows = parse_spreadsheet(content, file.filename)
     if not headers or not rows:
         raise HTTPException(status_code=422, detail="Archivo vacío o ilegible.")
     mapping = map_rule_columns(headers, rows[:5])
@@ -871,6 +871,7 @@ def update_transaction(
         setattr(tx, field, value)
     # Si el usuario tocó la categorización: fuente = manual y se guarda como REGLA (memoria),
     # igual que el flujo de "explicar". Así la próxima vez ese comercio se categoriza solo.
+    applied = 0  # cuántas OTRAS transacciones alineó la regla nueva (para feedback "en vivo")
     if any(k in data for k in ("account_type", "category", "subcategory")):
         tx.source = "manual"
         # Un cheque no genera regla (cada cheque es distinto; ver rules.is_check).
@@ -883,11 +884,12 @@ def update_transaction(
             )
             # Corregir una → corregir todas: alinea las demás transacciones del mismo comercio.
             if rule is not None:
-                apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
+                applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
     session.add(tx)
     session.commit()
     session.refresh(tx)
-    return tx
+    # Devuelve la tx + cuántas OTRAS alineó la regla → el frontend lo muestra y re-pinta de verde.
+    return {"id": tx.id, "applied": applied}
 
 
 @app.post("/api/transactions/{transaction_id}/clarify")

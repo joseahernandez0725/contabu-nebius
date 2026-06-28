@@ -374,14 +374,14 @@ export async function getReviewTransactions(): Promise<Transaction[]> {
 export async function updateTransaction(
   id: number,
   payload: Partial<{ account_type: string; category: string; subcategory: string; needs_review: boolean }>,
-): Promise<Transaction> {
+): Promise<{ id: number; applied: number }> {
   const res = await fetch(`${API}/api/transactions/${id}`, {
     method: "PATCH",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error("No se pudo actualizar la transacción");
-  return res.json();
+  return res.json(); // { id, applied } — applied = otras tx que alineó la regla nueva
 }
 
 export async function clarifyTransaction(id: number, answer: string): Promise<Transaction> {

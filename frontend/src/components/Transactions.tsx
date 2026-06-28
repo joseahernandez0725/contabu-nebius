@@ -18,6 +18,7 @@ export default function Transactions() {
   const [txs, setTxs] = useState<Transaction[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState<string>(""); // "" = todas las cuentas
@@ -93,6 +94,11 @@ export default function Transactions() {
 
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+      {note && (
+        <div className="text-sm text-brand-green bg-brand-green/10 px-4 py-2 border-b border-slate-100">
+          {note}
+        </div>
+      )}
       <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-3 flex-wrap">
         <h2 className="font-semibold text-slate-900 shrink-0">{t("tx.title")}</h2>
         {accounts.length > 0 && (
@@ -207,9 +213,15 @@ export default function Transactions() {
           chart={chart}
           catToType={catToType}
           onClose={() => setEditing(null)}
-          onSaved={() => {
+          onSaved={(applied) => {
             setEditing(null);
-            load();
+            if (applied > 0)
+              setNote(t("tx.ruleApplied", {
+                defaultValue: "Rule created · {{n}} more transactions updated",
+                n: applied,
+              }));
+            else setNote(null);
+            load(); // recarga → las recién cubiertas por la regla se pintan de verde (en vivo)
           }}
         />
       )}
@@ -289,7 +301,7 @@ function EditModal({
   chart: ChartOfAccounts;
   catToType: Record<string, string>;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (applied: number) => void;
 }) {
   const { t } = useTranslation();
   const [category, setCategory] = useState(tx.category ?? "");
@@ -299,12 +311,12 @@ function EditModal({
   async function save() {
     setSaving(true);
     try {
-      await updateTransaction(tx.id, {
+      const res = await updateTransaction(tx.id, {
         category,
         account_type: catToType[category],
         subcategory,
       });
-      onSaved();
+      onSaved(res.applied);
     } catch {
       setSaving(false);
     }

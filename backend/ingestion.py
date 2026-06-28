@@ -166,6 +166,35 @@ def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
     return rows[0], rows[1:]
 
 
+def parse_xlsx(content: bytes) -> tuple[list[str], list[list[str]]]:
+    """Bytes de un .xlsx → (headers, filas). Lee la **primera hoja**; ignora filas vacías; la 1ª fila
+    no vacía son los encabezados. Las celdas se normalizan a str (números/fechas → texto)."""
+    import openpyxl  # import perezoso: solo si llega un Excel
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    headers: list[str] = []
+    for row in rows_iter:
+        cells = ["" if c is None else str(c).strip() for c in row]
+        if any(cells):
+            headers = cells
+            break
+    data: list[list[str]] = []
+    for row in rows_iter:
+        cells = ["" if c is None else str(c).strip() for c in row]
+        if any(cells):
+            data.append(cells)
+    wb.close()
+    return headers, data
+
+
+def parse_spreadsheet(content: bytes, filename: str | None = None) -> tuple[list[str], list[list[str]]]:
+    """Despacha a Excel o CSV según extensión/firma. Los `.xlsx` son ZIP → empiezan con `PK`."""
+    name = (filename or "").lower()
+    is_xlsx = name.endswith(".xlsx") or content[:2] == b"PK"
+    return parse_xlsx(content) if is_xlsx else parse_csv(content)
+
+
 def parse_amount(raw: str) -> Decimal:
     """Monto sucio → Decimal con signo. '$1,234.56' → 1234.56 ; '(342.18)' → -342.18."""
     s = raw.strip().replace("$", "").replace(" ", "")

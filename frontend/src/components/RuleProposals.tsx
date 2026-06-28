@@ -130,7 +130,7 @@ export default function RuleProposals() {
           </button>
           <label className={`px-4 py-2.5 rounded-xl border border-slate-200 font-medium text-slate-700 ${loading ? "opacity-60" : "cursor-pointer hover:bg-slate-50"}`}>
             {t("proposals.import", { defaultValue: "Import my rules file" })}
-            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onImportFile} disabled={loading} />
+            <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onImportFile} disabled={loading} />
           </label>
         </div>
       ) : (
