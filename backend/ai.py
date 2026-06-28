@@ -77,7 +77,12 @@ class ColumnMapping(BaseModel):
     """
     date_column: str
     description_column: str
-    amount_column: str
+    # Monto con signo en UNA columna. "" si el banco usa Debit/Credit separadas (ver abajo).
+    amount_column: str = ""
+    # Algunos bancos NO traen monto con signo, sino DOS columnas: Debit (salida) y Credit (entrada).
+    # Si las hay, devolver sus nombres EXACTOS; si el banco usa una sola columna de monto, dejar "".
+    debit_column: str = ""
+    credit_column: str = ""
     account_column: str = ""
     account_label: str = ""
     # Columna de estado del movimiento (pending/posted), si el archivo la trae. "" si no existe.
@@ -315,7 +320,10 @@ Example data rows:
 Return the EXACT header names as given:
 - date_column: header holding the transaction date.
 - description_column: header holding the description.
-- amount_column: header holding the transaction amount.
+- amount_column: header holding the SIGNED transaction amount (one column). If the bank instead uses
+  TWO separate columns (one for money out, one for money in), leave amount_column "" and fill the next two:
+- debit_column: header for money OUT (withdrawals/charges/debits). "" if there is a single amount column.
+- credit_column: header for money IN (deposits/credits). "" if there is a single amount column.
 
 Also detect the originating BANK ACCOUNT (a business may have several: checking, savings, cards):
 - account_column: if a column identifies the account PER ROW (common in aggregator exports
@@ -329,9 +337,10 @@ Also detect the originating BANK ACCOUNT (a business may have several: checking,
     response = _generate(prompt, ColumnMapping)
     result = response.parsed
     logger.info(
-        "map_columns | headers=%s -> date=%r description=%r amount=%r account_column=%r "
-        "account_label=%r status_column=%r",
+        "map_columns | headers=%s -> date=%r description=%r amount=%r debit=%r credit=%r "
+        "account_column=%r account_label=%r status_column=%r",
         headers, result.date_column, result.description_column, result.amount_column,
+        result.debit_column, result.credit_column,
         result.account_column, result.account_label, result.status_column,
     )
     return result

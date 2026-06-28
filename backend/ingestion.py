@@ -209,6 +209,19 @@ def parse_amount(raw: str) -> Decimal:
     return -abs(value) if negative else value
 
 
+def signed_from_row(
+    r: list[str], i_amount: int | None, i_debit: int | None, i_credit: int | None
+) -> Decimal:
+    """Monto CON SIGNO de una fila. Si hay columna única de monto, la usa. Si el banco trae columnas
+    separadas **Debit** (salida) y **Credit** (entrada), las combina: `+credit − debit` (en magnitud,
+    porque el signo lo da la columna). Cada fila suele traer solo una de las dos."""
+    if i_amount is not None and i_amount < len(r) and r[i_amount].strip():
+        return parse_amount(r[i_amount])
+    credit = abs(parse_amount(r[i_credit])) if (i_credit is not None and i_credit < len(r)) else Decimal(0)
+    debit = abs(parse_amount(r[i_debit])) if (i_debit is not None and i_debit < len(r)) else Decimal(0)
+    return credit - debit
+
+
 def mask_account(raw: str | None) -> str | None:
     """Normaliza una cuenta bancaria: conserva el NOMBRE del banco y enmascara el número a
     los ÚLTIMOS 4 DÍGITOS. 'Chase Checking 001234567890' → 'Chase Checking ****7890';
@@ -271,10 +284,16 @@ def ingest_csv(
     try:
         i_date = headers.index(mapping.date_column)
         i_desc = headers.index(mapping.description_column)
-        i_amount = headers.index(mapping.amount_column)
     except ValueError:
         return {"inserted": 0, "errors": 0, "mapping": mapping.model_dump(),
                 "message": "la IA devolvió una columna que no existe en el archivo"}
+    # Monto: una columna con signo, O dos columnas separadas Debit (salida) / Credit (entrada).
+    i_amount = headers.index(mapping.amount_column) if mapping.amount_column in headers else None
+    i_debit = headers.index(mapping.debit_column) if mapping.debit_column in headers else None
+    i_credit = headers.index(mapping.credit_column) if mapping.credit_column in headers else None
+    if i_amount is None and i_debit is None and i_credit is None:
+        return {"inserted": 0, "errors": 0, "mapping": mapping.model_dump(),
+                "message": "no se encontró columna de monto (ni Debit/Credit) en el archivo"}
 
     # Cuenta bancaria: si hay columna por fila, la leemos de cada fila; si no, usamos la
     # etiqueta detectada para todo el archivo. En ambos casos se guarda enmascarada a los
@@ -302,7 +321,7 @@ def ingest_csv(
         try:
             d = parse_date(r[i_date])
             description = r[i_desc].strip()
-            signed = parse_amount(r[i_amount])  # con signo (dirección)
+            signed = signed_from_row(r, i_amount, i_debit, i_credit)  # con signo (una col o Debit/Credit)
             raw_account = r[i_account] if i_account is not None else file_account_raw
             account = mask_account(raw_account)
             status = r[i_status] if i_status is not None else None
