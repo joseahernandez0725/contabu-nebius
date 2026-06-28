@@ -183,6 +183,33 @@ def match_rule(rules: list[CategoryRule], description: str) -> CategoryRule | No
     return None
 
 
+# --- Transferencias entre cuentas propias (determinista, NON_PL) -------------------------------
+# Una transferencia/ACH entre cuentas del dueño NO toca el P&L (NON_PL). El DESTINO define la cuenta:
+# tarjeta → pago de tarjeta; préstamo/línea → abono a capital; savings/checking → transferencia simple.
+# Solo dispara si hay "transfer" Y una palabra de destino → NO confunde un Zelle a una persona (§D).
+_TRANSFER_RE = re.compile(r"\b(transfer|xfer)\b", re.IGNORECASE)
+_DEST_CARD_RE = re.compile(r"\b(credit\s*card|card|crd|cc)\b", re.IGNORECASE)
+_DEST_LOAN_RE = re.compile(r"\b(loan|mortgage|heloc|bloc|loc|line\s*of\s*credit|credit\s*line)\b", re.IGNORECASE)
+_DEST_ASSET_RE = re.compile(r"\b(savings|checking|chk|sav|money\s*market|mmkt)\b", re.IGNORECASE)
+
+
+def classify_transfer(description: Optional[str]) -> Optional[tuple[AccountType, str]]:
+    """Transferencia entre cuentas propias → `(NON_PL, categoría)` según el DESTINO, o `None` si no es
+    una transferencia con destino claro (entonces va a la IA/revisión). Determinista, antes de la IA.
+
+    - tarjeta → `Credit Card Payment` · préstamo/línea → `Loan Principal Payment` · savings/checking →
+    `Transfer`. La **dirección** (TO/FROM) no cambia la categoría (sí el signo, vía `is_inflow`)."""
+    if not description or not _TRANSFER_RE.search(description):
+        return None
+    if _DEST_CARD_RE.search(description):
+        return (AccountType.NON_PL, "Credit Card Payment")
+    if _DEST_LOAN_RE.search(description):
+        return (AccountType.NON_PL, "Loan Principal Payment")
+    if _DEST_ASSET_RE.search(description):
+        return (AccountType.NON_PL, "Transfer")
+    return None  # "transfer" sin destino claro → que decida la IA / revisión
+
+
 def find_matching_rule(
     session: Session, company_id: int, sector: str, description: str
 ) -> CategoryRule | None:

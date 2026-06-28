@@ -39,7 +39,7 @@ from ai import categorize_transaction
 from db import engine
 from ingestion import AI_CONCURRENCY, needs_human_review, unify_merchant_categorization
 from models import AccountType, RuleScope
-from rules import amount_band_category, load_rules, match_rule
+from rules import amount_band_category, classify_transfer, load_rules, match_rule
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOLD_DEFAULT = os.path.join(HERE, "private", "gold_set_template.csv")
@@ -90,6 +90,7 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
 
     rule_hits: dict[int, object] = {}
     band_hits: dict[int, tuple] = {}
+    transfer_hits: dict[int, tuple] = {}
     ai_indices: list[int] = []
     for idx, g in enumerate(gold):
         rule = match_rule(rules, g["description"])
@@ -99,6 +100,10 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
         band = amount_band_category(g["description"], float(g["signed"]))  # umbrales default
         if band is not None:
             band_hits[idx] = band
+            continue
+        transfer = classify_transfer(g["description"])  # transferencia entre cuentas → NON_PL
+        if transfer is not None:
+            transfer_hits[idx] = transfer
             continue
         ai_indices.append(idx)
 
@@ -131,6 +136,9 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
             at, cat, near = band_hits[idx]  # near = zona gris (cerca del umbral) → revisión
             p.update(source="band", at=at, cat=cat, sub=None,
                      confidence=0.5 if near else 0.85, needs_review=near)
+        elif idx in transfer_hits:
+            at, cat = transfer_hits[idx]  # transferencia entre cuentas → NON_PL, determinista
+            p.update(source="transfer", at=at, cat=cat, sub=None, confidence=1.0, needs_review=False)
         elif idx in ai_cats:
             c = ai_cats[idx]
             p.update(source="ai", at=c.account_type, cat=c.category,
@@ -151,6 +159,7 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
         preds.append(p)
 
     return preds, {"by_rule": len(rule_hits), "by_band": len(band_hits),
+                   "by_transfer": len(transfer_hits),
                    "by_ai": len(ai_cats), "ai_failed": len(ai_indices) - len(ai_cats),
                    "consistency_adjusted": consistency_adjusted,
                    "rules_loaded": len(rules)}

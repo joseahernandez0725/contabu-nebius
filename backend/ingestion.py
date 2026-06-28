@@ -52,8 +52,8 @@ def is_pending(status: str | None) -> bool:
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
 from rules import (
-    amount_band_category, check_number, is_check, load_learned_merchants, load_rules,
-    match_rule, specific_phrase, upsert_learned_merchant,
+    amount_band_category, check_number, classify_transfer, is_check, load_learned_merchants,
+    load_rules, match_rule, specific_phrase, upsert_learned_merchant,
 )
 
 
@@ -378,6 +378,7 @@ def ingest_csv(
     extra_gas, extra_super = load_learned_merchants(session, company_id, sector) if categorize else ([], [])
     rule_hits: dict[int, CategoryRule] = {}
     band_hits: dict[int, tuple] = {}  # idx -> (account_type, category, near_threshold)
+    transfer_hits: dict[int, tuple] = {}  # idx -> (account_type, category) — transferencia entre cuentas
     ai_indices: list[int] = []
     if categorize:
         for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
@@ -388,6 +389,10 @@ def ingest_csv(
             band = amount_band_category(desc, float(signed), super_thr, gas_thr, extra_gas, extra_super)
             if band is not None:
                 band_hits[idx] = band
+                continue
+            transfer = classify_transfer(desc)  # transferencia entre cuentas propias → NON_PL
+            if transfer is not None:
+                transfer_hits[idx] = transfer
                 continue
             ai_indices.append(idx)
 
@@ -424,6 +429,7 @@ def ingest_csv(
     inserted = 0
     by_rule = 0
     by_band = 0
+    by_transfer = 0
     by_ai = 0
     preview: list[dict] = []
     created: list[Transaction] = []
@@ -464,6 +470,17 @@ def ingest_csv(
                 tx.needs_review = False
                 tx.review_question = None
             by_band += 1
+        elif idx in transfer_hits:
+            at, cat = transfer_hits[idx]
+            tx.account_type = at  # NON_PL (transferencia entre cuentas propias → fuera del P&L)
+            tx.category = cat
+            tx.confidence = 1.0
+            tx.needs_review = False
+            tx.review_question = None
+            tx.ai_categorized = False  # determinista, no IA
+            tx.source = "rule"
+            source = "rule"
+            by_transfer += 1
         elif idx in ai_cats:
             cat = ai_cats[idx]
             tx.account_type = cat.account_type
@@ -532,6 +549,7 @@ def ingest_csv(
         "processed": len(to_process),
         "by_rule": by_rule,
         "by_band": by_band,
+        "by_transfer": by_transfer,
         "by_ai": by_ai,
         # Cuántas filas ajustó el pase de consistencia (mismo comercio → misma categoría).
         "consistency_adjusted": consistency_adjusted,
