@@ -8,6 +8,7 @@ import {
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import type { Company } from "../types";
+import Billing from "./Billing";
 
 // Defaults del sistema (espejo del backend) si la empresa aún no fijó los suyos.
 const DEFAULTS = { supermarket: 50, gas: 30, settlement: 5 };
@@ -72,6 +73,12 @@ export default function Settings({
 
       {isOwner && company && (
         <BusinessProfile company={company} canDelete={canDelete} onSaved={onSaved} onDeleted={onDeleted} />
+      )}
+
+      {isOwner && (
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+          <Billing />
+        </div>
       )}
 
       {canEdit && (

@@ -35,6 +35,8 @@ export interface Company {
   supermarket_threshold: string | null; // Decimal → string; null = usar default del sistema
   gas_station_threshold: string | null;
   settlement_buffer_days: number | null; // días de retención; null = default del sistema
+  subscription_status?: string | null; // "active" · "canceled" · null = plan gratis
+  tx_quota?: number | null; // cupo mensual del tier pagado (100/200/400/1000); null = gratis
   created_at: string;
   role?: "OWNER" | "MEMBER" | "VIEWER"; // rol del usuario actual sobre esta empresa
 }

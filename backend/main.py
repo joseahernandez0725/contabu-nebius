@@ -12,13 +12,14 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
 from ai import map_rule_columns, propose_rules, recategorize_with_answer
 from audit import audit_categorization
+from billing import apply_session, create_checkout_session, handle_event
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
@@ -558,6 +559,56 @@ def delete_rule(
     session.delete(rule)
     session.commit()
     return {"deleted": rule_id}
+
+
+class CheckoutPayload(BaseModel):
+    quota: int  # tier M5: 100 | 200 | 400 | 1000 (transacciones/mes)
+
+
+class ConfirmPayload(BaseModel):
+    session_id: str
+
+
+@app.post("/api/companies/{company_id}/checkout")
+def create_checkout(
+    company_id: int,
+    payload: CheckoutPayload,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Crea la sesión de Stripe Checkout para el tier elegido y devuelve la URL de pago (el frontend
+    redirige allá). No toca tarjetas — Stripe aloja la página."""
+    company = owned_company(company_id, user, session, write=True)
+    try:
+        url = create_checkout_session(session, company, payload.quota, user.email)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"url": url}
+
+
+@app.post("/api/companies/{company_id}/checkout/confirm")
+def confirm_checkout(
+    company_id: int,
+    payload: ConfirmPayload,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Tras el redirect de éxito de Stripe: confirma el pago y deja la empresa suscrita (status + cupo).
+    Permite probar e2e sin webhooks; el webhook cubre renovaciones/cancelaciones."""
+    owned_company(company_id, user, session, write=True)
+    return apply_session(session, payload.session_id)
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request, session: Session = Depends(get_session)):
+    """Webhook de Stripe (PÚBLICO, sin auth — lo llama Stripe; se verifica por firma). Refleja en la
+    empresa los cambios de suscripción (renovación/cancelación)."""
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature")
+    try:
+        return handle_event(session, payload, sig)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"webhook error: {e}")
 
 
 @app.get("/api/companies/{company_id}/audit")

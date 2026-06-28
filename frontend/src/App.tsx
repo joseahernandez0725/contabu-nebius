@@ -14,7 +14,7 @@ import Login from "./components/Login";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import CompanySwitcher from "./components/CompanySwitcher";
 import { auth } from "./firebase";
-import { getCompanies, setActiveCompany, createCompany, getReviewTransactions } from "./api";
+import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, confirmCheckout } from "./api";
 import type { Company, Transaction } from "./types";
 
 type View = "dashboard" | "transactions" | "review" | "upload" | "pnl" | "rules" | "settings";
@@ -74,6 +74,7 @@ function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [authError, setAuthError] = useState(false);
   const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
+  const [billingNote, setBillingNote] = useState<string | null>(null);
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
   const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(undefined);
 
@@ -129,6 +130,27 @@ function App() {
       .then((cs) => { setCompanies(cs); setCompany(cs[0] ?? null); reloadReview(); })
       .catch(() => setAuthError(true));
   }, [fbUser, reloadReview]);
+
+  // Vuelta de Stripe Checkout (?billing=success&session_id=…): confirma el pago y refresca la empresa.
+  useEffect(() => {
+    if (!company) return;
+    const params = new URLSearchParams(window.location.search);
+    const billing = params.get("billing");
+    if (!billing) return;
+    window.history.replaceState({}, "", window.location.pathname); // limpia la URL (evita re-confirmar)
+    if (billing === "success" && params.get("session_id")) {
+      confirmCheckout(params.get("session_id")!)
+        .then((r) => {
+          setBillingNote(r.ok
+            ? t("billing.success", { defaultValue: "Subscription active — {{n}} transactions/month. 🎉", n: r.tx_quota ?? 0 })
+            : t("billing.pending", { defaultValue: "Payment received; finalizing your subscription…" }));
+          getCompany().then(setCompany).catch(() => {});
+        })
+        .catch(() => setBillingNote(t("billing.error", { defaultValue: "Couldn't confirm the payment." })));
+    } else if (billing === "cancel") {
+      setBillingNote(t("billing.canceled", { defaultValue: "Checkout canceled — no charge made." }));
+    }
+  }, [company, t]);
 
   const views: View[] = ["dashboard", "transactions", "review", "pnl", "rules"];
 
@@ -199,6 +221,12 @@ function App() {
           </div>
         ) : (
           <div key={company.id}>
+            {billingNote && (
+              <div className="mb-4 flex items-center justify-between gap-3 text-sm text-brand-green bg-brand-green/10 rounded-xl px-4 py-2.5">
+                <span>{billingNote}</span>
+                <button onClick={() => setBillingNote(null)} className="text-brand-green/70 hover:text-brand-green shrink-0" aria-label="dismiss">✕</button>
+              </div>
+            )}
             {view === "dashboard" && (
               <Dashboard onNavigate={setView} />
             )}
