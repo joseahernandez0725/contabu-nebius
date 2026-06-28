@@ -245,6 +245,23 @@ export async function cleanupRules(): Promise<{ removed: number }> {
   return res.json();
 }
 
+// --- Agente auditor: escanea categorizaciones sospechosas (1 click, determinista) ---
+export interface AuditFinding {
+  type: string;                 // inconsistent_merchant | sign_mismatch | uncategorized
+  severity: string;             // high | medium | low
+  transaction_ids: number[];
+  detail?: string | string[];
+  merchant?: string;
+  suggestion?: string;
+  odd_ids?: number[];
+}
+
+export async function getAudit(): Promise<AuditFinding[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/audit`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo auditar la categorización");
+  return res.json();
+}
+
 // --- Proponedor proactivo: la IA sugiere reglas para que el dueño apruebe ---
 export interface RuleProposal {
   keyword: string;

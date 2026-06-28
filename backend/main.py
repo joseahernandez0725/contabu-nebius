@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
 from ai import map_rule_columns, propose_rules, recategorize_with_answer
+from audit import audit_categorization
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
@@ -552,6 +553,26 @@ def delete_rule(
     session.delete(rule)
     session.commit()
     return {"deleted": rule_id}
+
+
+@app.get("/api/companies/{company_id}/audit")
+def audit_company(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """AGENTE AUDITOR (1 click): escanea las transacciones categorizadas y devuelve los **sospechosos**
+    (inconsistencia por comercio, contradicción de signo, sin categorizar). Determinista, sin IA."""
+    owned_company(company_id, user, session)
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+    ).all()
+    items = [{
+        "id": t.id, "description": t.description,
+        "account_type": t.account_type.value if t.account_type else None,
+        "category": t.category, "is_inflow": t.is_inflow,
+    } for t in txs]
+    return audit_categorization(items)
 
 
 @app.post("/api/companies/{company_id}/rule-proposals")

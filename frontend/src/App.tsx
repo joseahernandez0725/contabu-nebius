@@ -5,6 +5,7 @@ import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
+import Audit from "./components/Audit";
 import Rules from "./components/Rules";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
@@ -202,7 +203,12 @@ function App() {
               <Dashboard onNavigate={setView} />
             )}
             {view === "transactions" && <Transactions />}
-            {view === "review" && <Review items={reviewTxs} reload={reloadReview} />}
+            {view === "review" && (
+              <div className="space-y-4">
+                <Audit />
+                <Review items={reviewTxs} reload={reloadReview} />
+              </div>
+            )}
             {view === "pnl" && <Pnl companyName={company.name} />}
             {view === "rules" && <Rules />}
             {view === "upload" && (
