@@ -12,7 +12,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
@@ -191,6 +191,8 @@ def create_company(
 async def upload_transactions(
     company_id: int,
     file: UploadFile,
+    offset: int = Form(0),
+    chunk: int = Form(0),
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
@@ -203,8 +205,11 @@ async def upload_transactions(
     """
     company = owned_company(company_id, user, session, write=True)
     content = await file.read()
+    # chunk>0 → subida por LOTES (cada lote bajo el límite del navegador); si no, tope de seguridad.
+    limit = chunk if chunk > 0 else 1000
     result = ingest_csv(
-        session, company_id, company.sector, content, limit=1000, filename=file.filename
+        session, company_id, company.sector, content,
+        limit=limit, offset=offset, filename=file.filename,
     )
     return result
 

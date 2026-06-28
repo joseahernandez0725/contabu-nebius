@@ -270,6 +270,7 @@ def ingest_csv(
     *,
     categorize: bool = True,
     limit: int | None = None,
+    offset: int = 0,
     dry_run: bool = False,
     filename: str | None = None,
 ) -> dict:
@@ -310,7 +311,11 @@ def ingest_csv(
         else DEFAULT_SETTLEMENT_BUFFER_DAYS
     today = datetime.now(timezone.utc).date()
 
-    to_process = rows[:limit] if limit else rows
+    # Trozo a procesar: rows[offset : offset+limit]. Permite subir en LOTES (cada lote bajo el
+    # límite de ~300s del navegador) → el frontend itera el offset mostrando progreso. `total` es
+    # el nº de filas de datos del archivo (para que el frontend sepa cuándo terminó).
+    total = len(rows)
+    to_process = rows[offset:offset + limit] if limit else rows[offset:]
 
     # 1) Parsear las filas y RETENER las que aún no liquidaron (pending o demasiado recientes).
     #    Si hay columna de estado, mandan ella; si no, se usa la fecha (edad < buffer_days).
@@ -521,6 +526,10 @@ def ingest_csv(
     return {
         "inserted": inserted,
         "errors": errors,
+        # Para la subida por lotes: total de filas del archivo y cuántas cubrió este lote.
+        "total": total,
+        "offset": offset,
+        "processed": len(to_process),
         "by_rule": by_rule,
         "by_band": by_band,
         "by_ai": by_ai,

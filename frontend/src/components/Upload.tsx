@@ -6,28 +6,56 @@ export default function Upload({ onDone }: { onDone: () => void }) {
   const { t } = useTranslation();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Cuando la IA no detecta la cuenta del archivo, pedimos al usuario que la escriba.
   const [askAccount, setAskAccount] = useState<UploadResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Subida por LOTES: trocea el archivo (cada lote bajo el límite de ~300s del navegador) y muestra
+  // progreso. El backend procesa rows[offset:offset+CHUNK]; iteramos hasta cubrir el total.
+  const CHUNK = 100;
   async function handleUpload() {
     if (!file) return;
     setLoading(true);
     setError(null);
     setResult(null);
+    setProgress(null);
     try {
-      const res = await uploadCsv(file);
-      if (!res.account_detected && res.transaction_ids.length > 0) {
-        setAskAccount(res); // abrir el modal para pedir la cuenta
+      const agg: UploadResult = {
+        inserted: 0, errors: 0, skipped_duplicates: 0, held_pending: 0,
+        account_detected: false, transaction_ids: [],
+      };
+      let offset = 0;
+      let total = Infinity;
+      do {
+        const res = await uploadCsv(file, offset, CHUNK);
+        if (res.total == null) { // archivo vacío / error de mapeo → no es lote
+          setResult(res);
+          return;
+        }
+        total = res.total;
+        agg.inserted += res.inserted;
+        agg.errors += res.errors;
+        agg.skipped_duplicates += res.skipped_duplicates;
+        agg.held_pending += res.held_pending;
+        agg.account_detected = agg.account_detected || res.account_detected;
+        agg.transaction_ids.push(...res.transaction_ids);
+        offset += CHUNK;
+        setProgress({ done: Math.min(offset, total), total });
+      } while (offset < total);
+
+      if (!agg.account_detected && agg.transaction_ids.length > 0) {
+        setAskAccount(agg); // abrir el modal para pedir la cuenta
       } else {
-        setResult(res);
+        setResult(agg);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
       setLoading(false);
+      setProgress(null);
     }
   }
 
@@ -61,6 +89,23 @@ export default function Upload({ onDone }: { onDone: () => void }) {
         >
           {loading ? <span className="loading loading-spinner" /> : t("upload.submit")}
         </button>
+
+        {progress && (
+          <div className="mt-4">
+            <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+              <div
+                className="h-full bg-brand-green transition-all"
+                style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+              />
+            </div>
+            <p className="text-xs text-slate-500 mt-1 text-center tabular-nums">
+              {t("upload.progress", {
+                defaultValue: "Categorizing {{done}} / {{total}}…",
+                done: progress.done, total: progress.total,
+              })}
+            </p>
+          </div>
+        )}
 
         {error && <div className="alert alert-error mt-4 text-sm">{error}</div>}
       </div>

@@ -429,11 +429,18 @@ export interface UploadResult {
   held_pending: number; // filas retenidas por pending / aún no asentadas
   account_detected: boolean; // false → hay que pedirle la cuenta al usuario
   transaction_ids: number[]; // transacciones creadas en esta subida
+  total?: number; // filas del archivo (subida por lotes)
+  processed?: number; // filas cubiertas por este lote
 }
 
-export async function uploadCsv(file: File): Promise<UploadResult> {
+// Sube un lote del archivo: rows[offset : offset+chunk]. chunk=0 → archivo completo (1 sola llamada).
+export async function uploadCsv(file: File, offset = 0, chunk = 0): Promise<UploadResult> {
   const form = new FormData();
   form.append("file", file);
+  if (chunk > 0) {
+    form.append("offset", String(offset));
+    form.append("chunk", String(chunk));
+  }
   const res = await fetch(
     `${API}/api/companies/${cid()}/transactions/upload`,
     { method: "POST", headers: await authHeaders(), body: form },
