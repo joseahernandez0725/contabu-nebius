@@ -204,7 +204,7 @@ async def upload_transactions(
     company = owned_company(company_id, user, session, write=True)
     content = await file.read()
     result = ingest_csv(
-        session, company_id, company.sector, content, limit=1000
+        session, company_id, company.sector, content, limit=1000, filename=file.filename
     )
     return result
 

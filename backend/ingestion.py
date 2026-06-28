@@ -258,9 +258,10 @@ def ingest_csv(
     categorize: bool = True,
     limit: int | None = None,
     dry_run: bool = False,
+    filename: str | None = None,
 ) -> dict:
-    """Pipeline completo. Devuelve un resumen (cuántas filas, el mapeo, errores)."""
-    headers, rows = parse_csv(content)
+    """Pipeline completo. Acepta CSV o Excel (.xlsx). Devuelve un resumen (filas, mapeo, errores)."""
+    headers, rows = parse_spreadsheet(content, filename)
     if not rows:
         return {"inserted": 0, "errors": 0, "mapping": None, "message": "archivo vacío"}
 

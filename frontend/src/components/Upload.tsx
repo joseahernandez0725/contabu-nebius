@@ -49,7 +49,7 @@ export default function Upload({ onDone }: { onDone: () => void }) {
         <input
           ref={inputRef}
           type="file"
-          accept=".csv"
+          accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="hidden"
           onChange={(e) => { setFile(e.target.files?.[0] ?? null); setResult(null); setError(null); }}
         />
