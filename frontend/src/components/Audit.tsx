@@ -1,12 +1,17 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getAudit, type AuditFinding } from "../api";
+import {
+  getAudit, getCategories, updateTransaction,
+  type AuditFinding, type ChartOfAccounts,
+} from "../api";
+import { SECTION_LABEL } from "../accounting";
 
-// Etiqueta + color por tipo de hallazgo del auditor.
-const TYPE_INFO: Record<string, { label: string; hint: string }> = {
-  inconsistent_merchant: { label: "Inconsistent merchant", hint: "same merchant, different categories" },
-  sign_mismatch: { label: "Sign mismatch", hint: "money direction contradicts the P&L section" },
-  uncategorized: { label: "Uncategorized", hint: "no P&L section" },
+const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
+
+const TYPE_INFO: Record<string, { label: string }> = {
+  inconsistent_merchant: { label: "Inconsistent merchant" },
+  sign_mismatch: { label: "Sign mismatch" },
+  uncategorized: { label: "Uncategorized" },
 };
 const SEV_STYLE: Record<string, string> = {
   high: "text-rose-700 bg-rose-100",
@@ -14,22 +19,49 @@ const SEV_STYLE: Record<string, string> = {
   low: "text-slate-600 bg-slate-100",
 };
 
-// Agente auditor (1 click): escanea la categorización y lista los sospechosos. Determinista, sin IA.
-// Aditivo a la cola de revisión: atrapa inconsistencias entre transacciones que `needs_review` no ve.
+// Agente auditor (1 click): escanea la categorización y lista los sospechosos, cada uno **accionable
+// en un toque**. Inconsistencias: aplica la categoría dominante a las que difieren. Signo/sin-categorizar:
+// el usuario elige la categoría y se aplica. Cada arreglo crea una regla (cierra el loop con el proponedor).
 export default function Audit() {
   const { t } = useTranslation();
   const [findings, setFindings] = useState<AuditFinding[] | null>(null);
+  const [chart, setChart] = useState<ChartOfAccounts>({});
   const [loading, setLoading] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [picks, setPicks] = useState<Record<number, string>>({}); // categoría elegida por hallazgo
+
+  useEffect(() => { getCategories().then(setChart).catch(() => {}); }, []);
+
+  const catToType = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const [at, cats] of Object.entries(chart)) for (const c of cats) m[c] = at;
+    return m;
+  }, [chart]);
 
   async function run() {
     setLoading(true); setError(null);
     try {
       setFindings(await getAudit());
+      setPicks({});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Aplica la categoría a las transacciones → crea regla + re-aplica (updateTransaction) → refresca.
+  async function applyFix(ids: number[], accountType?: string, category?: string) {
+    if (!ids.length || !accountType || !category) return;
+    setFixing(true); setError(null);
+    try {
+      for (const id of ids) await updateTransaction(id, { account_type: accountType, category });
+      await run();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setFixing(false);
     }
   }
 
@@ -41,12 +73,12 @@ export default function Audit() {
             {t("audit.title", { defaultValue: "Audit my categorization" })}
           </h2>
           <p className="text-sm text-slate-500">
-            {t("audit.subtitle", { defaultValue: "Find suspicious or inconsistent categorizations in your books." })}
+            {t("audit.subtitle", { defaultValue: "Find and fix suspicious or inconsistent categorizations." })}
           </p>
         </div>
         <button
           onClick={run}
-          disabled={loading}
+          disabled={loading || fixing}
           className="px-4 py-2 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60 shrink-0"
           style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
         >
@@ -65,24 +97,54 @@ export default function Audit() {
       {findings && findings.length > 0 && (
         <ul className="divide-y divide-slate-100 -mx-1">
           {findings.map((f, i) => {
-            const info = TYPE_INFO[f.type] ?? { label: f.type, hint: "" };
+            const info = TYPE_INFO[f.type] ?? { label: f.type };
+            const fixIds = f.odd_ids && f.odd_ids.length ? f.odd_ids : f.transaction_ids;
             return (
               <li key={i} className="px-1 py-2.5 flex items-start gap-3">
                 <span className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 mt-0.5 shrink-0 ${SEV_STYLE[f.severity] ?? SEV_STYLE.low}`}>
                   {f.severity}
                 </span>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-slate-800">
                     {t(`audit.type.${f.type}`, { defaultValue: info.label })}
                     {f.merchant && <span className="text-slate-500 font-normal"> · {f.merchant}</span>}
                   </div>
                   <div className="text-xs text-slate-500 truncate">
                     {Array.isArray(f.detail) ? f.detail.join("  ·  ") : f.detail}
-                    {f.suggestion && <span className="text-brand-green"> → {f.suggestion}</span>}
                   </div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">
-                    {t("audit.affects", { defaultValue: "{{n}} transaction(s)", n: f.transaction_ids.length })}
-                  </div>
+
+                  {/* Fix de 1 toque */}
+                  {f.type === "inconsistent_merchant" ? (
+                    <button
+                      onClick={() => applyFix(fixIds, f.suggested_account_type, f.suggested_category)}
+                      disabled={fixing}
+                      className="mt-1.5 text-xs font-semibold text-brand-green hover:underline disabled:opacity-50"
+                    >
+                      {t("audit.fixApply", { defaultValue: "Fix → set all to {{s}}", s: f.suggestion })}
+                    </button>
+                  ) : (
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <select
+                        value={picks[i] ?? ""}
+                        onChange={(e) => setPicks((p) => ({ ...p, [i]: e.target.value }))}
+                        className="rounded-lg border border-slate-200 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+                      >
+                        <option value="">{t("audit.pickCategory", { defaultValue: "Pick category…" })}</option>
+                        {SECTIONS.filter((s) => chart[s]?.length).map((s) => (
+                          <optgroup key={s} label={SECTION_LABEL[s] ?? s}>
+                            {chart[s].map((c) => <option key={c} value={c}>{c}</option>)}
+                          </optgroup>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => applyFix(f.transaction_ids, catToType[picks[i]], picks[i])}
+                        disabled={fixing || !picks[i]}
+                        className="text-xs font-semibold text-brand-green hover:underline disabled:opacity-40"
+                      >
+                        {t("audit.fix", { defaultValue: "Fix" })}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </li>
             );

@@ -43,9 +43,11 @@ def audit_categorization(items: list[dict]) -> list[dict]:
                 "severity": "high",
                 "merchant": sig,
                 "transaction_ids": [it["id"] for it in its],
-                "odd_ids": odd,  # las que difieren de la mayoría
+                "odd_ids": odd,  # las que difieren de la mayoría (las que el fix de 1 toque corrige)
                 "detail": sorted(f"{a}/{c}" for a, c in labels),
                 "suggestion": f"{maj_at}/{maj_cat}",
+                "suggested_account_type": maj_at,  # estructurado → el fix lo aplica directo
+                "suggested_category": maj_cat,
             })
 
     # 2) CONTRADICCIÓN DE SIGNO: la dirección del banco contradice la sección del P&L.

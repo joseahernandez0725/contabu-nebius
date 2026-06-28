@@ -253,7 +253,9 @@ export interface AuditFinding {
   detail?: string | string[];
   merchant?: string;
   suggestion?: string;
-  odd_ids?: number[];
+  suggested_account_type?: string; // inconsistencia: categoría dominante (para el fix de 1 toque)
+  suggested_category?: string;
+  odd_ids?: number[];           // inconsistencia: las tx que difieren de la mayoría
 }
 
 export async function getAudit(): Promise<AuditFinding[]> {
