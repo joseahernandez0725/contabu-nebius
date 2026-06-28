@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="ContaBu">
+  <title>ContaBu</title>
+  <rect width="100" height="100" rx="24" fill="#1A8754"/>
+  <!-- "B" (crema) -->
+  <g fill="#FBF7EE">
+    <rect x="33" y="24" width="13" height="54" rx="6.5"/>
+    <rect x="33" y="24" width="30" height="28" rx="14"/>
+    <rect x="33" y="50" width="34" height="28" rx="14"/>
+  </g>
+  <!-- contadores de la B (verde del tile) -->
+  <g fill="#1A8754">
+    <rect x="46" y="30" width="11" height="16" rx="5.5"/>
+    <rect x="46" y="56" width="14" height="16" rx="7"/>
+  </g>
+  <!-- moneda ámbar -->
+  <circle cx="74" cy="29" r="9" fill="#F4B400"/>
+</svg>

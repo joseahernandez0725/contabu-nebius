@@ -88,6 +88,13 @@ class Company(SQLModel, table=True):
     # Ventana de asentamiento (días): se retienen las transacciones recientes/pending hasta que
     # liquidan (base caja). None = usar el default del sistema. Ver docs/NOTAS IMPORTANTES.md.
     settlement_buffer_days: Optional[int] = Field(default=None)
+    # --- Suscripción / pagos (Stripe, modelo M5 por volumen de transacciones) ---
+    stripe_customer_id: Optional[str] = Field(default=None, index=True)      # cliente en Stripe
+    stripe_subscription_id: Optional[str] = Field(default=None, index=True)  # suscripción activa
+    # Estado de la suscripción (lo actualiza el webhook): "active" · "past_due" · "canceled" · None=free.
+    subscription_status: Optional[str] = Field(default=None)
+    # Cupo mensual de transacciones del tier pagado (100/200/400/1000). None = plan gratis (sin IA).
+    tx_quota: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
