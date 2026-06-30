@@ -13,7 +13,15 @@ const fmtDate = (iso: string) => {
 
 type SortKey = "date" | "category" | "subcategory";
 
-export default function Transactions() {
+export default function Transactions({
+  onAddCategory,
+  focusTxId,
+  onFocusHandled,
+}: {
+  onAddCategory?: () => void;
+  focusTxId?: number | null; // tx a abrir automáticamente (viene del auditor)
+  onFocusHandled?: () => void;
+}) {
   const { t } = useTranslation();
   const [txs, setTxs] = useState<Transaction[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
@@ -32,6 +40,14 @@ export default function Transactions() {
     load();
     getCategories().then(setChart).catch(() => {});
   }, []);
+
+  // Si el auditor pidió abrir una transacción concreta → abrir su modal de edición al cargar.
+  useEffect(() => {
+    if (focusTxId == null || !txs) return;
+    const tx = txs.find((t) => t.id === focusTxId);
+    if (tx) setEditing(tx);
+    onFocusHandled?.();
+  }, [focusTxId, txs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const catToType: Record<string, string> = useMemo(() => {
     const m: Record<string, string> = {};
@@ -134,10 +150,10 @@ export default function Transactions() {
                 <button onClick={() => toggleSort("date")} className="hover:text-slate-600">{t("tx.cols.date")}{arrow("date")}</button>
               </th>
               <th className="px-3 py-2 font-medium text-start">{t("tx.cols.movement")}</th>
-              <th className="px-2 py-2 font-medium text-start">
+              <th className="pl-2 pr-1 py-2 font-medium text-start">
                 <button onClick={() => toggleSort("category")} className="hover:text-slate-600">{t("tx.cols.category")}{arrow("category")}</button>
               </th>
-              <th className="px-2 py-2 font-medium text-start">
+              <th className="pl-1 pr-2 py-2 font-medium text-start">
                 <button onClick={() => toggleSort("subcategory")} className="hover:text-slate-600">{t("tx.cols.subcategory")}{arrow("subcategory")}</button>
               </th>
               <th className="px-3 py-2 font-medium text-end">{t("tx.cols.amount")}</th>
@@ -164,10 +180,10 @@ export default function Transactions() {
                   }`}
                 >
                   <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap tabular-nums">{fmtDate(tx.date)}</td>
-                  <td className="px-3 py-2.5 text-slate-500 max-w-[6.5rem] truncate" title={tx.description}>
+                  <td className="px-3 py-2.5 text-slate-500 max-w-[12rem] lg:max-w-[22rem] truncate" title={tx.description}>
                     {tx.description}
                   </td>
-                  <td className="px-2 py-2.5 whitespace-nowrap">
+                  <td className="pl-2 pr-1 py-2.5 whitespace-nowrap">
                     <span className={tx.source === "manual" ? "text-violet-700 font-medium" : "text-slate-800"}>
                       {tx.category ?? "—"}
                     </span>
@@ -187,7 +203,7 @@ export default function Transactions() {
                       </span>
                     ) : null}
                   </td>
-                  <td className="px-2 py-2.5 text-slate-500 max-w-[6rem] truncate uppercase">{tx.subcategory ?? "—"}</td>
+                  <td className="pl-1 pr-2 py-2.5 text-slate-500 max-w-[8rem] truncate uppercase">{tx.subcategory ?? "—"}</td>
                   <td className={`px-3 py-2.5 text-end tabular-nums font-medium whitespace-nowrap ${
                     tx.is_inflow ? "text-brand-green" : "text-slate-700"
                   }`}>
@@ -213,6 +229,7 @@ export default function Transactions() {
           chart={chart}
           catToType={catToType}
           onClose={() => setEditing(null)}
+          onAddCategory={onAddCategory}
           onSaved={(applied) => {
             setEditing(null);
             if (applied > 0)
@@ -234,10 +251,12 @@ function CategorySelect({
   chart,
   value,
   onChange,
+  onAddCategory,
 }: {
   chart: ChartOfAccounts;
   value: string;
   onChange: (c: string) => void;
+  onAddCategory?: () => void; // "+ Agregar categoría" → lleva a Configuración
 }) {
   const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -284,6 +303,15 @@ function CategorySelect({
               ))}
             </div>
           ))}
+          {onAddCategory && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onAddCategory(); }}
+              className="w-full text-start px-3 py-2 text-brand-green font-medium border-t border-slate-100 sticky bottom-0 bg-white hover:bg-slate-50"
+            >
+              + {t("tx.addCategory", { defaultValue: "Add a category" })}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -296,12 +324,14 @@ function EditModal({
   catToType,
   onClose,
   onSaved,
+  onAddCategory,
 }: {
   tx: Transaction;
   chart: ChartOfAccounts;
   catToType: Record<string, string>;
   onClose: () => void;
   onSaved: (applied: number) => void;
+  onAddCategory?: () => void;
 }) {
   const { t } = useTranslation();
   const [category, setCategory] = useState(tx.category ?? "");
@@ -340,7 +370,7 @@ function EditModal({
 
         <div>
           <label className="block text-sm font-medium text-slate-800 mb-1">{t("tx.edit.category")}</label>
-          <CategorySelect chart={chart} value={category} onChange={setCategory} />
+          <CategorySelect chart={chart} value={category} onChange={setCategory} onAddCategory={onAddCategory} />
         </div>
 
         <div>

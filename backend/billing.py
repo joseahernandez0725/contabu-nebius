@@ -11,11 +11,16 @@ en Stripe; ContaBu solo refleja `stripe_customer_id` / `stripe_subscription_id` 
 """
 import logging
 import os
+from datetime import datetime, timezone
 
 import stripe
+from sqlalchemy import func
 from sqlmodel import Session, select
 
-from models import Company
+from models import Company, Transaction
+
+# Transacciones con IA gratis (prueba, DE POR VIDA) para una empresa sin suscripción (modelo M5).
+FREE_TRIAL_AI = 100
 
 logger = logging.getLogger("contabu.billing")
 
@@ -32,6 +37,24 @@ PRICE_BY_QUOTA: dict[int, str] = {
 }
 # price_id → cupo (para resolver el cupo desde lo que se compró, en webhooks).
 QUOTA_BY_PRICE: dict[str, int] = {pid: q for q, pid in PRICE_BY_QUOTA.items() if pid}
+
+
+def ai_quota_status(session: Session, company: Company) -> dict:
+    """Cupo de categorizaciones con IA. Suscrito: **mensual** (`tx_quota`/mes). Sin suscripción:
+    **prueba de por vida** (`FREE_TRIAL_AI`). Cuenta solo transacciones `ai_categorized=True`
+    (la entrada manual es gratis e ilimitada). Devuelve used/limit/remaining/monthly."""
+    active = company.subscription_status == "active" and bool(company.tx_quota)
+    q = select(func.count()).select_from(Transaction).where(
+        Transaction.company_id == company.id, Transaction.ai_categorized == True  # noqa: E712
+    )
+    if active:
+        start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        used = session.exec(q.where(Transaction.created_at >= start)).one()
+        limit = company.tx_quota or 0
+    else:
+        used = session.exec(q).one()  # de por vida
+        limit = FREE_TRIAL_AI
+    return {"used": used, "limit": limit, "remaining": max(0, limit - used), "monthly": active}
 
 
 def create_checkout_session(session: Session, company: Company, quota: int, email: str | None) -> str:

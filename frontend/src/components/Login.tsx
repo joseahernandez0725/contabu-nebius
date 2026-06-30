@@ -18,14 +18,20 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Muestra el CÓDIGO real de Firebase (auth/…) para diagnosticar, no un mensaje opaco.
+  function fail(base: string, e: unknown) {
+    const code = (e as { code?: string })?.code;
+    setError(code ? `${base} (${code})` : base);
+    setBusy(false);
+  }
+
   async function withGoogle() {
     setBusy(true);
     setError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch {
-      setError(t("login.error"));
-      setBusy(false);
+    } catch (e) {
+      fail(t("login.error"), e);
     }
   }
 
@@ -36,9 +42,8 @@ export default function Login() {
     try {
       if (mode === "signup") await createUserWithEmailAndPassword(auth, email, password);
       else await signInWithEmailAndPassword(auth, email, password);
-    } catch {
-      setError(mode === "signup" ? t("login.signupError") : t("login.error"));
-      setBusy(false);
+    } catch (err) {
+      fail(mode === "signup" ? t("login.signupError") : t("login.error"), err);
     }
   }
 
@@ -50,14 +55,7 @@ export default function Login() {
       <div className="flex-1 flex items-center justify-center px-4 pb-16">
         <div className="w-full max-w-sm bg-white rounded-3xl shadow-sm border border-slate-100 p-7 space-y-5">
           <div className="text-center space-y-2">
-            <div
-              className="size-12 rounded-2xl mx-auto flex items-center justify-center shadow-sm"
-              style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-            >
-              <svg viewBox="0 0 24 24" className="size-6 text-white" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <path d="M4 20V13M10 20V5M16 20v-9M22 20H2" />
-              </svg>
-            </div>
+            <img src="/icon.svg" alt="ContaBu" className="size-14 rounded-2xl mx-auto shadow-sm" />
             <div className="font-bold text-xl tracking-tight">
               <span className="text-brand-amber">Conta</span>
               <span className="text-brand-green">Bu</span>

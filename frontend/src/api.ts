@@ -281,6 +281,7 @@ export interface AuditFinding {
   suggested_account_type?: string; // inconsistencia: categoría dominante (para el fix de 1 toque)
   suggested_category?: string;
   odd_ids?: number[];           // inconsistencia: las tx que difieren de la mayoría
+  examples?: { id: number; description: string; is_inflow: boolean }[]; // tx señaladas + dirección
 }
 
 export async function getAudit(): Promise<AuditFinding[]> {
@@ -458,6 +459,7 @@ export interface UploadResult {
   transaction_ids: number[]; // transacciones creadas en esta subida
   total?: number; // filas del archivo (subida por lotes)
   processed?: number; // filas cubiertas por este lote
+  quota_blocked?: number; // tx que NO se categorizaron por exceder el cupo de IA (subir de plan)
 }
 
 // Sube un lote del archivo: rows[offset : offset+chunk]. chunk=0 → archivo completo (1 sola llamada).

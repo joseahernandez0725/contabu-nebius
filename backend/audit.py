@@ -48,6 +48,7 @@ def audit_categorization(items: list[dict]) -> list[dict]:
                 "suggestion": f"{maj_at}/{maj_cat}",
                 "suggested_account_type": maj_at,  # estructurado → el fix lo aplica directo
                 "suggested_category": maj_cat,
+                "examples": [{"id": it["id"], "description": it.get("description"), "is_inflow": bool(it.get("is_inflow"))} for it in its[:3]],
             })
 
     # 2) CONTRADICCIÓN DE SIGNO: la dirección del banco contradice la sección del P&L.
@@ -60,6 +61,7 @@ def audit_categorization(items: list[dict]) -> list[dict]:
                     "severity": "high",
                     "transaction_ids": [it["id"]],
                     "detail": f"{at} pero el dinero {'ENTRÓ' if it.get('is_inflow') else 'SALIÓ'}",
+                    "examples": [{"id": it["id"], "description": it.get("description"), "is_inflow": bool(it.get("is_inflow"))}],
                 })
 
     # 3) SIN CATEGORIZAR: quedó sin sección del P&L.
@@ -70,6 +72,7 @@ def audit_categorization(items: list[dict]) -> list[dict]:
                 "severity": "medium",
                 "transaction_ids": [it["id"]],
                 "detail": it.get("description"),
+                "examples": [{"id": it["id"], "description": it.get("description"), "is_inflow": bool(it.get("is_inflow"))}],
             })
 
     _sev = {"high": 0, "medium": 1, "low": 2}

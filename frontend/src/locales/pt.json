@@ -1,9 +1,50 @@
 {
-  "nav": { "dashboard": "Resumo", "transactions": "Movimentos", "upload": "Enviar", "review": "Revisar", "pnl": "P&L", "rules": "Regras" },
-  "sectors": { "construction": "Construção", "cleaning": "Limpeza", "restaurant": "Restaurante", "other": "Outro" },
-  "auth": { "error": "Falha ao entrar" },
-  "login": {"subtitle": "Sua contabilidade, simples", "google": "Continuar com o Google", "or": "ou", "email": "E-mail", "password": "Senha", "signIn": "Entrar", "signUp": "Criar conta", "loading": "Um momento…", "noAccount": "Não tem conta?", "haveAccount": "Já tem conta?", "error": "Não foi possível entrar. Verifique seus dados.", "signupError": "Não foi possível criar a conta. O e-mail pode já estar em uso.", "logout": "Sair"},
-  "review": { "count": "{{count}} movimentos", "q": {"singleIn": "{{name}} te pagou {{amount}} em {{date}}. A que se refere?", "singleOut": "Você pagou {{amount}} a {{name}} em {{date}}. A que se refere?", "groupIn": "{{name}} te pagou {{count}} vezes ({{amount}} no total, {{from}}–{{to}}). A que se referem?", "groupOut": "{{count}} pagamentos a {{name}} ({{amount}} no total, {{from}}–{{to}}). A que se referem?"}, "confirm": "Confirmar", "empty": "Nada para revisar", "emptyHint": "Quando a IA tiver dúvida sobre uma transação, ela aparecerá aqui.", "intro": "{{count}} transações precisam da sua confirmação.", "answerPlaceholder": "Conte com suas palavras (ex. \"subempreiteiro\", \"aluguel\")" },
+  "nav": {
+    "dashboard": "Resumo",
+    "transactions": "Movimentos",
+    "upload": "Enviar",
+    "review": "Revisar",
+    "pnl": "P&L",
+    "rules": "Regras"
+  },
+  "sectors": {
+    "construction": "Construção",
+    "cleaning": "Limpeza",
+    "restaurant": "Restaurante",
+    "other": "Outro"
+  },
+  "auth": {
+    "error": "Falha ao entrar"
+  },
+  "login": {
+    "subtitle": "Sua contabilidade, simples",
+    "google": "Continuar com o Google",
+    "or": "ou",
+    "email": "E-mail",
+    "password": "Senha",
+    "signIn": "Entrar",
+    "signUp": "Criar conta",
+    "loading": "Um momento…",
+    "noAccount": "Não tem conta?",
+    "haveAccount": "Já tem conta?",
+    "error": "Não foi possível entrar. Verifique seus dados.",
+    "signupError": "Não foi possível criar a conta. O e-mail pode já estar em uso.",
+    "logout": "Sair"
+  },
+  "review": {
+    "count": "{{count}} movimentos",
+    "q": {
+      "singleIn": "{{name}} te pagou {{amount}} em {{date}}. A que se refere?",
+      "singleOut": "Você pagou {{amount}} a {{name}} em {{date}}. A que se refere?",
+      "groupIn": "{{name}} te pagou {{count}} vezes ({{amount}} no total, {{from}}–{{to}}). A que se referem?",
+      "groupOut": "{{count}} pagamentos a {{name}} ({{amount}} no total, {{from}}–{{to}}). A que se referem?"
+    },
+    "confirm": "Confirmar",
+    "empty": "Nada para revisar",
+    "emptyHint": "Quando a IA tiver dúvida sobre uma transação, ela aparecerá aqui.",
+    "intro": "{{count}} transações precisam da sua confirmação.",
+    "answerPlaceholder": "Conte com suas palavras (ex. \"subempreiteiro\", \"aluguel\")"
+  },
   "dashboard": {
     "exportPdf": "Exportar P&L (PDF)",
     "period": "Período",
@@ -50,9 +91,20 @@
     "allAccounts": "Todas as contas",
     "empty": "Ainda não há movimentos.",
     "emptyHint": "Envie um extrato na aba \"Enviar\".",
-    "source": { "rule": "Regra", "ai": "IA", "manual": "Você" },
+    "source": {
+      "rule": "Regra",
+      "ai": "IA",
+      "manual": "Você"
+    },
     "confidence": "Confiança da IA",
-    "cols": { "date": "Data", "movement": "Movimento", "account": "Conta", "category": "Categoria", "subcategory": "Subcategoria", "amount": "Valor" },
+    "cols": {
+      "date": "Data",
+      "movement": "Movimento",
+      "account": "Conta",
+      "category": "Categoria",
+      "subcategory": "Subcategoria",
+      "amount": "Valor"
+    },
     "edit": {
       "title": "Editar categoria",
       "category": "Categoria",
@@ -61,7 +113,9 @@
       "saving": "Salvando…",
       "cancel": "Cancelar",
       "learn": "Vamos lembrar deste estabelecimento na próxima vez."
-    }
+    },
+    "ruleApplied": "Regra criada · mais {{n}} transações atualizadas",
+    "addCategory": "Adicionar uma categoria"
   },
   "upload": {
     "title": "Envie seu extrato bancário",
@@ -70,7 +124,21 @@
     "submit": "Enviar e categorizar",
     "done": "Pronto!",
     "result": "{{count}} movimentos categorizados",
-    "seeSummary": "Ver meu resumo →", "held": "{{count}} transações recentes serão importadas quando compensarem", "skipped": "{{count}} duplicados ignorados (já importados)", "allDup": "Nada novo — já importado", "account": {"title": "De qual conta é?", "subtitle": "Não conseguimos ler a conta no arquivo. Informe para poder filtrar por ela.", "label": "Número da conta", "placeholder": "ex. 1234567890", "preview": "Salvo como {{masked}} (apenas os últimos 4 dígitos).", "save": "Salvar conta", "saving": "Salvando…"}
+    "seeSummary": "Ver meu resumo →",
+    "held": "{{count}} transações recentes serão importadas quando compensarem",
+    "skipped": "{{count}} duplicados ignorados (já importados)",
+    "allDup": "Nada novo — já importado",
+    "account": {
+      "title": "De qual conta é?",
+      "subtitle": "Não conseguimos ler a conta no arquivo. Informe para poder filtrar por ela.",
+      "label": "Número da conta",
+      "placeholder": "ex. 1234567890",
+      "preview": "Salvo como {{masked}} (apenas os últimos 4 dígitos).",
+      "save": "Salvar conta",
+      "saving": "Salvando…"
+    },
+    "progress": "Categorizando {{done}} / {{total}}…",
+    "quotaBlocked": "{{count}} transações não foram categorizadas — você atingiu sua cota de IA. Faça upgrade do plano para categorizá-las."
   },
   "settings": {
     "title": "Configurações",
@@ -78,7 +146,10 @@
     "gasLabel": "Limite de posto de gasolina",
     "gasHelp": "Abaixo de ${{amount}}: combustível de equipamentos. Acima: combustível do veículo.",
     "superLabel": "Limite de supermercado",
-    "superHelp": "Abaixo de ${{amount}}: uma refeição. Acima: uma despesa pessoal.", "settleLabel": "Janela de compensação", "settleHelp": "Transações recentes (últimos {{count}} dias) ou pendentes ficam retidas até compensarem, depois são importadas automaticamente.", "days": "dias",
+    "superHelp": "Abaixo de ${{amount}}: uma refeição. Acima: uma despesa pessoal.",
+    "settleLabel": "Janela de compensação",
+    "settleHelp": "Transações recentes (últimos {{count}} dias) ou pendentes ficam retidas até compensarem, depois são importadas automaticamente.",
+    "days": "dias",
     "save": "Salvar",
     "saving": "Salvando…",
     "saved": "Salvo ✓"
@@ -139,5 +210,86 @@
     "Loan Proceeds": "Entrada de empréstimo",
     "Loan Principal Payment": "Pagamento do principal do empréstimo",
     "Credit Card Payment": "Pagamento de cartão de crédito"
+  },
+  "audit": {
+    "title": "Auditar minha categorização",
+    "subtitle": "Encontre e corrija categorizações suspeitas ou inconsistentes.",
+    "run": "Auditar",
+    "running": "Verificando…",
+    "clean": "Nenhum problema — sua categorização parece consistente. ✅",
+    "fix": "Corrigir",
+    "fixApply": "Corrigir → definir todas como {{s}}",
+    "pickCategory": "Escolher categoria…",
+    "type": {
+      "inconsistent_merchant": "Mesmo comerciante, categorias diferentes",
+      "sign_mismatch": "A direção não corresponde à categoria",
+      "uncategorized": "Sem categoria"
+    },
+    "hint": {
+      "inconsistent_merchant": "Estas transações parecem o mesmo comerciante, mas foram categorizadas de forma diferente.",
+      "sign_mismatch": "Entrou dinheiro, mas está marcado como despesa (ou vice-versa) — provavelmente um reembolso ou um erro.",
+      "uncategorized": "Esta transação não tem categoria."
+    },
+    "in": "entrou",
+    "out": "saiu",
+    "goToTx": "Abrir esta transação"
+  },
+  "billing": {
+    "title": "Plano",
+    "current": "Plano ativo: {{n}} transações/mês.",
+    "free": "Plano grátis (apenas manual). Assine para ativar a categorização com IA.",
+    "txMonth": "{{n}} transações/mês",
+    "yourPlan": "Seu plano",
+    "choose": "Escolher",
+    "redirecting": "Redirecionando…",
+    "securedByStripe": "Pagamento seguro pela Stripe. Cancele quando quiser.",
+    "success": "Assinatura ativa — {{n}} transações/mês. 🎉",
+    "pending": "Pagamento recebido; finalizando sua assinatura…",
+    "error": "Não foi possível confirmar o pagamento.",
+    "canceled": "Pagamento cancelado — nenhuma cobrança feita."
+  },
+  "proposals": {
+    "title": "Regras sugeridas",
+    "subtitle": "Deixe a IA da ContaBu propor regras a partir das suas transações, ou importe seu próprio arquivo de regras — a IA lê as colunas.",
+    "generate": "Sugerir regras com IA",
+    "analyzing": "A IA está trabalhando…",
+    "import": "Importar meu arquivo de regras",
+    "none": "Nenhuma regra nova a propor — seu conjunto de regras já cobre os comerciantes recorrentes.",
+    "importEmpty": "Não foi possível ler nenhuma regra desse arquivo.",
+    "keyword": "Palavra-chave",
+    "category": "Categoria",
+    "merges": "une",
+    "apply": "Aprovar {{n}} regras",
+    "applying": "Aplicando…",
+    "cancel": "Cancelar",
+    "status": {
+      "exists": "já existe",
+      "duplicate": "duplicada",
+      "needs_section": "falta seção"
+    },
+    "applied": "{{c}} regras criadas e {{a}} transações alinhadas."
+  },
+  "rules": {
+    "title": "Regras",
+    "subtitle": "Seu conjunto de regras: cada comerciante mapeia para uma categoria. Edite uma e todas as suas transações são atualizadas.",
+    "empty": "Ainda não há regras.",
+    "emptyHint": "Corrija uma transação e a ContaBu aprende a regra automaticamente.",
+    "merchant": "Comerciante",
+    "category": "Categoria",
+    "affects": "Afeta",
+    "edit": "Editar regra",
+    "editHint": "Ao salvar, esta regra é reaplicada a todas as transações correspondentes.",
+    "cancel": "Cancelar",
+    "save": "Salvar",
+    "saving": "Salvando…",
+    "confirmDelete": "Excluir esta regra?",
+    "cleanup": "Limpar regras sem uso",
+    "cleaned": "{{count}} regras sem uso removidas.",
+    "applied": "{{count}} transações atualizadas.",
+    "family": {
+      "income": "Receita",
+      "expense": "Despesa",
+      "nonpl": "Fora do P&L"
+    }
   }
 }

@@ -19,6 +19,7 @@ import time
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types
 from pydantic import BaseModel
 
 from categories import format_for_prompt  # plan de cuentas cerrado por sector

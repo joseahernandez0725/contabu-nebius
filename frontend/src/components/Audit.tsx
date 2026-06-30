@@ -8,10 +8,16 @@ import { SECTION_LABEL } from "../accounting";
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
-const TYPE_INFO: Record<string, { label: string }> = {
-  inconsistent_merchant: { label: "Inconsistent merchant" },
-  sign_mismatch: { label: "Sign mismatch" },
-  uncategorized: { label: "Uncategorized" },
+const TYPE_INFO: Record<string, { label: string; hint: string }> = {
+  inconsistent_merchant: {
+    label: "Same merchant, different categories",
+    hint: "These transactions look like the same merchant but were categorized differently.",
+  },
+  sign_mismatch: {
+    label: "Direction doesn't match the category",
+    hint: "Money came in but it's marked as an expense (or vice-versa) — likely a refund or a mistake.",
+  },
+  uncategorized: { label: "Not categorized yet", hint: "This transaction has no category." },
 };
 const SEV_STYLE: Record<string, string> = {
   high: "text-rose-700 bg-rose-100",
@@ -22,7 +28,7 @@ const SEV_STYLE: Record<string, string> = {
 // Agente auditor (1 click): escanea la categorización y lista los sospechosos, cada uno **accionable
 // en un toque**. Inconsistencias: aplica la categoría dominante a las que difieren. Signo/sin-categorizar:
 // el usuario elige la categoría y se aplica. Cada arreglo crea una regla (cierra el loop con el proponedor).
-export default function Audit() {
+export default function Audit({ onOpenTransaction }: { onOpenTransaction?: (id: number) => void }) {
   const { t } = useTranslation();
   const [findings, setFindings] = useState<AuditFinding[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
@@ -109,9 +115,34 @@ export default function Audit() {
                     {t(`audit.type.${f.type}`, { defaultValue: info.label })}
                     {f.merchant && <span className="text-slate-500 font-normal"> · {f.merchant}</span>}
                   </div>
-                  <div className="text-xs text-slate-500 truncate">
-                    {Array.isArray(f.detail) ? f.detail.join("  ·  ") : f.detail}
+                  <div className="text-xs text-slate-500">
+                    {t(`audit.hint.${f.type}`, { defaultValue: info.hint })}
                   </div>
+                  {/* Las transacciones confusas, RESALTADAS (color ámbar) para que se vean cuáles son. */}
+                  {f.examples && f.examples.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {f.examples.map((ex, k) => (
+                        <li key={k}>
+                          <button
+                            type="button"
+                            onClick={() => onOpenTransaction?.(ex.id)}
+                            disabled={!onOpenTransaction}
+                            className="w-full text-[11px] bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 flex items-center gap-1.5 enabled:hover:bg-amber-100 enabled:cursor-pointer text-start"
+                            title={onOpenTransaction ? t("audit.goToTx", { defaultValue: "Open this transaction" }) : ex.description}
+                          >
+                            <span className={`shrink-0 font-medium ${ex.is_inflow ? "text-brand-green" : "text-rose-600"}`}>
+                              {ex.is_inflow ? `↑ ${t("audit.in", { defaultValue: "in" })}` : `↓ ${t("audit.out", { defaultValue: "out" })}`}
+                            </span>
+                            <span className="truncate text-amber-800">{ex.description}</span>
+                            {onOpenTransaction && <span className="ms-auto shrink-0 text-amber-400">›</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {Array.isArray(f.detail) && (
+                    <div className="text-[11px] text-slate-400 mt-0.5">{f.detail.join("  ·  ")}</div>
+                  )}
 
                   {/* Fix de 1 toque */}
                   {f.type === "inconsistent_merchant" ? (

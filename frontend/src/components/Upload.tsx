@@ -25,7 +25,7 @@ export default function Upload({ onDone }: { onDone: () => void }) {
     try {
       const agg: UploadResult = {
         inserted: 0, errors: 0, skipped_duplicates: 0, held_pending: 0,
-        account_detected: false, transaction_ids: [],
+        account_detected: false, transaction_ids: [], quota_blocked: 0,
       };
       let offset = 0;
       let total = Infinity;
@@ -40,6 +40,7 @@ export default function Upload({ onDone }: { onDone: () => void }) {
         agg.errors += res.errors;
         agg.skipped_duplicates += res.skipped_duplicates;
         agg.held_pending += res.held_pending;
+        agg.quota_blocked = (agg.quota_blocked ?? 0) + (res.quota_blocked ?? 0);
         agg.account_detected = agg.account_detected || res.account_detected;
         agg.transaction_ids.push(...res.transaction_ids);
         offset += CHUNK;
@@ -127,6 +128,14 @@ export default function Upload({ onDone }: { onDone: () => void }) {
           {result.held_pending > 0 && (
             <p className="text-sm text-slate-500 mt-1">
               {t("upload.held", { count: result.held_pending })}
+            </p>
+          )}
+          {(result.quota_blocked ?? 0) > 0 && (
+            <p className="text-sm text-rose-600 mt-1">
+              {t("upload.quotaBlocked", {
+                defaultValue: "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them.",
+                count: result.quota_blocked,
+              })}
             </p>
           )}
           <button onClick={onDone} className="btn mt-4 bg-brand-green text-white border-none hover:bg-brand-green-dark">

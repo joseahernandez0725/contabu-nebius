@@ -20,16 +20,8 @@ import type { Company, Transaction } from "./types";
 type View = "dashboard" | "transactions" | "review" | "upload" | "pnl" | "rules" | "settings";
 
 function Logo() {
-  return (
-    <div
-      className="size-9 rounded-xl flex items-center justify-center shadow-sm"
-      style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-    >
-      <svg viewBox="0 0 24 24" className="size-5 text-white" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-        <path d="M4 20V13M10 20V5M16 20v-9M22 20H2" />
-      </svg>
-    </div>
-  );
+  // Logo de marca real (public/icon.svg): cuadro verde con el lettermark "ContaBu".
+  return <img src="/icon.svg" alt="ContaBu" className="size-9 rounded-xl shadow-sm" />;
 }
 
 const ICONS: Partial<Record<View, ReactNode>> = {
@@ -75,6 +67,7 @@ function App() {
   const [authError, setAuthError] = useState(false);
   const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
   const [billingNote, setBillingNote] = useState<string | null>(null);
+  const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
   const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(undefined);
 
@@ -168,10 +161,15 @@ function App() {
   // Empresa cargada pero SIN sector elegido → onboarding (elegir sector antes de usar la app).
   if (company && !company.sector) return <Onboarding company={company} onDone={onCompanyReady} />;
 
+  // Vista de escritorio (§5.B): las herramientas de operador (movimientos, reglas) usan MÁS ancho en
+  // pantallas grandes; el resto del flujo del dueño queda angosto (mobile-first).
+  const wideView = view === "transactions" || view === "rules";
+  const contentWidth = wideView ? "max-w-2xl lg:max-w-5xl" : "max-w-2xl";
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
       <header className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-200">
-        <div className="max-w-2xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className={`${contentWidth} mx-auto px-4 h-14 flex items-center gap-3`}>
           <Logo />
           <div className="flex-1 leading-tight min-w-0">
             <div className="font-bold tracking-tight">
@@ -210,7 +208,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-5 pb-24">
+      <main className={`flex-1 w-full ${contentWidth} mx-auto px-4 py-5 pb-24`}>
         {!company ? (
           <div className="flex justify-center py-16">
             {authError ? (
@@ -230,10 +228,16 @@ function App() {
             {view === "dashboard" && (
               <Dashboard onNavigate={setView} />
             )}
-            {view === "transactions" && <Transactions />}
+            {view === "transactions" && (
+              <Transactions
+                onAddCategory={() => setView("settings")}
+                focusTxId={focusTxId}
+                onFocusHandled={() => setFocusTxId(null)}
+              />
+            )}
             {view === "review" && (
               <div className="space-y-4">
-                <Audit />
+                <Audit onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }} />
                 <Review items={reviewTxs} reload={reloadReview} />
               </div>
             )}

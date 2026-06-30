@@ -273,6 +273,7 @@ def ingest_csv(
     offset: int = 0,
     dry_run: bool = False,
     filename: str | None = None,
+    ai_limit: int | None = None,
 ) -> dict:
     """Pipeline completo. Acepta CSV o Excel (.xlsx). Devuelve un resumen (filas, mapeo, errores)."""
     headers, rows = parse_spreadsheet(content, filename)
@@ -395,6 +396,14 @@ def ingest_csv(
                 transfer_hits[idx] = transfer
                 continue
             ai_indices.append(idx)
+
+    # Cupo de IA: lo que excede el `ai_limit` NO se categoriza con IA (se inserta sin categorizar).
+    # El usuario debe suscribirse/subir de tier para cubrirlas. `quota_blocked` = cuántas se bloquearon.
+    quota_blocked = 0
+    if ai_limit is not None and len(ai_indices) > max(0, ai_limit):
+        keep = max(0, ai_limit)
+        quota_blocked = len(ai_indices) - keep
+        ai_indices = ai_indices[:keep]
 
     # 3) Categorizar con la IA SOLO lo que no matcheó regla, LÍNEA POR LÍNEA (una petición por
     #    transacción), en PARALELO con un límite de concurrencia. Cada llamada es independiente →
@@ -550,6 +559,8 @@ def ingest_csv(
         "by_rule": by_rule,
         "by_band": by_band,
         "by_transfer": by_transfer,
+        # Transacciones que NO se categorizaron por exceder el cupo de IA (hay que subir de plan).
+        "quota_blocked": quota_blocked,
         "by_ai": by_ai,
         # Cuántas filas ajustó el pase de consistencia (mismo comercio → misma categoría).
         "consistency_adjusted": consistency_adjusted,

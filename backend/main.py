@@ -19,7 +19,7 @@ from sqlmodel import Session, delete, select
 
 from ai import map_rule_columns, propose_rules, recategorize_with_answer
 from audit import audit_categorization
-from billing import apply_session, create_checkout_session, handle_event
+from billing import ai_quota_status, apply_session, create_checkout_session, handle_event
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
@@ -115,14 +115,17 @@ app = FastAPI(title="ContaBu API")
 
 # CORS: orígenes desde los que el navegador puede llamar a este backend.
 # - localhost:5173 → desarrollo (Vite).
-# - *.web.app / *.firebaseapp.com → el frontend desplegado en Firebase Hosting.
-# (Cuando exista el dominio propio app.contabu.com, se agrega aquí.)
+# - *.web.app / *.firebaseapp.com → el frontend en Firebase Hosting (dominios por defecto).
+# - contabu.com / www → el DOMINIO PROPIO (comprado 26-jun). Sin esto, el navegador bloquea por CORS
+#   las llamadas desde https://contabu.com → la app no carga al usuario (parece "no se pudo entrar").
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
         "https://contabu-prod.web.app",
         "https://contabu-prod.firebaseapp.com",
+        "https://contabu.com",
+        "https://www.contabu.com",
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -208,10 +211,14 @@ async def upload_transactions(
     content = await file.read()
     # chunk>0 → subida por LOTES (cada lote bajo el límite del navegador); si no, tope de seguridad.
     limit = chunk if chunk > 0 else 1000
+    # Cupo de IA: lo que exceda el restante NO se categoriza (hay que subir de plan). Se recalcula por
+    # lote (las ya insertadas este mes cuentan), así el tope vale en toda la subida troceada.
+    quota = ai_quota_status(session, company)
     result = ingest_csv(
         session, company_id, company.sector, content,
-        limit=limit, offset=offset, filename=file.filename,
+        limit=limit, offset=offset, filename=file.filename, ai_limit=quota["remaining"],
     )
+    result["quota"] = quota  # used / limit / remaining / monthly → el frontend lo muestra
     return result
 
 
