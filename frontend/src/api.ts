@@ -478,6 +478,40 @@ export async function uploadCsv(file: File, offset = 0, chunk = 0): Promise<Uplo
   return res.json();
 }
 
+// Resultado de subir la FOTO de un recibo → 1 transacción de caja (o un motivo de no creación).
+export interface ReceiptResult {
+  created: number; // 1 si se creó la transacción; 0 si no
+  transaction_id?: number;
+  payment_method?: "cash" | "card" | "unknown";
+  not_a_receipt?: boolean; // la imagen no parece un recibo
+  duplicate?: boolean; // ya se había subido este mismo recibo
+  quota_blocked?: number; // no quedaba cupo de IA (subir de plan)
+  transaction?: {
+    date: string;
+    description: string;
+    amount: string;
+    account_type: string | null;
+    category: string | null;
+    subcategory: string | null;
+    confidence: number | null;
+    needs_review: boolean;
+    review_question: string | null;
+    source: string | null;
+  };
+}
+
+// Sube la foto de un recibo: la IA lee comercio/fecha/total y crea una transacción de caja.
+export async function uploadReceipt(file: File): Promise<ReceiptResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(
+    `${API}/api/companies/${cid()}/transactions/receipt`,
+    { method: "POST", headers: await authHeaders(), body: form },
+  );
+  if (!res.ok) throw new Error("Falló la lectura del recibo");
+  return res.json();
+}
+
 // Asigna la cuenta (que indicó el usuario) a las transacciones recién subidas.
 // El backend la enmascara a los últimos 4 dígitos.
 export async function setTransactionsAccount(

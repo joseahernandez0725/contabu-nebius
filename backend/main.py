@@ -12,18 +12,20 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
+from dateutil import parser as dateparser
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import Session, delete, select
 
-from ai import map_rule_columns, propose_rules, recategorize_with_answer
+from ai import extract_receipt, map_rule_columns, propose_rules, recategorize_with_answer
 from audit import audit_categorization
 from billing import ai_quota_status, apply_session, create_checkout_session, handle_event
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
 from db import get_session
-from ingestion import ingest_csv, mask_account, parse_spreadsheet
+from ingestion import ingest_csv, make_fingerprint, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
@@ -220,6 +222,107 @@ async def upload_transactions(
     )
     result["quota"] = quota  # used / limit / remaining / monthly → el frontend lo muestra
     return result
+
+
+@app.post("/api/companies/{company_id}/transactions/receipt")
+async def upload_receipt(
+    company_id: int,
+    file: UploadFile,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Sube la FOTO de un recibo (compra en efectivo/tarjeta) → la IA lee comercio/fecha/total y
+    lo categoriza → crea UNA transacción de caja. Pensado sobre todo para compras en EFECTIVO, que
+    el extracto bancario no ve. Si el recibo se pagó con TARJETA, se marca para revisión (probable
+    duplicado con el extracto). Cada recibo gasta 1 llamada de IA → cuenta contra el cupo."""
+    company = owned_company(company_id, user, session, write=True)
+
+    content = await file.read()
+    mime = file.content_type or "image/jpeg"
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=422, detail="el archivo debe ser una imagen (foto del recibo)")
+
+    # Cupo de IA: un recibo gasta una llamada → si no queda cupo, no se procesa (subir de plan).
+    quota = ai_quota_status(session, company)
+    if quota["remaining"] <= 0:
+        return {"created": 0, "quota_blocked": 1, "quota": quota}
+
+    extracted = extract_receipt(content, mime, company.sector)
+    if not extracted.is_receipt:
+        # La imagen no parece un recibo → no se crea nada (no se cobra cupo).
+        return {"created": 0, "not_a_receipt": True, "quota": quota}
+
+    # Fecha del recibo (si no se leyó, hoy). Total = magnitud; una compra es dinero que SALE.
+    try:
+        d = dateparser.parse(extracted.purchase_date).date() if extracted.purchase_date else date.today()
+    except (ValueError, OverflowError):
+        d = date.today()
+    amount = abs(Decimal(str(extracted.total or 0)))
+    description = f"{extracted.merchant} (receipt)".strip()
+    signed = -amount  # compra → salida (el signo lo refleja is_inflow=False)
+    fp = make_fingerprint(d, description, signed, None)
+
+    # Dedup: si ya se subió esta misma foto/recibo (misma huella), no duplicar.
+    exists = session.exec(
+        select(func.count()).select_from(Transaction)
+        .where(Transaction.company_id == company_id, Transaction.fingerprint == fp)
+    ).one()
+    if exists:
+        return {"created": 0, "duplicate": True, "quota": quota}
+
+    tx = Transaction(
+        company_id=company_id, date=d, description=description, amount=amount,
+        is_inflow=False, bank_account=None, fingerprint=fp,
+        account_type=extracted.account_type, subcategory=(extracted.merchant or "").upper() or None,
+        confidence=extracted.confidence, ai_categorized=True, source="ai",
+    )
+
+    # Consistencia: si el dueño YA tiene una regla para este comercio, mandar su categoría (la regla
+    # ganó antes para el extracto bancario → mismo comercio, misma categoría). Si no, la de la IA.
+    rule = match_rule(load_rules(session, company_id, company.sector), extracted.merchant)
+    if rule is not None:
+        tx.account_type = rule.account_type
+        tx.category = rule.category
+        tx.subcategory = rule.match_text.upper()
+        tx.confidence = 1.0
+        tx.needs_review = False
+        tx.source = "rule"
+    else:
+        tx.category = extracted.category
+        tx.needs_review = extracted.needs_review
+        tx.review_question = extracted.review_question or None
+
+    # No se pudo leer el total → no sirve para el P&L hasta que el dueño lo confirme.
+    if amount <= 0:
+        tx.needs_review = True
+        tx.review_question = "We couldn't read the total on this receipt — what was the amount?"
+
+    # Doble conteo: si el recibo se pagó con TARJETA, también caerá en el extracto bancario → avisar.
+    if extracted.payment_method == "card":
+        tx.needs_review = True
+        tx.review_question = (
+            "This receipt was paid by card, so it may also appear in your bank statement — "
+            "keep it only if it isn't already there (to avoid double-counting)."
+        )
+
+    session.add(tx)
+    session.commit()
+    session.refresh(tx)
+
+    quota = ai_quota_status(session, company)  # recalcular tras crear la tx
+    return {
+        "created": 1,
+        "transaction_id": tx.id,
+        "payment_method": extracted.payment_method,
+        "transaction": {
+            "date": str(d), "description": description, "amount": str(amount),
+            "account_type": tx.account_type.value if tx.account_type else None,
+            "category": tx.category, "subcategory": tx.subcategory,
+            "confidence": tx.confidence, "needs_review": tx.needs_review,
+            "review_question": tx.review_question, "source": tx.source,
+        },
+        "quota": quota,
+    }
 
 
 @app.post("/api/companies/{company_id}/transactions/set-account")

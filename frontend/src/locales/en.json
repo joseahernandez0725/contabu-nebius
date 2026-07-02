@@ -140,6 +140,17 @@
     "progress": "Categorizing {{done}} / {{total}}…",
     "quotaBlocked": "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them."
   },
+  "receipt": {
+    "title": "Snap a receipt",
+    "subtitle": "For cash purchases your bank statement doesn't show.",
+    "choose": "Take a photo or pick one",
+    "reading": "Reading the receipt…",
+    "captured": "Receipt captured",
+    "notReceipt": "That photo doesn't look like a receipt. Please try again.",
+    "duplicate": "You already added this receipt.",
+    "quotaBlocked": "You've reached your AI quota. Upgrade your plan to scan receipts.",
+    "review": "Review it"
+  },
   "settings": {
     "title": "Settings",
     "subtitle": "Amounts that help auto-categorize your purchases.",

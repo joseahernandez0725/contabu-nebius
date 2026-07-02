@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { uploadCsv, setTransactionsAccount, type UploadResult } from "../api";
+import { uploadCsv, uploadReceipt, setTransactionsAccount, type ReceiptResult, type UploadResult } from "../api";
 
 export default function Upload({ onDone }: { onDone: () => void }) {
   const { t } = useTranslation();
@@ -12,6 +12,24 @@ export default function Upload({ onDone }: { onDone: () => void }) {
   // Cuando la IA no detecta la cuenta del archivo, pedimos al usuario que la escriba.
   const [askAccount, setAskAccount] = useState<UploadResult | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Captura de recibo por foto (compras en efectivo que el banco no ve).
+  const receiptRef = useRef<HTMLInputElement>(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receipt, setReceipt] = useState<ReceiptResult | null>(null);
+  const [receiptError, setReceiptError] = useState<string | null>(null);
+
+  async function handleReceipt(img: File) {
+    setReceiptLoading(true);
+    setReceipt(null);
+    setReceiptError(null);
+    try {
+      setReceipt(await uploadReceipt(img));
+    } catch (e) {
+      setReceiptError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setReceiptLoading(false);
+    }
+  }
 
   // Subida por LOTES: trocea el archivo (cada lote bajo el límite de ~300s del navegador) y muestra
   // progreso. El backend procesa rows[offset:offset+CHUNK]; iteramos hasta cubrir el total.
@@ -111,6 +129,41 @@ export default function Upload({ onDone }: { onDone: () => void }) {
         {error && <div className="alert alert-error mt-4 text-sm">{error}</div>}
       </div>
 
+      {/* Captura de recibo por foto: para compras en EFECTIVO que el extracto bancario no ve. */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+        <h2 className="font-semibold text-slate-900">{t("receipt.title")}</h2>
+        <p className="text-sm text-slate-500 mt-1">{t("receipt.subtitle")}</p>
+
+        <button
+          onClick={() => receiptRef.current?.click()}
+          disabled={receiptLoading}
+          className="w-full mt-4 rounded-2xl border-2 border-dashed border-slate-300 hover:border-brand-green hover:bg-brand-green/5 transition-colors py-10 flex flex-col items-center gap-2 text-slate-500 disabled:opacity-60"
+        >
+          {receiptLoading ? (
+            <span className="loading loading-spinner text-brand-green" />
+          ) : (
+            <svg viewBox="0 0 24 24" className="size-8 text-brand-green" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" /><circle cx="12" cy="13" r="4" />
+            </svg>
+          )}
+          <span className="text-sm font-medium text-slate-700">
+            {receiptLoading ? t("receipt.reading") : t("receipt.choose")}
+          </span>
+        </button>
+        <input
+          ref={receiptRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleReceipt(f); e.target.value = ""; }}
+        />
+
+        {receiptError && <div className="alert alert-error mt-4 text-sm">{receiptError}</div>}
+
+        {receipt && <ReceiptResultCard receipt={receipt} onDone={onDone} />}
+      </div>
+
       {result && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center">
           <div className="size-12 rounded-full bg-brand-green/10 text-brand-green flex items-center justify-center mx-auto">
@@ -153,6 +206,43 @@ export default function Upload({ onDone }: { onDone: () => void }) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Muestra el resultado de leer un recibo: la transacción creada, o el motivo de no creación
+// (no es un recibo / duplicado / sin cupo de IA).
+function ReceiptResultCard({ receipt, onDone }: { receipt: ReceiptResult; onDone: () => void }) {
+  const { t } = useTranslation();
+
+  if (receipt.not_a_receipt) {
+    return <div className="alert alert-warning mt-4 text-sm">{t("receipt.notReceipt")}</div>;
+  }
+  if (receipt.duplicate) {
+    return <div className="alert mt-4 text-sm bg-amber-50 text-amber-700 border-amber-200">{t("receipt.duplicate")}</div>;
+  }
+  if ((receipt.quota_blocked ?? 0) > 0) {
+    return <div className="alert alert-error mt-4 text-sm">{t("receipt.quotaBlocked")}</div>;
+  }
+  if (!receipt.transaction) return null;
+
+  const tx = receipt.transaction;
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 p-4 text-center">
+      <div className="size-10 rounded-full bg-brand-green/10 text-brand-green flex items-center justify-center mx-auto">
+        <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg>
+      </div>
+      <p className="font-semibold text-slate-900 mt-2">{t("receipt.captured")}</p>
+      <p className="text-sm text-slate-700 mt-1">
+        <span className="font-medium">{tx.subcategory || tx.description}</span> · ${tx.amount}
+        {tx.category && <span className="text-slate-500"> · {tx.category}</span>}
+      </p>
+      {tx.needs_review && tx.review_question && (
+        <p className="text-sm text-amber-600 mt-2">{tx.review_question}</p>
+      )}
+      <button onClick={onDone} className="btn btn-sm mt-3 bg-brand-green text-white border-none hover:bg-brand-green-dark">
+        {t("receipt.review")}
+      </button>
     </div>
   );
 }

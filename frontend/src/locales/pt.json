@@ -140,6 +140,17 @@
     "progress": "Categorizando {{done}} / {{total}}…",
     "quotaBlocked": "{{count}} transações não foram categorizadas — você atingiu sua cota de IA. Faça upgrade do plano para categorizá-las."
   },
+  "receipt": {
+    "title": "Tire uma foto de um recibo",
+    "subtitle": "Para compras em dinheiro que seu extrato bancário não mostra.",
+    "choose": "Tire uma foto ou escolha uma",
+    "reading": "Lendo o recibo…",
+    "captured": "Recibo capturado",
+    "notReceipt": "Essa foto não parece um recibo. Tente novamente.",
+    "duplicate": "Você já adicionou este recibo.",
+    "quotaBlocked": "Você atingiu sua cota de IA. Faça upgrade do plano para escanear recibos.",
+    "review": "Revisar"
+  },
   "settings": {
     "title": "Configurações",
     "subtitle": "Valores que ajudam a categorizar suas compras automaticamente.",

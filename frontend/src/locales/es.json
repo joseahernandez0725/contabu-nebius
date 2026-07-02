@@ -157,6 +157,17 @@
     "progress": "Categorizando {{done}} / {{total}}…",
     "quotaBlocked": "{{count}} transacciones no se categorizaron — alcanzaste tu cupo de IA. Sube de plan para categorizarlas."
   },
+  "receipt": {
+    "title": "Toma una foto de un recibo",
+    "subtitle": "Para compras en efectivo que tu extracto bancario no muestra.",
+    "choose": "Toma una foto o elige una",
+    "reading": "Leyendo el recibo…",
+    "captured": "Recibo capturado",
+    "notReceipt": "Esa foto no parece un recibo. Inténtalo de nuevo.",
+    "duplicate": "Ya habías agregado este recibo.",
+    "quotaBlocked": "Alcanzaste tu cupo de IA. Mejora tu plan para escanear recibos.",
+    "review": "Revisarlo"
+  },
   "settings": {
     "title": "Ajustes",
     "subtitle": "Montos que ayudan a categorizar tus compras automáticamente.",
