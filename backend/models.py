@@ -13,6 +13,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, SQLModel
 
 
@@ -95,6 +96,11 @@ class Company(SQLModel, table=True):
     subscription_status: Optional[str] = Field(default=None)
     # Cupo mensual de transacciones del tier pagado (100/200/400/1000). None = plan gratis (sin IA).
     tx_quota: Optional[int] = Field(default=None)
+    # PERFIL de la empresa — la ENTREVISTA del bookkeeper (FASE 9 Paso 5). Hechos que solo el dueño
+    # sabe, guardados SIEMPRE en inglés (Regla de Oro): uses_subcontractors, client_payment_methods,
+    # payroll, work_vehicles, personal_expenses_mixed, y people {firma: {name, role}} de la ronda 2.
+    # Se inyectan como HECHOS (no heurísticas) a los prompts de categorización/clarify/proponedor.
+    profile: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -140,6 +146,11 @@ class Transaction(SQLModel, table=True):
     # "transfer" (transferencia detectada) | "ai" | "manual". Filas viejas: band/transfer
     # quedaron como "rule" (eran indistinguibles antes de FASE 9).
     source: Optional[str] = Field(default=None)
+    # Predicción ORIGINAL de la IA (FASE 9 Paso 6): se escribe UNA vez cuando la IA categoriza y
+    # NUNCA se toca al corregir. Comparar contra la categoría final (la verdad del dueño) da la
+    # precisión ONLINE del cerebro en producción — sin necesidad de un set de oro aparte.
+    ai_original_account_type: Optional[str] = Field(default=None)
+    ai_original_category: Optional[str] = Field(default=None)
     # QUÉ regla decidió esta transacción (procedencia exacta, FASE 9 Paso 1). Referencia SUAVE
     # (sin FK a propósito): si la regla se edita/borra, el historial de "qué actuó en su momento"
     # se conserva; el frontend muestra "regla eliminada" si ya no existe. Alimenta al auditor

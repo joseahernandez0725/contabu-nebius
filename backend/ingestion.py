@@ -21,6 +21,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ai import categorize_transaction, map_columns
+from company_profile import format_profile_facts
 from models import AccountType, CategoryRule, Company, Transaction
 
 # Ventana de asentamiento por defecto (días): cubre tarjeta/ACH normales (1-3 días hábiles) + un
@@ -274,8 +275,10 @@ def ingest_csv(
     dry_run: bool = False,
     filename: str | None = None,
     ai_limit: int | None = None,
+    profile: dict | None = None,
 ) -> dict:
-    """Pipeline completo. Acepta CSV o Excel (.xlsx). Devuelve un resumen (filas, mapeo, errores)."""
+    """Pipeline completo. Acepta CSV o Excel (.xlsx). Devuelve un resumen (filas, mapeo, errores).
+    `profile`: la entrevista del dueño (`Company.profile`) — sus hechos viajan al prompt de la IA."""
     headers, rows = parse_spreadsheet(content, filename)
     if not rows:
         return {"inserted": 0, "errors": 0, "mapping": None, "message": "archivo vacío"}
@@ -410,10 +413,11 @@ def ingest_csv(
     #    no hay forma de desalinear resultados. Si una falla tras los reintentos, queda sin
     #    categorizar (no rompe la subida; aparecerá para revisión).
     ai_cats: dict[int, object] = {}
+    profile_facts = format_profile_facts(profile)  # hechos de la entrevista → prompt
 
     def _categorize_one(idx: int):
         try:
-            cat = categorize_transaction(parsed[idx][1], float(parsed[idx][2]), sector)
+            cat = categorize_transaction(parsed[idx][1], float(parsed[idx][2]), sector, profile_facts)
             return idx, cat
         except Exception:
             return idx, None
@@ -501,6 +505,10 @@ def ingest_csv(
             tx.review_question = cat.review_question or None
             tx.ai_categorized = True
             tx.source = "ai"
+            # Predicción ORIGINAL de la IA (FASE 9 Paso 6): se congela aquí y NUNCA se toca al
+            # corregir → precisión online (comparar contra la categoría final, la verdad del dueño).
+            tx.ai_original_account_type = cat.account_type.value if cat.account_type else None
+            tx.ai_original_category = cat.category
             source = "ai"
             by_ai += 1
 

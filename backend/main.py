@@ -24,6 +24,9 @@ from audit import audit_categorization
 from billing import ai_quota_status, apply_session, create_checkout_session, handle_event
 from auth import current_user, member_role, owned_company, owner_company, owned_transaction
 from categories import categories_for, categories_for_company
+from company_profile import (
+    apply_person_answer, format_profile_facts, interview_questions, sanitize_round1,
+)
 from db import get_session
 from ingestion import ingest_csv, make_fingerprint, mask_account, parse_spreadsheet
 from models import (
@@ -227,8 +230,15 @@ async def upload_transactions(
     result = ingest_csv(
         session, company_id, company.sector, content,
         limit=limit, offset=offset, filename=file.filename, ai_limit=quota["remaining"],
+        profile=company.profile,  # los hechos de la entrevista viajan al prompt (FASE 9 Paso 5)
     )
     result["quota"] = quota  # used / limit / remaining / monthly → el frontend lo muestra
+    # AUDITOR AUTOMÁTICO (FASE 9 Paso 4): al terminar la subida (último lote), el agente revisa los
+    # libros solo — sin que el dueño lo pida — y el frontend muestra el badge con los hallazgos.
+    # Solo en el último lote (correr por lote sería redundante); determinista y gratis (sin IA).
+    is_last_chunk = result.get("offset", 0) + result.get("processed", 0) >= result.get("total", 0)
+    if is_last_chunk:
+        result["audit_findings"] = len(_company_audit(session, company_id))
     return result
 
 
@@ -300,6 +310,9 @@ async def upload_receipt(
         tx.category = extracted.category
         tx.needs_review = extracted.needs_review
         tx.review_question = extracted.review_question or None
+        # Predicción ORIGINAL de la IA (FASE 9 Paso 6): congelada para la precisión online.
+        tx.ai_original_account_type = extracted.account_type.value if extracted.account_type else None
+        tx.ai_original_category = extracted.category
 
     # No se pudo leer el total → no sirve para el P&L hasta que el dueño lo confirme.
     if amount <= 0:
@@ -526,6 +539,85 @@ def update_thresholds(
     return company
 
 
+@app.patch("/api/companies/{company_id}/profile")
+def update_profile(
+    company_id: int,
+    payload: dict,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """ENTREVISTA del bookkeeper — RONDA 1 (FASE 9 Paso 5): guarda las respuestas estructuradas
+    del dueño (valores SIEMPRE en inglés — la UI traduce, el dato no). Merge: se puede responder
+    por partes o volver a editar; las claves no reconocidas se descartan."""
+    company = owned_company(company_id, user, session, write=True)
+    answers = sanitize_round1(payload)
+    profile = dict(company.profile or {})
+    profile.update(answers)
+    company.profile = profile
+    session.add(company)
+    session.commit()
+    return {"profile": profile}
+
+
+@app.get("/api/companies/{company_id}/interview")
+def get_interview(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """ENTREVISTA — RONDA 2 (FASE 9 Paso 5): preguntas ANCLADAS EN LOS DATOS. Determinista y sin
+    IA: agrupa los pagos persona-a-persona (Zelle/Venmo/…) por contraparte — exactamente los que
+    el proponedor tiene prohibido convertir en regla sin contexto — y pregunta el rol de cada
+    persona aún sin confirmar. Los totales los suma Python (la IA no calcula)."""
+    company = owned_company(company_id, user, session)
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+    ).all()
+    return {"profile": company.profile or {},
+            "questions": interview_questions(txs, company.profile)}
+
+
+class InterviewAnswer(BaseModel):
+    """El rol de UNA persona, confirmado por el dueño (ronda 2)."""
+    name: str
+    role: str  # "subcontractor" | "customer" | "owner" | "skip" (no volver a preguntar)
+
+
+class InterviewAnswers(BaseModel):
+    answers: list[InterviewAnswer]
+
+
+@app.post("/api/companies/{company_id}/interview/answers")
+def answer_interview(
+    company_id: int,
+    payload: InterviewAnswers,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Aplica las respuestas de la RONDA 2: (a) el hecho queda en el perfil (`people`) — el
+    proponedor ya puede proponer la regla de esa persona y la IA lo recibe como hecho—, y (b) las
+    transacciones persona-a-persona de esa contraparte se corrigen al instante (decisión del
+    dueño → source="manual"). "skip" solo silencia la pregunta."""
+    company = owned_company(company_id, user, session, write=True)
+    profile = dict(company.profile or {})
+    people = dict(profile.get("people") or {})
+    updated = 0
+    for a in payload.answers:
+        key = a.name.strip().upper()
+        if not key:
+            continue
+        role = a.role if a.role in ("subcontractor", "customer", "owner") else "skip"
+        people[key] = {"name": a.name.strip().title(), "role": role}
+        if role != "skip":
+            updated += apply_person_answer(session, company_id, company.sector or "general",
+                                           key, role)
+    profile["people"] = people
+    company.profile = profile
+    session.add(company)
+    session.commit()
+    return {"updated": updated, "profile": profile}
+
+
 @app.get("/api/companies/{company_id}/categories")
 def get_categories(
     company_id: int,
@@ -730,15 +822,10 @@ async def stripe_webhook(request: Request, session: Session = Depends(get_sessio
         raise HTTPException(status_code=400, detail=f"webhook error: {e}")
 
 
-@app.get("/api/companies/{company_id}/audit")
-def audit_company(
-    company_id: int,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """AGENTE AUDITOR (1 click): escanea las transacciones categorizadas y devuelve los **sospechosos**
-    (inconsistencia por comercio, contradicción de signo, sin categorizar). Determinista, sin IA."""
-    owned_company(company_id, user, session)
+def _company_audit(session: Session, company_id: int) -> list[dict]:
+    """Corre el AUDITOR determinista sobre los datos vivos de la empresa (SQL + Python, sin IA →
+    gratis). Incluye la señal de DESVÍO DE REGLA exacta (matched_rule_id vs la regla viva).
+    Se usa en el endpoint de auditoría Y automáticamente tras cada subida / aplicar reglas (FASE 9)."""
     txs = session.exec(
         select(Transaction).where(Transaction.company_id == company_id)
     ).all()
@@ -746,8 +833,30 @@ def audit_company(
         "id": t.id, "description": t.description,
         "account_type": t.account_type.value if t.account_type else None,
         "category": t.category, "is_inflow": t.is_inflow,
+        "matched_rule_id": t.matched_rule_id,
     } for t in txs]
-    return audit_categorization(items)
+    rules = session.exec(
+        select(CategoryRule).where(CategoryRule.company_id == company_id)
+    ).all()
+    rules_by_id = {r.id: {
+        "match_text": r.match_text,
+        "account_type": r.account_type.value if r.account_type else None,
+        "category": r.category,
+    } for r in rules}
+    return audit_categorization(items, rules_by_id)
+
+
+@app.get("/api/companies/{company_id}/audit")
+def audit_company(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """AGENTE AUDITOR: escanea las transacciones categorizadas y devuelve los **sospechosos**
+    (desvío de regla, inconsistencia por comercio, contradicción de signo, sin categorizar).
+    Determinista, sin IA. Corre a demanda Y automáticamente tras cada subida (badge)."""
+    owned_company(company_id, user, session)
+    return _company_audit(session, company_id)
 
 
 @app.post("/api/companies/{company_id}/rule-proposals")
@@ -771,7 +880,8 @@ def generate_rule_proposals(
         "category": t.category, "is_inflow": t.is_inflow,
     } for t in txs]
     candidates = find_rule_candidates(rules, items)
-    proposals = propose_rules(candidates, [r.match_text for r in rules], sector)
+    proposals = propose_rules(candidates, [r.match_text for r in rules], sector,
+                              format_profile_facts(company.profile if company else None))
     # EL GUARDIÁN (FASE 9 Paso 3): validar cada keyword propuesto contra los datos reales ANTES de
     # mostrarlo — cobertura (¿matchea todo su comercio?) y colisión (¿caza otros comercios?). El
     # dueño aprueba con evidencia ("cubre N · M conflictos"), no con fe. Determinista, sin IA.
@@ -837,7 +947,9 @@ def apply_rule_proposals(
             session.flush()  # asigna id para apply_rule_to_transactions
             applied += apply_rule_to_transactions(session, company_id, rule)
     session.commit()
-    return {"created": created, "applied": applied}
+    # AUDITOR AUTOMÁTICO (FASE 9 Paso 4): tras cambiar el reglamento, el agente verifica los libros.
+    return {"created": created, "applied": applied,
+            "audit_findings": len(_company_audit(session, company_id))}
 
 
 @app.post("/api/companies/{company_id}/rules/import")
@@ -1154,7 +1266,8 @@ def clarify_transaction(
     income = tx.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
     signed = float(tx.amount) if income else -float(tx.amount)
 
-    cat = recategorize_with_answer(tx.description, signed, sector, payload.answer)
+    cat = recategorize_with_answer(tx.description, signed, sector, payload.answer,
+                                   format_profile_facts(company.profile if company else None))
 
     tx.account_type = cat.account_type
     tx.category = cat.category
@@ -1202,7 +1315,8 @@ def clarify_group(
     income = rep.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
     signed = float(rep.amount) if income else -float(rep.amount)
 
-    cat = recategorize_with_answer(rep.description, signed, sector, payload.answer)
+    cat = recategorize_with_answer(rep.description, signed, sector, payload.answer,
+                                   format_profile_facts(company.profile if company else None))
     sub = (cat.subcategory or "").upper() or None
 
     for tx in txs:

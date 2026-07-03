@@ -9,6 +9,10 @@ import { SECTION_LABEL } from "../accounting";
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
 const TYPE_INFO: Record<string, { label: string; hint: string }> = {
+  rule_deviation: {
+    label: "Out of sync with your rule",
+    hint: "A rule of yours covered this transaction, but its category no longer matches the rule (the rule probably changed).",
+  },
   inconsistent_merchant: {
     label: "Same merchant, different categories",
     hint: "These transactions look like the same merchant but were categorized differently.",
@@ -25,10 +29,17 @@ const SEV_STYLE: Record<string, string> = {
   low: "text-slate-600 bg-slate-100",
 };
 
-// Agente auditor (1 click): escanea la categorización y lista los sospechosos, cada uno **accionable
-// en un toque**. Inconsistencias: aplica la categoría dominante a las que difieren. Signo/sin-categorizar:
-// el usuario elige la categoría y se aplica. Cada arreglo crea una regla (cierra el loop con el proponedor).
-export default function Audit({ onOpenTransaction }: { onOpenTransaction?: (id: number) => void }) {
+// Agente auditor: escanea la categorización y lista los sospechosos, cada uno **accionable en un
+// toque**. Corre SOLO al abrir la pantalla (FASE 9: el agente vigila sin que se lo pidan) y con el
+// botón para re-correr. Inconsistencias/desvíos: fix de 1 toque. Signo/sin-categorizar: el usuario
+// elige la categoría. Cada arreglo alimenta el reglamento (cierra el loop con el proponedor).
+export default function Audit({
+  onOpenTransaction,
+  onCount,
+}: {
+  onOpenTransaction?: (id: number) => void;
+  onCount?: (n: number) => void; // reporta los hallazgos al badge de la navegación
+}) {
   const { t } = useTranslation();
   const [findings, setFindings] = useState<AuditFinding[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
@@ -38,6 +49,8 @@ export default function Audit({ onOpenTransaction }: { onOpenTransaction?: (id: 
   const [picks, setPicks] = useState<Record<number, string>>({}); // categoría elegida por hallazgo
 
   useEffect(() => { getCategories().then(setChart).catch(() => {}); }, []);
+  // El agente corre solo al abrir (determinista, gratis) — no hay que acordarse de pedírselo.
+  useEffect(() => { void run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const catToType = useMemo(() => {
     const m: Record<string, string> = {};
@@ -48,7 +61,9 @@ export default function Audit({ onOpenTransaction }: { onOpenTransaction?: (id: 
   async function run() {
     setLoading(true); setError(null);
     try {
-      setFindings(await getAudit());
+      const f = await getAudit();
+      setFindings(f);
+      onCount?.(f.length); // actualiza el badge ámbar de la navegación
       setPicks({});
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -58,11 +73,16 @@ export default function Audit({ onOpenTransaction }: { onOpenTransaction?: (id: 
   }
 
   // Aplica la categoría a las transacciones → crea regla + re-aplica (updateTransaction) → refresca.
-  async function applyFix(ids: number[], accountType?: string, category?: string) {
+  // `onlyThis=true` (desvío de regla): re-alinear a la regla NO debe crear otra regla redundante.
+  async function applyFix(ids: number[], accountType?: string, category?: string, onlyThis = false) {
     if (!ids.length || !accountType || !category) return;
     setFixing(true); setError(null);
     try {
-      for (const id of ids) await updateTransaction(id, { account_type: accountType, category });
+      for (const id of ids)
+        await updateTransaction(id, {
+          account_type: accountType, category,
+          ...(onlyThis ? { rule_action: "only_this" as const } : {}),
+        });
       await run();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -145,13 +165,18 @@ export default function Audit({ onOpenTransaction }: { onOpenTransaction?: (id: 
                   )}
 
                   {/* Fix de 1 toque */}
-                  {f.type === "inconsistent_merchant" ? (
+                  {f.type === "inconsistent_merchant" || f.type === "rule_deviation" ? (
                     <button
-                      onClick={() => applyFix(fixIds, f.suggested_account_type, f.suggested_category)}
+                      onClick={() => applyFix(
+                        fixIds, f.suggested_account_type, f.suggested_category,
+                        f.type === "rule_deviation", // re-alinear a la regla sin crear otra regla
+                      )}
                       disabled={fixing}
                       className="mt-1.5 text-xs font-semibold text-brand-green hover:underline disabled:opacity-50"
                     >
-                      {t("audit.fixApply", { defaultValue: "Fix → set all to {{s}}", s: f.suggestion })}
+                      {f.type === "rule_deviation"
+                        ? t("audit.fixRule", { defaultValue: "Fix → back to the rule ({{s}})", s: f.suggestion })
+                        : t("audit.fixApply", { defaultValue: "Fix → set all to {{s}}", s: f.suggestion })}
                     </button>
                   ) : (
                     <div className="mt-1.5 flex items-center gap-2">

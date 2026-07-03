@@ -161,7 +161,8 @@
       "saving": "Guardando…"
     },
     "progress": "Categorizando {{done}} / {{total}}…",
-    "quotaBlocked": "{{count}} transacciones no se categorizaron — alcanzaste tu cupo de IA. Sube de plan para categorizarlas."
+    "quotaBlocked": "{{count}} transacciones no se categorizaron — alcanzaste tu cupo de IA. Sube de plan para categorizarlas.",
+    "audit": "El auditor revisó tus libros y encontró {{count}} cosas para mirar — ve a Por revisar."
   },
   "receipt": {
     "title": "Toma una foto de un recibo",
@@ -184,6 +185,45 @@
     "ai": "IA · {{pct}}% de confianza",
     "manual": "La pusiste tú",
     "none": "Aún sin categorizar"
+  },
+  "interview": {
+    "title": "Unas preguntas rápidas",
+    "subtitle": "Tu contador te preguntaría lo mismo — tus respuestas hacen las reglas más inteligentes desde el día uno.",
+    "skip": "Saltar esta pregunta",
+    "skipAll": "Saltar por ahora",
+    "next": "Siguiente",
+    "saving": "Guardando…",
+    "q": {
+      "uses_subcontractors": "¿Usas subcontratistas?",
+      "client_payment_methods": "¿Cómo te pagan tus clientes?",
+      "payroll": "¿Tienes empleados en nómina?",
+      "work_vehicles": "¿Usas vehículos para el trabajo?",
+      "personal_expenses_mixed": "¿Esta cuenta bancaria también tiene gastos personales?"
+    },
+    "opt": {
+      "yes": "Sí",
+      "no": "No",
+      "sometimes": "A veces",
+      "checks": "Cheques",
+      "zelle": "Zelle",
+      "cash": "Efectivo",
+      "card": "Tarjeta",
+      "bank_transfer": "Transferencia bancaria",
+      "payroll_none": "Sin empleados",
+      "payroll_w2": "Empleados W-2",
+      "payroll_1099": "Solo contratistas 1099",
+      "payroll_both": "Ambos"
+    },
+    "r2Title": "Tu agente tiene unas preguntas",
+    "r2Subtitle": "Pagos recurrentes entre personas que se niega a adivinar — respóndele una vez y los corrige todos.",
+    "r2Question": "Veo {{count}} pagos entre personas con “{{name}}” — ¿quién es?",
+    "r2Roles": {
+      "subcontractor": "Mi subcontratista",
+      "customer": "Un cliente",
+      "owner": "Yo (el dueño)",
+      "skip": "Omitir"
+    },
+    "r2Applied": "{{count}} movimientos actualizados"
   },
   "settings": {
     "title": "Ajustes",
@@ -316,16 +356,19 @@
     "type": {
       "inconsistent_merchant": "Mismo comercio, categorías distintas",
       "sign_mismatch": "La dirección no coincide con la categoría",
-      "uncategorized": "Sin categorizar"
+      "uncategorized": "Sin categorizar",
+      "rule_deviation": "Fuera de sincronía con tu regla"
     },
     "hint": {
       "inconsistent_merchant": "Estas transacciones parecen el mismo comercio pero quedaron categorizadas distinto.",
       "sign_mismatch": "Entró dinero pero está marcado como gasto (o al revés) — probablemente un reembolso o un error.",
-      "uncategorized": "Esta transacción no tiene categoría."
+      "uncategorized": "Esta transacción no tiene categoría.",
+      "rule_deviation": "Una regla tuya cubría esta transacción, pero su categoría ya no coincide con la regla (probablemente la regla cambió)."
     },
     "in": "entró",
     "out": "salió",
-    "goToTx": "Abrir esta transacción"
+    "goToTx": "Abrir esta transacción",
+    "fixRule": "Arreglar → volver a la regla ({{s}})"
   },
   "billing": {
     "title": "Plan",

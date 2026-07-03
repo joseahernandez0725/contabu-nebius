@@ -1,6 +1,6 @@
 // Capa de acceso al backend. Centraliza las llamadas HTTP en un solo lugar.
 import { auth } from "./firebase";
-import type { Company, IncomeStatement, Transaction } from "./types";
+import type { Company, CompanyProfile, IncomeStatement, InterviewQuestion, Transaction } from "./types";
 
 // URL del backend según entorno: en dev, localhost; en prod, el Cloud Run (VITE_API_URL).
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -120,6 +120,37 @@ export async function updateCompany(payload: { name?: string; sector?: string })
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error("No se pudo actualizar la empresa");
+  return res.json();
+}
+
+// ENTREVISTA ronda 1: guarda las respuestas estructuradas del dueño (valores en inglés).
+export async function updateProfile(answers: Partial<CompanyProfile>): Promise<CompanyProfile> {
+  const res = await fetch(`${API}/api/companies/${cid()}/profile`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(answers),
+  });
+  if (!res.ok) throw new Error("No se pudo guardar el perfil");
+  return (await res.json()).profile;
+}
+
+// ENTREVISTA ronda 2: preguntas ancladas en los datos (personas de pagos Zelle/Venmo sin rol).
+export async function getInterview(): Promise<{ profile: CompanyProfile; questions: InterviewQuestion[] }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/interview`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo cargar la entrevista");
+  return res.json();
+}
+
+// Respuestas de la ronda 2: rol por persona → corrige sus transacciones + guarda el hecho.
+export async function answerInterview(
+  answers: { name: string; role: string }[],
+): Promise<{ updated: number; profile: CompanyProfile }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/interview/answers`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ answers }),
+  });
+  if (!res.ok) throw new Error("No se pudo guardar la respuesta");
   return res.json();
 }
 
@@ -493,6 +524,7 @@ export interface UploadResult {
   total?: number; // filas del archivo (subida por lotes)
   processed?: number; // filas cubiertas por este lote
   quota_blocked?: number; // tx que NO se categorizaron por exceder el cupo de IA (subir de plan)
+  audit_findings?: number; // hallazgos del AUDITOR automático (solo en el último lote — FASE 9)
 }
 
 // Sube un lote del archivo: rows[offset : offset+chunk]. chunk=0 → archivo completo (1 sola llamada).

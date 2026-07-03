@@ -61,6 +61,8 @@ export default function Upload({ onDone }: { onDone: () => void }) {
         agg.quota_blocked = (agg.quota_blocked ?? 0) + (res.quota_blocked ?? 0);
         agg.account_detected = agg.account_detected || res.account_detected;
         agg.transaction_ids.push(...res.transaction_ids);
+        // El AUDITOR automático corre en el ÚLTIMO lote → solo ese trae el conteo (FASE 9 Paso 4).
+        if (res.audit_findings != null) agg.audit_findings = res.audit_findings;
         offset += CHUNK;
         setProgress({ done: Math.min(offset, total), total });
       } while (offset < total);
@@ -188,6 +190,15 @@ export default function Upload({ onDone }: { onDone: () => void }) {
               {t("upload.quotaBlocked", {
                 defaultValue: "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them.",
                 count: result.quota_blocked,
+              })}
+            </p>
+          )}
+          {/* AUDITOR automático (FASE 9): el agente revisó los libros al terminar la subida. */}
+          {(result.audit_findings ?? 0) > 0 && (
+            <p className="text-sm text-amber-600 mt-1">
+              {t("upload.audit", {
+                defaultValue: "The auditor checked your books and found {{count}} things to look at — see the Review tab.",
+                count: result.audit_findings,
               })}
             </p>
           )}

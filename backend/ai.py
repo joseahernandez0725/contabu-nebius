@@ -165,10 +165,25 @@ def _generate(contents, schema, *, model: str = MODEL, max_retries: int = 4):
             delay *= 2  # espera progresiva: 2s, 4s, 8s…
 
 
-def categorize_transaction(description: str, amount: float, sector: str) -> Categorization:
-    """Clasifica una transacción bancaria. Devuelve category/subcategory/confidence."""
+def _facts_block(profile_facts: str) -> str:
+    """Bloque de HECHOS del dueño (entrevista del bookkeeper, FASE 9 Paso 5) para los prompts.
+    Hechos, no heurísticas (idea #5): la IA sigue razonando desde la descripción/monto."""
+    if not profile_facts:
+        return ""
+    return f"""
+FACTS from the owner (company profile — treat as ground truth about THIS business):
+{profile_facts}
+"""
+
+
+def categorize_transaction(
+    description: str, amount: float, sector: str, profile_facts: str = "",
+) -> Categorization:
+    """Clasifica una transacción bancaria. Devuelve category/subcategory/confidence.
+    `profile_facts`: hechos de la entrevista del dueño (en inglés) — "" si no hay perfil."""
     prompt = f"""You categorize bank transactions for small-business bookkeeping using a
 3-level chart of accounts. The business operates in the "{sector}" sector.
+{_facts_block(profile_facts)}
 
 For the transaction below, return (all in English):
 - reasoning: FIRST, in ONE short sentence, state the evidence — who the merchant/counterparty is,
@@ -210,10 +225,13 @@ Amount (USD, negative = money out / expense): {amount}"""
     return result
 
 
-def recategorize_with_answer(description: str, amount: float, sector: str, answer: str) -> Categorization:
+def recategorize_with_answer(
+    description: str, amount: float, sector: str, answer: str, profile_facts: str = "",
+) -> Categorization:
     """Re-categoriza usando la EXPLICACIÓN del dueño (lenguaje simple) como señal principal."""
     prompt = f"""Re-categorize a bank transaction for a "{sector}" small business AFTER the owner
 explained what it was. Use the owner's explanation as the PRIMARY signal.
+{_facts_block(profile_facts)}
 
 Transaction: "{description}" | amount: {amount}
 Owner's explanation (plain language): "{answer}"
@@ -286,7 +304,9 @@ Chart of accounts for the "{sector}" sector:
     return result
 
 
-def propose_rules(candidates: list[dict], existing_keywords: list[str], sector: str) -> list[ProposedRule]:
+def propose_rules(
+    candidates: list[dict], existing_keywords: list[str], sector: str, profile_facts: str = "",
+) -> list[ProposedRule]:
     """AGENTE PROPONEDOR (1 llamada): toma los candidatos deterministas (`rules.find_rule_candidates`)
     y devuelve reglas COMPANY propuestas para que el usuario apruebe. Mergea variantes de marca,
     no duplica las reglas existentes, usa `*` para transferencias/ACH, y marca gas/super como `skip`."""
@@ -301,6 +321,7 @@ def propose_rules(candidates: list[dict], existing_keywords: list[str], sector: 
     prompt = f"""You are a bookkeeping rule-proposer for a "{sector}" small business. From the recurring
 merchants below (each seen >=2 times and NOT yet covered by a rule), propose COMPANY categorization
 rules for the owner to approve.
+{_facts_block(profile_facts)}
 
 Rules of the game:
 - MERGE brand variants into ONE rule. "CHEVRONSAN", "CHEVRONBAY", "CHEVRONCONCORD" are all Chevron ->
@@ -326,7 +347,9 @@ Rules of the game:
 - NEVER propose a blanket rule for ambiguous PERSON-TO-PERSON payments (Zelle/Venmo/Quickpay/Cash App
   to or from a PERSON): the same channel can be a customer payment, a subcontractor, an owner draw or a
   contribution -> set kind="skip" (those go to human review). Only propose a rule when the counterparty
-  is a clear BUSINESS/vendor name (e.g. "Zelle to ABC Plumbing" is fine; "Zelle to/from <person>" is not).
+  is a clear BUSINESS/vendor name (e.g. "Zelle to ABC Plumbing" is fine; "Zelle to/from <person>" is not)
+  — EXCEPTION: if the owner's profile facts above CONFIRM that person's role (e.g. a confirmed
+  subcontractor or customer), DO propose the rule for that person with the matching category.
 - covers: list the candidate signatures this entry merges.
 
 Existing rule keywords (do not duplicate): {existing}

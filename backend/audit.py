@@ -17,11 +17,37 @@ from rules import classify_merchant, merchant_signature
 _INCOME = {"REVENUE", "OTHER_INCOME"}
 
 
-def audit_categorization(items: list[dict]) -> list[dict]:
-    """`items`: dicts con `id`, `description`, `account_type` (valor string o None), `category`, `is_inflow`.
+def audit_categorization(items: list[dict], rules_by_id: dict[int, dict] | None = None) -> list[dict]:
+    """`items`: dicts con `id`, `description`, `account_type` (valor string o None), `category`,
+    `is_inflow` y (opcional) `matched_rule_id`. `rules_by_id`: id → {match_text, account_type,
+    category} de las reglas COMPANY vivas — habilita la señal de DESVÍO DE REGLA (FASE 9 Paso 4).
     Devuelve una lista de hallazgos ordenados por severidad. Cada hallazgo: `type`, `severity`,
     `transaction_ids`, `detail` (+ `merchant` en inconsistencias)."""
     findings: list[dict] = []
+
+    # 0) DESVÍO DE REGLA (señal EXACTA, gracias a matched_rule_id — FASE 9): la transacción dice que
+    #    la decidió una regla, pero su categoría YA NO coincide con la regla (típico: el dueño editó
+    #    la regla en la tabla después). Las excepciones intencionales ("solo esta") NO caen aquí:
+    #    al corregir a mano se limpia matched_rule_id. Fix de 1 toque: re-aplicar la regla.
+    if rules_by_id:
+        for it in items:
+            rid = it.get("matched_rule_id")
+            rule = rules_by_id.get(rid) if rid is not None else None
+            if rule is None:
+                continue
+            if (it.get("account_type"), it.get("category")) != (rule["account_type"], rule["category"]):
+                findings.append({
+                    "type": "rule_deviation",
+                    "severity": "high",
+                    "transaction_ids": [it["id"]],
+                    "detail": (f"rule “{rule['match_text']}” says {rule['account_type']}/{rule['category']} "
+                               f"but this is {it.get('account_type')}/{it.get('category')}"),
+                    "suggestion": f"{rule['account_type']}/{rule['category']}",
+                    "suggested_account_type": rule["account_type"],  # estructurado → fix de 1 toque
+                    "suggested_category": rule["category"],
+                    "examples": [{"id": it["id"], "description": it.get("description"),
+                                  "is_inflow": bool(it.get("is_inflow"))}],
+                })
 
     # 1) INCONSISTENCIA POR COMERCIO: misma huella, distintas (account_type, category).
     #    Excluye gas/super (su split por monto es a propósito) y cheques (huella vacía).

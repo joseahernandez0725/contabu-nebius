@@ -36,6 +36,7 @@ from difflib import SequenceMatcher
 from sqlmodel import Session
 
 from ai import categorize_transaction
+from company_profile import format_profile_facts, p2p_counterparty
 from db import engine
 from ingestion import AI_CONCURRENCY, needs_human_review, unify_merchant_categorization
 from models import AccountType, RuleScope
@@ -75,12 +76,48 @@ def load_gold(path: str) -> list[dict]:
 
 
 # --------------------------------------------------------------------------- #
+# La ENTREVISTA simulada (FASE 9 Paso 5-6)
+# --------------------------------------------------------------------------- #
+def interview_profile_from_gold(gold: list[dict]) -> dict:
+    """Simula la ENTREVISTA del bookkeeper para la medición: los hechos que el dueño daría —
+    y el dueño es LA MISMA persona que etiquetó el set de oro, así que se derivan de sus etiquetas
+    (no es fuga del eval: es la información que la entrevista recogería en producción).
+
+    Solo hechos a NIVEL NEGOCIO (ronda 1) + roles de personas P2P (ronda 2). Determinista.
+    En producción los hechos viajan igual: `Company.profile` → `format_profile_facts` → prompt."""
+    profile: dict = {}
+    cats = {g["gold_cat"] for g in gold}
+    if "Subcontractors" in cats:
+        profile["uses_subcontractors"] = "yes"
+    if "Owner Draw" in cats or "Owner Contribution" in cats:
+        profile["personal_expenses_mixed"] = "yes"
+    people: dict = {}
+    for g in gold:
+        name = p2p_counterparty(g["description"])
+        if not name:
+            continue
+        if g["gold_cat"] == "Subcontractors":
+            role = "subcontractor"
+        elif g["gold_at"] == "REVENUE":
+            role = "customer"
+        elif g["gold_cat"] in ("Owner Draw", "Owner Contribution"):
+            role = "owner"
+        else:
+            continue
+        people[name] = {"name": name.title(), "role": role}
+    if people:
+        profile["people"] = people
+    return profile
+
+
+# --------------------------------------------------------------------------- #
 # Motor real (mismo orden que ingestion): regla → banda → IA → consistencia
 # --------------------------------------------------------------------------- #
 def run_engine(session: Session, gold: list[dict], sector: str, *,
-               sector_only: bool, use_ai: bool) -> list[dict]:
+               sector_only: bool, use_ai: bool, profile: dict | None = None) -> list[dict]:
     """Corre el motor sobre el set de oro y devuelve la predicción por fila.
-    `sector_only`: usar SOLO reglas de sector (cerebro de una empresa nueva, sin reglas propias)."""
+    `sector_only`: usar SOLO reglas de sector (cerebro de una empresa nueva, sin reglas propias).
+    `profile`: perfil de la entrevista — sus hechos viajan al prompt igual que en producción."""
     # parsed con la MISMA forma que ingestion (description en el índice 1) para reusar el pase de consistencia.
     parsed = [(None, g["description"], g["signed"], None, None) for g in gold]
 
@@ -108,10 +145,12 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
         ai_indices.append(idx)
 
     ai_cats: dict[int, object] = {}
+    profile_facts = format_profile_facts(profile)  # "" sin perfil → prompt idéntico al de la base
     if use_ai and ai_indices:
         def _one(idx: int):
             try:
-                return idx, categorize_transaction(gold[idx]["description"], float(gold[idx]["signed"]), sector)
+                return idx, categorize_transaction(
+                    gold[idx]["description"], float(gold[idx]["signed"]), sector, profile_facts)
             except Exception:
                 return idx, None
         with ThreadPoolExecutor(max_workers=AI_CONCURRENCY) as pool:
@@ -382,6 +421,9 @@ def main():
                     help="incluir reglas COMPANY (por defecto: solo SECTOR = cerebro base)")
     ap.add_argument("--baseline", action="store_true", help="guardar esta corrida como línea base")
     ap.add_argument("--compare", default=None, help="json de una corrida previa para comparar")
+    ap.add_argument("--interview", action="store_true",
+                    help="simular la ENTREVISTA (FASE 9): hechos del dueño derivados de sus "
+                         "etiquetas del oro → viajan al prompt como en producción")
     args = ap.parse_args()
 
     gold = load_gold(args.gold)
@@ -389,10 +431,16 @@ def main():
         raise SystemExit(f"No hay filas etiquetadas en {args.gold}")
     print(f"Set de oro: {len(gold)} transacciones etiquetadas.")
 
+    profile = interview_profile_from_gold(gold) if args.interview else None
+    if profile:
+        n_people = len(profile.get("people", {}))
+        print(f"Entrevista simulada: {list(profile.keys())} · {n_people} personas con rol confirmado")
+        print(format_profile_facts(profile))
+
     with Session(engine) as session:
         preds, stats = run_engine(
             session, gold, args.sector,
-            sector_only=not args.with_company_rules, use_ai=not args.no_ai,
+            sector_only=not args.with_company_rules, use_ai=not args.no_ai, profile=profile,
         )
     sc = scorecard(gold, preds, stats)
 
@@ -405,7 +453,7 @@ def main():
     # Guardar artefactos (gitignored).
     os.makedirs(RUNS_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    mode = "noai" if args.no_ai else "full"
+    mode = ("noai" if args.no_ai else "full") + ("_interview" if args.interview else "")
     score_path = os.path.join(RUNS_DIR, f"{ts}_{mode}_scorecard.json")
     with open(score_path, "w") as f:
         json.dump(sc, f, indent=2, ensure_ascii=False, default=str)

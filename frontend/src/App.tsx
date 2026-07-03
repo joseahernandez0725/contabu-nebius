@@ -6,6 +6,7 @@ import Transactions from "./components/Transactions";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
+import Interview from "./components/Interview";
 import Rules from "./components/Rules";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
@@ -14,7 +15,7 @@ import Login from "./components/Login";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import CompanySwitcher from "./components/CompanySwitcher";
 import { auth } from "./firebase";
-import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, confirmCheckout } from "./api";
+import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, getAudit, confirmCheckout } from "./api";
 import type { Company, Transaction } from "./types";
 
 type View = "dashboard" | "transactions" | "review" | "upload" | "pnl" | "rules" | "settings";
@@ -66,6 +67,7 @@ function App() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [authError, setAuthError] = useState(false);
   const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
+  const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
@@ -73,6 +75,8 @@ function App() {
 
   const reloadReview = useCallback(() => {
     getReviewTransactions().then(setReviewTxs).catch(() => setReviewTxs([]));
+    // El AUDITOR corre solo (determinista, gratis) → badge ámbar sin que el dueño lo pida (FASE 9).
+    getAudit().then((f) => setAuditCount(f.length)).catch(() => setAuditCount(0));
   }, []);
 
   // Observa el login de Firebase. Al cerrar sesión, limpia el estado de la empresa.
@@ -237,7 +241,12 @@ function App() {
             )}
             {view === "review" && (
               <div className="space-y-4">
-                <Audit onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }} />
+                {/* ENTREVISTA ronda 2 (FASE 9): preguntas del agente ancladas en los datos. */}
+                <Interview onApplied={reloadReview} />
+                <Audit
+                  onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
+                  onCount={setAuditCount}
+                />
                 <Review items={reviewTxs} reload={reloadReview} />
               </div>
             )}
@@ -258,6 +267,7 @@ function App() {
           {views.map((id) => {
             const active = view === id;
             const count = id === "review" ? reviewTxs.length : 0;
+            const audits = id === "review" ? auditCount : 0; // hallazgos del auditor (ámbar)
             return (
               <button
                 key={id}
@@ -271,6 +281,12 @@ function App() {
                   {count > 0 && (
                     <span className="absolute -top-1.5 -end-2 bg-rose-500 text-white text-[9px] leading-none rounded-full px-1 py-0.5 min-w-4 text-center">
                       {count}
+                    </span>
+                  )}
+                  {/* Badge ÁMBAR del AUDITOR: hallazgos del agente (aparte de las revisiones rojas). */}
+                  {audits > 0 && (
+                    <span className="absolute -top-1.5 -start-2 bg-amber-500 text-white text-[9px] leading-none rounded-full px-1 py-0.5 min-w-4 text-center">
+                      {audits}
                     </span>
                   )}
                 </div>

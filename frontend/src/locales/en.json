@@ -144,7 +144,8 @@
       "saving": "Saving…"
     },
     "progress": "Categorizing {{done}} / {{total}}…",
-    "quotaBlocked": "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them."
+    "quotaBlocked": "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them.",
+    "audit": "The auditor checked your books and found {{count}} things to look at — see the Review tab."
   },
   "receipt": {
     "title": "Snap a receipt",
@@ -167,6 +168,54 @@
     "ai": "AI · {{pct}}% confidence",
     "manual": "Set by you",
     "none": "Not categorized yet"
+  },
+  "interview": {
+    "title": "A few quick questions",
+    "subtitle": "Your bookkeeper would ask the same — your answers make the rules smarter from day one.",
+    "skip": "Skip this question",
+    "skipAll": "Skip for now",
+    "next": "Next",
+    "saving": "Saving…",
+    "q": {
+      "uses_subcontractors": "Do you use subcontractors?",
+      "client_payment_methods": "How do your clients pay you?",
+      "payroll": "Do you have employees on payroll?",
+      "work_vehicles": "Do you use vehicles for work?",
+      "personal_expenses_mixed": "Does this bank account also have personal expenses?"
+    },
+    "opt": {
+      "yes": "Yes",
+      "no": "No",
+      "sometimes": "Sometimes",
+      "checks": "Checks",
+      "zelle": "Zelle",
+      "cash": "Cash",
+      "card": "Card",
+      "bank_transfer": "Bank transfer",
+      "payroll_none": "No employees",
+      "payroll_w2": "W-2 employees",
+      "payroll_1099": "1099 contractors only",
+      "payroll_both": "Both"
+    },
+    "r2Title": "Your agent has a few questions",
+    "r2Subtitle": "Recurring person-to-person payments it refuses to guess — answer once and it fixes them all.",
+    "r2Question": "I see {{count}} person-to-person payments with “{{name}}” — who is this?",
+    "r2Roles": {
+      "subcontractor": "My subcontractor",
+      "customer": "A customer",
+      "owner": "Me (the owner)",
+      "skip": "Skip"
+    },
+    "r2Applied": "{{count}} transactions updated"
+  },
+  "onboarding": {
+    "title": "Set up your business",
+    "subtitle": "Your sector tailors the categories and rules to your trade.",
+    "nameLabel": "Business name",
+    "namePlaceholder": "e.g. Garcia Construction LLC",
+    "sectorLabel": "What's your business sector?",
+    "continue": "Continue",
+    "saving": "Setting up…"
   },
   "settings": {
     "title": "Settings",
@@ -194,16 +243,19 @@
     "type": {
       "inconsistent_merchant": "Same merchant, different categories",
       "sign_mismatch": "Direction doesn't match the category",
-      "uncategorized": "Not categorized yet"
+      "uncategorized": "Not categorized yet",
+      "rule_deviation": "Out of sync with your rule"
     },
     "hint": {
       "inconsistent_merchant": "These transactions look like the same merchant but were categorized differently.",
       "sign_mismatch": "Money came in but it's marked as an expense (or vice-versa) — likely a refund or a mistake.",
-      "uncategorized": "This transaction has no category."
+      "uncategorized": "This transaction has no category.",
+      "rule_deviation": "A rule of yours covered this transaction, but its category no longer matches the rule (the rule probably changed)."
     },
     "in": "in",
     "out": "out",
-    "goToTx": "Open this transaction"
+    "goToTx": "Open this transaction",
+    "fixRule": "Fix → back to the rule ({{s}})"
   },
   "billing": {
     "title": "Plan",
