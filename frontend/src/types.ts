@@ -24,7 +24,10 @@ export interface Transaction {
   needs_review: boolean;
   review_question: string | null;
   ai_categorized: boolean;
-  source: "rule" | "ai" | "manual" | null; // quién categorizó
+  // Quién categorizó (procedencia). Filas anteriores a FASE 9: banda/transferencia
+  // quedaron guardadas como "rule" (eran indistinguibles).
+  source: "rule" | "band" | "transfer" | "ai" | "manual" | null;
+  matched_rule_id: number | null; // QUÉ regla decidió (referencia suave; null si no fue una regla)
 }
 
 export interface Company {

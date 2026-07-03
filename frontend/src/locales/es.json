@@ -132,6 +132,12 @@
       "learn": "Recordaremos este comercio la próxima vez."
     },
     "ruleApplied": "Regla creada · {{n}} transacciones más actualizadas",
+    "ruleUpdated": "Regla actualizada · {{n}} movimientos más alineados",
+    "quick": {
+      "covered": "Este comercio lo cubre una regla tuya: “{{keyword}}”. ¿Qué quieres cambiar?",
+      "changeRule": "Cambiar la regla (afecta {{n}} movimientos)",
+      "onlyThis": "Solo esta transacción"
+    },
     "addCategory": "Agregar una categoría"
   },
   "upload": {
@@ -167,6 +173,17 @@
     "duplicate": "Ya habías agregado este recibo.",
     "quotaBlocked": "Alcanzaste tu cupo de IA. Mejora tu plan para escanear recibos.",
     "review": "Revisarlo"
+  },
+  "prov": {
+    "label": "Quién decidió",
+    "rule": "Tu regla: “{{keyword}}” → {{category}}",
+    "ruleDeleted": "Una regla tuya (ya eliminada)",
+    "engine": "Motor determinista de ContaBu (regla/banda de monto)",
+    "band": "Banda de monto (comercio + umbral)",
+    "transfer": "Transferencia entre tus cuentas detectada",
+    "ai": "IA · {{pct}}% de confianza",
+    "manual": "La pusiste tú",
+    "none": "Aún sin categorizar"
   },
   "settings": {
     "title": "Ajustes",
@@ -335,6 +352,9 @@
     "keyword": "Palabra clave",
     "category": "Categoría",
     "merges": "une",
+    "covered": "cubre {{n}}",
+    "missed": "se le escapan {{n}}",
+    "conflicts": "{{n}} conflictos — edita el keyword",
     "apply": "Aprobar {{n}} reglas",
     "applying": "Aplicando…",
     "cancel": "Cancelar",

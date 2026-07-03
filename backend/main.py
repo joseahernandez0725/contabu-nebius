@@ -33,16 +33,24 @@ from models import (
 from reports import income_statement
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
-    is_check, load_rules, match_rule, upsert_company_rule,
+    is_check, load_rules, match_rule, upsert_company_rule, validate_keyword,
 )
 
 
 class TransactionUpdate(BaseModel):
-    """Campos que se pueden actualizar al confirmar/corregir una revisión."""
+    """Campos que se pueden actualizar al confirmar/corregir una revisión.
+
+    `rule_action` (FASE 9 Paso 2) — qué hacer con el REGLAMENTO al corregir la categoría:
+    - None (default): comportamiento clásico — aprende/actualiza una regla por frase específica.
+    - "only_this": excepción puntual — NO toca ninguna regla (una excepción no reescribe el reglamento).
+    - "update_rule": edita LA regla que cubría esta transacción (`matched_rule_id`) y re-alinea
+      todas las que matchea (corregir el reglamento, no la transacción).
+    """
     account_type: Optional[AccountType] = None
     category: Optional[str] = None
     subcategory: Optional[str] = None
     needs_review: Optional[bool] = None
+    rule_action: Optional[str] = None  # None | "only_this" | "update_rule"
 
 
 class ClarifyPayload(BaseModel):
@@ -287,6 +295,7 @@ async def upload_receipt(
         tx.confidence = 1.0
         tx.needs_review = False
         tx.source = "rule"
+        tx.matched_rule_id = rule.id  # procedencia: qué regla decidió
     else:
         tx.category = extracted.category
         tx.needs_review = extracted.needs_review
@@ -763,10 +772,37 @@ def generate_rule_proposals(
     } for t in txs]
     candidates = find_rule_candidates(rules, items)
     proposals = propose_rules(candidates, [r.match_text for r in rules], sector)
+    # EL GUARDIÁN (FASE 9 Paso 3): validar cada keyword propuesto contra los datos reales ANTES de
+    # mostrarlo — cobertura (¿matchea todo su comercio?) y colisión (¿caza otros comercios?). El
+    # dueño aprueba con evidencia ("cubre N · M conflictos"), no con fe. Determinista, sin IA.
     return [{
         "keyword": p.keyword, "account_type": p.account_type.value, "category": p.category,
         "covers": p.covers, "reasoning": p.reasoning,
+        **validate_keyword(p.keyword, p.covers, items),
     } for p in proposals if p.kind == "rule"]
+
+
+class RuleProposalValidate(BaseModel):
+    """Un keyword (posiblemente EDITADO por el dueño) a re-validar contra los datos."""
+    keyword: str
+    covers: list[str] = []  # firmas de comercio que la propuesta cubre (para medir colisión)
+
+
+@app.post("/api/companies/{company_id}/rule-proposals/validate")
+def validate_rule_proposal(
+    company_id: int,
+    payload: RuleProposalValidate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Re-valida un keyword contra las transacciones reales (cobertura/colisión) — se usa cuando el
+    dueño EDITA el keyword de una propuesta antes de aprobarla. Determinista, sin IA."""
+    owned_company(company_id, user, session)
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+    ).all()
+    items = [{"description": t.description} for t in txs]
+    return validate_keyword(payload.keyword, payload.covers, items)
 
 
 class RuleProposalApply(BaseModel):
@@ -1052,17 +1088,38 @@ def update_transaction(
     """Actualiza una transacción (confirmar o corregir una revisión)."""
     tx = owned_transaction(transaction_id, user, session, write=True)
     data = payload.model_dump(exclude_unset=True)
+    rule_action = data.pop("rule_action", None)  # intención sobre el reglamento (no es campo de tx)
     if data.get("subcategory"):
         data["subcategory"] = data["subcategory"].upper()  # subcategorías siempre en MAYÚSCULA
     for field, value in data.items():
         setattr(tx, field, value)
-    # Si el usuario tocó la categorización: fuente = manual y se guarda como REGLA (memoria),
-    # igual que el flujo de "explicar". Así la próxima vez ese comercio se categoriza solo.
-    applied = 0  # cuántas OTRAS transacciones alineó la regla nueva (para feedback "en vivo")
+    # Si el usuario tocó la categorización, la intención sobre el REGLAMENTO decide (FASE 9 Paso 2):
+    # "only_this" = excepción (no toca reglas) · "update_rule" = edita la regla que la cubría ·
+    # default = aprende/actualiza regla por frase específica (comportamiento clásico).
+    applied = 0  # cuántas OTRAS transacciones alineó la regla (para feedback "en vivo")
+    rule_updated = False
     if any(k in data for k in ("account_type", "category", "subcategory")):
+        prev_rule_id = tx.matched_rule_id  # QUÉ regla la cubría (antes de limpiar la procedencia)
         tx.source = "manual"
+        tx.matched_rule_id = None  # la decidió el dueño, ya no una regla (procedencia)
+        if rule_action == "only_this":
+            pass  # excepción puntual: una excepción no reescribe el reglamento
+        elif rule_action == "update_rule" and prev_rule_id is not None:
+            rule = session.get(CategoryRule, prev_rule_id)
+            if (rule is not None and rule.company_id == tx.company_id
+                    and tx.account_type is not None and tx.category):
+                rule.account_type = tx.account_type
+                rule.category = tx.category
+                session.add(rule)
+                rule_updated = True
+                # Corregir el reglamento, no la transacción: la tx queda cubierta por SU regla
+                # actualizada (procedencia exacta, verde), y las demás se re-alinean.
+                tx.source = "rule"
+                tx.matched_rule_id = rule.id
+                tx.confidence = 1.0
+                applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
         # Un cheque no genera regla (cada cheque es distinto; ver rules.is_check).
-        if not is_check(tx.description):
+        elif not is_check(tx.description):
             company = session.get(Company, tx.company_id)
             rule = upsert_company_rule(
                 session, tx.company_id, company.sector if company else "general",
@@ -1076,7 +1133,7 @@ def update_transaction(
     session.commit()
     session.refresh(tx)
     # Devuelve la tx + cuántas OTRAS alineó la regla → el frontend lo muestra y re-pinta de verde.
-    return {"id": tx.id, "applied": applied}
+    return {"id": tx.id, "applied": applied, "rule_updated": rule_updated}
 
 
 @app.post("/api/transactions/{transaction_id}/clarify")
@@ -1107,6 +1164,7 @@ def clarify_transaction(
     tx.review_question = cat.review_question or None
     tx.ai_categorized = True
     tx.source = "ai"  # re-categorizada por la IA a partir de la explicación del dueño
+    tx.matched_rule_id = None  # ya no la decide una regla (procedencia)
     session.add(tx)
 
     # Memoria del cliente: crea/actualiza la regla de empresa (idempotente, frase específica).
@@ -1156,6 +1214,7 @@ def clarify_group(
         tx.review_question = cat.review_question or None
         tx.ai_categorized = True
         tx.source = "ai"
+        tx.matched_rule_id = None  # ya no la decide una regla (procedencia)
         session.add(tx)
 
     # Una sola regla de empresa para la contraparte (memoria). Cheques no generan regla.

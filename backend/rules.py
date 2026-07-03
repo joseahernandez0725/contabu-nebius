@@ -275,6 +275,8 @@ def apply_rule_to_transactions(
     comercio se alinean de una vez (consistencia retroactiva)."""
     if rule is None or rule.account_type is None:
         return 0
+    if rule.id is None:
+        session.flush()  # la regla recién creada necesita su id para la procedencia
     txs = session.exec(
         select(Transaction).where(Transaction.company_id == company_id)
     ).all()
@@ -291,6 +293,7 @@ def apply_rule_to_transactions(
         t.account_type = rule.account_type
         t.category = rule.category
         t.source = "rule"
+        t.matched_rule_id = rule.id  # procedencia: esta regla la alineó
         t.needs_review = False
         t.review_question = None
         session.add(t)
@@ -471,6 +474,51 @@ def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
 
     # El comercio no aparece en la descripción → tomar una frase real de la descripción.
     return _phrase_in_description(dwords)
+
+
+def validate_keyword(keyword: str, covers: list[str], items: list[dict]) -> dict:
+    """EL GUARDIÁN del proponedor (FASE 9 Paso 3): valida un keyword PROPUESTO contra las
+    transacciones reales de la empresa, ANTES de que el dueño lo apruebe. Responde las dos preguntas
+    que evitan los dos errores opuestos:
+
+    - **Cobertura** — ¿matchea TODAS las transacciones del comercio que dice cubrir?
+      (`missed` > 0 → sobre-específico: nace medio muerto, se le escapan movimientos)
+    - **Colisión** — ¿matchea transacciones de OTROS comercios?
+      (`conflicts` > 0 → sub-específico: caza falsos; NO se debe aprobar sin editarlo)
+
+    `covers` = firmas de comercio (`merchant_signature`) que la propuesta dice cubrir; la pertenencia
+    de cada transacción se decide por su firma. `items` = dicts con `description`. Sin `covers`
+    (p. ej. validar un keyword del import), solo `matches` es significativo (0 = keyword muerto).
+
+    Determinista y barato (mismo match por palabra completa + `*` de `match_rule`), sin IA.
+    Devuelve {matches, covered, missed, conflicts, conflict_examples}.
+    """
+    cov = {c for c in (covers or []) if c}
+    matches = covered = missed = 0
+    conflict_examples: list[str] = []
+    for it in items:
+        desc = it.get("description") or ""
+        hit = _matches(keyword or "", f" {_phrase(desc)} ")
+        if hit:
+            matches += 1
+        if not cov:
+            continue  # sin firmas de pertenencia: solo se puede medir el total de matches
+        own = merchant_signature(desc) in cov
+        if hit and own:
+            covered += 1
+        elif hit and not own:
+            if len(conflict_examples) < 3:
+                conflict_examples.append(desc)
+        elif not hit and own:
+            missed += 1
+    conflicts = matches - covered if cov else 0
+    return {
+        "matches": matches,
+        "covered": covered,
+        "missed": missed,
+        "conflicts": conflicts,
+        "conflict_examples": conflict_examples,
+    }
 
 
 # Sinónimos de sección del P&L → valor del enum (para importar reglas con vocabulario libre del usuario).

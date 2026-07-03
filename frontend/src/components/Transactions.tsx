@@ -1,7 +1,44 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getTransactions, getCategories, updateTransaction, money, type ChartOfAccounts } from "../api";
+import {
+  getTransactions, getCategories, getRules, updateTransaction, money,
+  type ChartOfAccounts, type Rule,
+} from "../api";
+import { FAMILY_STYLE, sectionFamily } from "../accounting";
 import type { Transaction } from "../types";
+
+// Procedencia: quién decidió la categoría de esta transacción (regla/banda/transferencia/IA/manual).
+// La caja de cristal del reglamento: el dueño siempre puede ver POR QUÉ algo quedó como quedó.
+function provenanceText(
+  tx: Transaction,
+  rulesById: Record<number, Rule>,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  switch (tx.source) {
+    case "manual":
+      return t("prov.manual");
+    case "ai":
+      return tx.confidence != null
+        ? t("prov.ai", { pct: Math.round(tx.confidence * 100) })
+        : t("prov.ai", { pct: "—" });
+    case "band":
+      return t("prov.band");
+    case "transfer":
+      return t("prov.transfer");
+    case "rule": {
+      if (tx.matched_rule_id != null) {
+        const r = rulesById[tx.matched_rule_id];
+        return r
+          ? t("prov.rule", { keyword: r.match_text, category: r.category })
+          : t("prov.ruleDeleted");
+      }
+      // Filas anteriores a FASE 9: regla/banda/transferencia quedaron como "rule" sin id.
+      return t("prov.engine");
+    }
+    default:
+      return t("prov.none");
+  }
+}
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
@@ -24,10 +61,12 @@ export default function Transactions({
 }) {
   const { t } = useTranslation();
   const [txs, setTxs] = useState<Transaction[] | null>(null);
+  const [rules, setRules] = useState<Rule[]>([]); // para resolver matched_rule_id → texto de la regla
   const [chart, setChart] = useState<ChartOfAccounts>({});
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState<Transaction | null>(null);
+  const [quickEdit, setQuickEdit] = useState<Transaction | null>(null); // menú en línea (tocar la categoría)
   const [search, setSearch] = useState("");
   const [account, setAccount] = useState<string>(""); // "" = todas las cuentas
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -39,7 +78,14 @@ export default function Transactions({
   useEffect(() => {
     load();
     getCategories().then(setChart).catch(() => {});
+    getRules().then(setRules).catch(() => {}); // solo para la procedencia; si falla, degrada bien
   }, []);
+
+  const rulesById: Record<number, Rule> = useMemo(() => {
+    const m: Record<number, Rule> = {};
+    for (const r of rules) m[r.id] = r;
+    return m;
+  }, [rules]);
 
   // Si el auditor pidió abrir una transacción concreta → abrir su modal de edición al cargar.
   useEffect(() => {
@@ -183,14 +229,32 @@ export default function Transactions({
                   <td className="px-3 py-2.5 text-slate-500 max-w-[12rem] lg:max-w-[22rem] truncate" title={tx.description}>
                     {tx.description}
                   </td>
-                  <td className="pl-2 pr-1 py-2.5 whitespace-nowrap">
-                    <span className={tx.source === "manual" ? "text-violet-700 font-medium" : "text-slate-800"}>
+                  {/* Tocar la CATEGORÍA abre el menú en línea (corregir en 2 toques); tocar el
+                      resto de la fila abre el detalle completo (procedencia, subcategoría). */}
+                  <td
+                    className="pl-2 pr-1 py-2.5 whitespace-nowrap"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setQuickEdit(tx);
+                    }}
+                  >
+                    <span
+                      className={`decoration-dotted underline-offset-2 hover:underline ${
+                        tx.source === "manual" ? "text-violet-700 font-medium" : "text-slate-800"
+                      }`}
+                    >
                       {tx.category ?? "—"}
                     </span>
                     {tx.source === "rule" ? (
                       // Vino de la TABLA de reglas (no la IA): se marca "rule", sin porcentaje.
                       <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-green/80 bg-brand-green/10 rounded px-1 py-0.5">
                         rule
+                      </span>
+                    ) : tx.source === "band" || tx.source === "transfer" ? (
+                      // Capa determinista (banda de monto / transferencia detectada): misma familia
+                      // verde que las reglas; el detalle exacto se ve en la procedencia del modal.
+                      <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-green/80 bg-brand-green/10 rounded px-1 py-0.5">
+                        auto
                       </span>
                     ) : tx.source === "manual" ? (
                       // Puesta A MANO por el dueño → color distinto (violeta) para distinguirla.
@@ -223,9 +287,30 @@ export default function Transactions({
         </table>
       </div>
 
+      {quickEdit && (
+        <QuickCategoryMenu
+          tx={quickEdit}
+          chart={chart}
+          catToType={catToType}
+          rule={quickEdit.matched_rule_id != null ? rulesById[quickEdit.matched_rule_id] ?? null : null}
+          onClose={() => setQuickEdit(null)}
+          onSaved={(applied, ruleUpdated) => {
+            setQuickEdit(null);
+            if (ruleUpdated)
+              setNote(t("tx.ruleUpdated", { defaultValue: "Rule updated · {{n}} more transactions aligned", n: applied }));
+            else if (applied > 0)
+              setNote(t("tx.ruleApplied", { defaultValue: "Rule created · {{n}} more transactions updated", n: applied }));
+            else setNote(null);
+            load();
+            getRules().then(setRules).catch(() => {}); // los conteos de las reglas cambiaron
+          }}
+        />
+      )}
+
       {editing && (
         <EditModal
           tx={editing}
+          provenance={provenanceText(editing, rulesById, t)}
           chart={chart}
           catToType={catToType}
           onClose={() => setEditing(null)}
@@ -242,6 +327,137 @@ export default function Transactions({
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Menú EN LÍNEA para corregir la categoría en ≤2 toques (FASE 9 Paso 2): tocar la categoría en la
+// fila → elegir de la lista agrupada por sección (punto de color por familia). Si la transacción
+// venía de una REGLA, pregunta la intención: "solo esta" (excepción, no toca el reglamento) vs
+// "cambiar la regla" (corrige el reglamento y re-alinea todo lo que matchea).
+// Bottom sheet en móvil / panel centrado en escritorio (un dropdown dentro de la tabla se recorta
+// por el overflow-x del contenedor).
+function QuickCategoryMenu({
+  tx,
+  chart,
+  catToType,
+  rule,
+  onClose,
+  onSaved,
+}: {
+  tx: Transaction;
+  chart: ChartOfAccounts;
+  catToType: Record<string, string>;
+  rule: Rule | null; // la regla que cubría esta tx (null si no fue regla o ya no existe)
+  onClose: () => void;
+  onSaved: (applied: number, ruleUpdated: boolean) => void;
+}) {
+  const { t, i18n } = useTranslation();
+  const [picked, setPicked] = useState<string | null>(null); // categoría elegida (paso de intención)
+  const [saving, setSaving] = useState(false);
+  const showTr = (i18n.language || "en").split("-")[0] !== "en";
+  const tr = (c: string) => (showTr ? t(`cat.${c}`, { defaultValue: "" }) : "");
+
+  async function save(category: string, ruleAction?: "only_this" | "update_rule") {
+    setSaving(true);
+    try {
+      const res = await updateTransaction(tx.id, {
+        category,
+        account_type: catToType[category],
+        ...(ruleAction ? { rule_action: ruleAction } : {}),
+      });
+      onSaved(res.applied, res.rule_updated);
+    } catch {
+      setSaving(false);
+    }
+  }
+
+  function pick(category: string) {
+    if (category === tx.category) return onClose(); // sin cambio
+    // Cubierta por una regla que sigue existiendo → preguntar la intención (excepción vs reglamento).
+    if (rule && tx.source === "rule") setPicked(category);
+    else void save(category); // resto: guardar directo (aprende regla, comportamiento clásico)
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-20 bg-black/40 flex items-end sm:items-center justify-center sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b border-slate-100">
+          <p className="font-semibold text-slate-900 text-sm truncate" title={tx.description}>
+            {tx.description}
+          </p>
+          <p className="text-xs text-slate-400">
+            {money(Number(tx.amount))} · {tx.category ?? "—"}
+          </p>
+        </div>
+
+        {picked === null ? (
+          <div className="max-h-[60vh] overflow-auto">
+            {SECTIONS.filter((s) => chart[s]?.length).map((s) => (
+              <div key={s}>
+                <div className="px-4 py-1 text-[10px] uppercase tracking-wide text-slate-400 bg-slate-50 sticky top-0 flex items-center gap-1.5">
+                  <span className={`size-1.5 rounded-full ${FAMILY_STYLE[sectionFamily(s)].dot}`} />
+                  {t(`sections.${s}`)}
+                </div>
+                {chart[s].map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    disabled={saving}
+                    onClick={() => pick(c)}
+                    className={`w-full text-start px-4 py-2 flex items-center justify-between gap-2 hover:bg-slate-50 disabled:opacity-50 ${
+                      c === tx.category ? "bg-brand-green/5 font-medium" : ""
+                    }`}
+                  >
+                    <span className="text-slate-800">{c}</span>
+                    {tr(c) && <span className="text-slate-400/60 italic text-sm truncate">{tr(c)}</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-4 space-y-3">
+            <p className="text-sm text-slate-700">
+              {tx.category ?? "—"} → <span className="font-semibold">{picked}</span>
+            </p>
+            <p className="text-xs text-slate-500">
+              {t("tx.quick.covered", {
+                defaultValue: "A rule of yours covers this merchant: “{{keyword}}”. What do you want to change?",
+                keyword: rule?.match_text ?? "",
+              })}
+            </p>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save(picked, "update_rule")}
+              className="w-full py-2.5 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
+              style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+            >
+              {t("tx.quick.changeRule", {
+                defaultValue: "Change the rule (affects {{n}} transactions)",
+                n: rule?.matches ?? 0,
+              })}
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void save(picked, "only_this")}
+              className="w-full py-2.5 rounded-xl border border-slate-200 font-medium text-slate-600 disabled:opacity-60"
+            >
+              {t("tx.quick.onlyThis", { defaultValue: "Only this transaction" })}
+            </button>
+          </div>
+        )}
+
+        {saving && <div className="px-4 pb-3 text-xs text-slate-400">{t("tx.edit.saving")}</div>}
+      </div>
     </div>
   );
 }
@@ -320,6 +536,7 @@ function CategorySelect({
 
 function EditModal({
   tx,
+  provenance,
   chart,
   catToType,
   onClose,
@@ -327,6 +544,7 @@ function EditModal({
   onAddCategory,
 }: {
   tx: Transaction;
+  provenance: string; // texto de "quién decidió" (ya resuelto, en el idioma del usuario)
   chart: ChartOfAccounts;
   catToType: Record<string, string>;
   onClose: () => void;
@@ -365,6 +583,13 @@ function EditModal({
           <h3 className="font-bold text-slate-900">{t("tx.edit.title")}</h3>
           <p className="text-sm text-slate-500 truncate" title={tx.description}>
             {tx.description} · {money(Number(tx.amount))}
+          </p>
+          {/* Procedencia: la caja de cristal — quién decidió esta categoría (regla/banda/IA/manual). */}
+          <p className="text-xs text-slate-400 mt-1">
+            <span className="uppercase tracking-wide text-[10px] text-slate-400/80 me-1">
+              {t("prov.label")}:
+            </span>
+            {provenance}
           </p>
         </div>
 

@@ -461,6 +461,7 @@ def ingest_csv(
             tx.review_question = None
             tx.ai_categorized = False  # vino de una regla, no de la IA
             tx.source = "rule"
+            tx.matched_rule_id = rule.id  # procedencia exacta: QUÉ regla decidió (FASE 9)
             source = "rule"
             by_rule += 1
         elif idx in band_hits:
@@ -468,8 +469,8 @@ def ingest_csv(
             tx.account_type = at
             tx.category = cat
             tx.ai_categorized = False  # banda de monto determinista, no IA
-            tx.source = "rule"
-            source = "rule"
+            tx.source = "band"
+            source = "band"
             if near:  # zona gris alrededor del umbral → la banda no está segura, que el dueño confirme
                 tx.confidence = 0.5
                 tx.needs_review = True
@@ -487,8 +488,8 @@ def ingest_csv(
             tx.needs_review = False
             tx.review_question = None
             tx.ai_categorized = False  # determinista, no IA
-            tx.source = "rule"
-            source = "rule"
+            tx.source = "transfer"
+            source = "transfer"
             by_transfer += 1
         elif idx in ai_cats:
             cat = ai_cats[idx]

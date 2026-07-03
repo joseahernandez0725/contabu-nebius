@@ -115,6 +115,12 @@
       "learn": "We'll remember this merchant next time."
     },
     "ruleApplied": "Rule created · {{n}} more transactions updated",
+    "ruleUpdated": "Rule updated · {{n}} more transactions aligned",
+    "quick": {
+      "covered": "A rule of yours covers this merchant: “{{keyword}}”. What do you want to change?",
+      "changeRule": "Change the rule (affects {{n}} transactions)",
+      "onlyThis": "Only this transaction"
+    },
     "addCategory": "Add a category"
   },
   "upload": {
@@ -150,6 +156,17 @@
     "duplicate": "You already added this receipt.",
     "quotaBlocked": "You've reached your AI quota. Upgrade your plan to scan receipts.",
     "review": "Review it"
+  },
+  "prov": {
+    "label": "Who decided",
+    "rule": "Your rule: “{{keyword}}” → {{category}}",
+    "ruleDeleted": "One of your rules (since deleted)",
+    "engine": "ContaBu's deterministic engine (rule/amount band)",
+    "band": "Amount band (merchant + amount threshold)",
+    "transfer": "Detected transfer between your accounts",
+    "ai": "AI · {{pct}}% confidence",
+    "manual": "Set by you",
+    "none": "Not categorized yet"
   },
   "settings": {
     "title": "Settings",
@@ -213,6 +230,9 @@
     "keyword": "Keyword",
     "category": "Category",
     "merges": "merges",
+    "covered": "covers {{n}}",
+    "missed": "misses {{n}}",
+    "conflicts": "{{n}} conflicts — edit the keyword",
     "apply": "Approve {{n}} rules",
     "applying": "Applying…",
     "cancel": "Cancel",

@@ -291,7 +291,16 @@ export async function getAudit(): Promise<AuditFinding[]> {
 }
 
 // --- Proponedor proactivo: la IA sugiere reglas para que el dueño apruebe ---
-export interface RuleProposal {
+// Validación de un keyword contra los datos reales (el "guardián", FASE 9 Paso 3).
+export interface KeywordValidation {
+  matches: number;            // cuántas transacciones matchea en total
+  covered: number;            // de su comercio: cuántas cubre
+  missed: number;             // de su comercio: cuántas se le ESCAPAN (sobre-específico)
+  conflicts: number;          // de OTROS comercios: cuántas caza en falso (sub-específico)
+  conflict_examples: string[];
+}
+
+export interface RuleProposal extends KeywordValidation {
   keyword: string;
   account_type: string;
   category: string;
@@ -299,13 +308,28 @@ export interface RuleProposal {
   reasoning: string;
 }
 
-// Dispara el agente proponedor (IA): devuelve reglas sugeridas. NO crea nada (solo propone).
+// Dispara el agente proponedor (IA): devuelve reglas sugeridas YA VALIDADAS contra los datos
+// (cobertura/colisión). NO crea nada (solo propone).
 export async function generateRuleProposals(): Promise<RuleProposal[]> {
   const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals`, {
     method: "POST",
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error("No se pudieron generar las propuestas");
+  return res.json();
+}
+
+// Re-valida un keyword EDITADO por el dueño contra los datos (determinista, sin IA).
+export async function validateRuleProposal(
+  keyword: string,
+  covers: string[],
+): Promise<KeywordValidation> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals/validate`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ keyword, covers }),
+  });
+  if (!res.ok) throw new Error("No se pudo validar el keyword");
   return res.json();
 }
 
@@ -418,15 +442,24 @@ export async function getReviewTransactions(): Promise<Transaction[]> {
 
 export async function updateTransaction(
   id: number,
-  payload: Partial<{ account_type: string; category: string; subcategory: string; needs_review: boolean }>,
-): Promise<{ id: number; applied: number }> {
+  payload: Partial<{
+    account_type: string;
+    category: string;
+    subcategory: string;
+    needs_review: boolean;
+    // Intención sobre el REGLAMENTO al corregir (FASE 9 Paso 2):
+    // "only_this" = excepción (no toca reglas) · "update_rule" = edita la regla que la cubría ·
+    // sin enviar = comportamiento clásico (aprende regla por frase específica).
+    rule_action: "only_this" | "update_rule";
+  }>,
+): Promise<{ id: number; applied: number; rule_updated: boolean }> {
   const res = await fetch(`${API}/api/transactions/${id}`, {
     method: "PATCH",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error("No se pudo actualizar la transacción");
-  return res.json(); // { id, applied } — applied = otras tx que alineó la regla nueva
+  return res.json(); // { id, applied, rule_updated } — applied = otras tx que alineó la regla
 }
 
 export async function clarifyTransaction(id: number, answer: string): Promise<Transaction> {

@@ -305,9 +305,18 @@ rules for the owner to approve.
 Rules of the game:
 - MERGE brand variants into ONE rule. "CHEVRONSAN", "CHEVRONBAY", "CHEVRONCONCORD" are all Chevron ->
   one rule. Drop store numbers and city/state from the keyword.
-- keyword: the SHORTEST text that identifies the merchant without being generic. For transfers/ACH
-  with junk in the middle, use `*` as a wildcard (e.g. "ONLINE TRANSFER*TO*XXXX2961"); keep the exact
-  masked digits.
+- keyword construction (how matching works: the keyword must appear as WHOLE words in the bank
+  description; `*` means "anything in between, in order"):
+  * Anchor on the STABLE words of the description and use `*` to skip the dynamic junk (ref numbers,
+    dates, IDs, store numbers). Prefer MORE stable anchor words joined with `*` over one short word:
+    "PAYCHEX TPS*TAXES" beats "PAYCHEX"; "ONLINE TRANSFER*TO*XXXX2961" beats "TRANSFER".
+  * The keyword MUST match EVERY example description of the candidates it covers — check them one by
+    one; if a word is not in all examples, drop it or wildcard it.
+  * Use the truncated form exactly as the bank prints it (POS cuts names: "HOBBYLO", not "HOBBYLOBBY").
+  * Keep processor prefixes when they identify the merchant ("SQ *JOES" -> "SQ*JOES"); masked accounts
+    need the EXACT digits as printed ("XXXX2961" — a wrong X-count makes the keyword dead).
+  * Never anchor only on numbers, dates or generic words (PAYMENT, ONLINE, DEBIT): too generic
+    keywords catch OTHER merchants (false matches destroy trust).
 - account_type: exactly one of REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
 - category: from the closed chart of accounts below; it MUST belong to the account_type. Use the
   suggested category unless it is clearly wrong.

@@ -136,7 +136,15 @@ class Transaction(SQLModel, table=True):
     needs_review: bool = Field(default=False)                  # la IA dudó → atención humana
     review_question: Optional[str] = Field(default=None)       # pregunta para el usuario (inglés)
     ai_categorized: bool = Field(default=False)
-    source: Optional[str] = Field(default=None)               # quién categorizó: "rule" | "ai" | "manual"
+    # Quién categorizó (procedencia): "rule" (regla de la tabla) | "band" (banda de monto) |
+    # "transfer" (transferencia detectada) | "ai" | "manual". Filas viejas: band/transfer
+    # quedaron como "rule" (eran indistinguibles antes de FASE 9).
+    source: Optional[str] = Field(default=None)
+    # QUÉ regla decidió esta transacción (procedencia exacta, FASE 9 Paso 1). Referencia SUAVE
+    # (sin FK a propósito): si la regla se edita/borra, el historial de "qué actuó en su momento"
+    # se conserva; el frontend muestra "regla eliminada" si ya no existe. Alimenta al auditor
+    # (señal de desvío exacta) y la higiene de reglas muertas.
+    matched_rule_id: Optional[int] = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=_utcnow)
 

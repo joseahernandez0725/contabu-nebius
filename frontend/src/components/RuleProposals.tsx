@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  generateRuleProposals, applyRuleProposals, importRules, getCategories,
+  generateRuleProposals, applyRuleProposals, importRules, getCategories, validateRuleProposal,
   type ChartOfAccounts,
 } from "../api";
 import { SECTION_LABEL, sectionFamily, FAMILY_STYLE } from "../accounting";
@@ -15,6 +15,12 @@ type Row = {
   covers: string[];       // comercios que mergea (proponedor); vacío en import
   approved: boolean;
   status?: string;        // import: ok | exists | duplicate | needs_section
+  // Validación contra los datos reales (el "guardián", FASE 9 Paso 3) — solo filas del proponedor.
+  covered?: number;       // de su comercio: cuántas transacciones cubre
+  missed?: number;        // de su comercio: cuántas se le escapan (sobre-específico)
+  conflicts?: number;     // de OTROS comercios: cuántas caza en falso (sub-específico → bloquea)
+  conflict_examples?: string[];
+  validating?: boolean;   // re-validando un keyword editado
 };
 
 // Estado de las filas importadas → color del badge.
@@ -80,8 +86,20 @@ export default function RuleProposals() {
     setRows((rs) => rs && rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   }
 
-  // Solo se aplican las aprobadas CON sección resuelta (las needs_section sin arreglar se omiten).
-  const applicable = rows?.filter((r) => r.approved && r.account_type) ?? [];
+  // Re-valida un keyword EDITADO contra los datos (cobertura/colisión) al salir del campo.
+  async function revalidate(i: number, row: Row) {
+    setRow(i, { validating: true });
+    try {
+      const v = await validateRuleProposal(row.keyword, row.covers);
+      setRow(i, { ...v, validating: false });
+    } catch {
+      setRow(i, { validating: false });
+    }
+  }
+
+  // Solo se aplican las aprobadas CON sección resuelta y SIN conflictos: un keyword que caza otros
+  // comercios no se puede aprobar sin editarlo (un falso match miscategoriza en silencio).
+  const applicable = rows?.filter((r) => r.approved && r.account_type && !(r.conflicts ?? 0)) ?? [];
 
   async function apply() {
     if (applicable.length === 0) return;
@@ -158,10 +176,56 @@ export default function RuleProposals() {
                         />
                       </td>
                       <td className="px-2 py-2.5 align-top">
-                        <div className="font-medium text-slate-800 uppercase flex items-center gap-2">
-                          <span className={`inline-block size-2 shrink-0 rounded-full ${style.dot}`} />
-                          {r.keyword}
-                        </div>
+                        {r.conflicts !== undefined ? (
+                          // Fila del PROPONEDOR: keyword EDITABLE (para resolver conflictos) que se
+                          // re-valida contra los datos al salir del campo.
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-block size-2 shrink-0 rounded-full ${style.dot}`} />
+                            <input
+                              value={r.keyword}
+                              onChange={(e) => setRow(i, { keyword: e.target.value })}
+                              onBlur={() => void revalidate(i, { ...r, keyword: r.keyword })}
+                              className={`w-full font-medium uppercase rounded-lg border px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green/40 ${
+                                (r.conflicts ?? 0) > 0 ? "border-rose-300 text-rose-700" : "border-slate-200 text-slate-800"
+                              }`}
+                            />
+                          </div>
+                        ) : (
+                          <div className="font-medium text-slate-800 uppercase flex items-center gap-2">
+                            <span className={`inline-block size-2 shrink-0 rounded-full ${style.dot}`} />
+                            {r.keyword}
+                          </div>
+                        )}
+                        {/* El GUARDIÁN: evidencia contra los datos reales — el dueño aprueba con
+                            números, no con fe ("cubre N · se le escapan M · K conflictos"). */}
+                        {r.conflicts !== undefined && (
+                          <div className="text-[11px] mt-1 flex flex-wrap items-center gap-1.5">
+                            {r.validating ? (
+                              <span className="text-slate-400">…</span>
+                            ) : (
+                              <>
+                                <span className={`rounded px-1 py-0.5 ${
+                                  (r.covered ?? 0) > 0 ? "text-brand-green/90 bg-brand-green/10" : "text-rose-700 bg-rose-100"
+                                }`}>
+                                  {t("proposals.covered", { defaultValue: "covers {{n}}", n: r.covered ?? 0 })}
+                                </span>
+                                {(r.missed ?? 0) > 0 && (
+                                  <span className="text-amber-700 bg-amber-100 rounded px-1 py-0.5">
+                                    {t("proposals.missed", { defaultValue: "misses {{n}}", n: r.missed })}
+                                  </span>
+                                )}
+                                {(r.conflicts ?? 0) > 0 && (
+                                  <span
+                                    className="text-rose-700 bg-rose-100 rounded px-1 py-0.5 cursor-help"
+                                    title={(r.conflict_examples ?? []).join("\n")}
+                                  >
+                                    {t("proposals.conflicts", { defaultValue: "{{n}} conflicts — edit the keyword", n: r.conflicts })}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        )}
                         {r.covers.length > 1 && (
                           <div className="text-[11px] text-slate-400 mt-0.5">
                             {t("proposals.merges", { defaultValue: "merges" })}: {r.covers.join(", ")}
