@@ -117,11 +117,14 @@ def apply_session(session: Session, session_id: str) -> dict:
 def handle_event(session: Session, payload: bytes, sig_header: str | None) -> dict:
     """Procesa un webhook de Stripe (verifica la firma) y refleja el cambio en la empresa:
     suscripción activa/al día → cupo; cancelada/impaga → sin cupo."""
+    import json
+
     if _WEBHOOK_SECRET:
-        event = stripe.Webhook.construct_event(payload, sig_header, _WEBHOOK_SECRET)
-    else:  # sin secreto configurado (dev): parsear sin verificar firma
-        import json
-        event = json.loads(payload)
+        # Solo VERIFICA la firma; se descarta el objeto tipado que devuelve (en stripe v15
+        # `data.object` es un Subscription/Session tipado, NO un dict — sin `.get()`).
+        stripe.Webhook.construct_event(payload, sig_header, _WEBHOOK_SECRET)
+    # Trabajar SIEMPRE sobre el JSON plano (dicts): mismo camino en dev y prod.
+    event = json.loads(payload)
 
     etype = event["type"]
     obj = event["data"]["object"]
