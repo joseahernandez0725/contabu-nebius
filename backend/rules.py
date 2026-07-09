@@ -336,6 +336,7 @@ def amount_band_category(
     gas_station_threshold: Optional[Decimal] = None,
     extra_gas: Optional[list[str]] = None,
     extra_super: Optional[list[str]] = None,
+    sector: Optional[str] = None,
 ) -> Optional[tuple[AccountType, str, bool]]:
     """Desambigua por MONTO en comercios mixtos (super/gasolinera). Determinista, antes de la IA.
 
@@ -347,6 +348,12 @@ def amount_band_category(
     --- MAPEO (centralizado aquí; ajustar cuando se defina el esquema final) ---
     Supermercado:  < umbral → comida (Meals, OpEx) · ≥ umbral → personal (Owner Draw, NON_PL)
     Gasolinera:    < umbral → maquinaria (Equipment Fuel, COGS) · ≥ umbral → vehículo (Vehicle Fuel, OpEx)
+
+    `sector` afina el lado GASOLINERA al plan de cuentas del sector (3-jul-2026):
+    - Si el sector tiene "Fuel" en COGS (trucking): TODO combustible → COGS/Fuel — para un
+      owner-operator el diésel ES el costo directo del flete, no hay split por monto.
+    - Si el sector NO tiene "Equipment Fuel" en COGS (beauty, retail, restaurante…): el lado bajo
+      no puede ser "maquinaria" → todo va a OpEx/Vehicle Fuel (sin inventar categorías fuera del plan).
     """
     # Cuota/membresía/renovación (ej. "COSTCO *ANNUAL RENEWAL"): no es compra de comida/combustible
     # ni retiro → la banda NO aplica; que la IA decida (evita el falso "Owner Draw @1.00").
@@ -367,6 +374,13 @@ def amount_band_category(
         threshold = gas_station_threshold or DEFAULT_GAS_STATION_THRESHOLD
         result = ((AccountType.COGS, "Equipment Fuel") if magnitude < threshold
                   else (AccountType.OPERATING_EXPENSE, "Vehicle Fuel"))
+        if sector:
+            from categories import categories_for  # import local: evita ciclo en el arranque
+            cogs = categories_for(sector).get("COGS", [])
+            if "Fuel" in cogs:  # trucking: el combustible es el costo directo — sin split,
+                return (AccountType.COGS, "Fuel", False)  # sin umbral → no hay zona gris
+            if "Equipment Fuel" not in cogs and result[1] == "Equipment Fuel":
+                result = (AccountType.OPERATING_EXPENSE, "Vehicle Fuel")
 
     near = abs(magnitude - threshold) <= threshold * GRAY_ZONE_RATIO
     return (result[0], result[1], near)

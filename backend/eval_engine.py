@@ -134,7 +134,7 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
         if rule is not None:
             rule_hits[idx] = rule
             continue
-        band = amount_band_category(g["description"], float(g["signed"]))  # umbrales default
+        band = amount_band_category(g["description"], float(g["signed"]), sector=sector)  # umbrales default
         if band is not None:
             band_hits[idx] = band
             continue

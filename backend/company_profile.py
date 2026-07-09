@@ -57,6 +57,12 @@ def sanitize_round1(payload: dict) -> dict:
                     out[key] = picked
         elif value in allowed:
             out[key] = value
+    # `trade`: texto LIBRE — "¿a qué se dedica tu negocio?" cuando el sector elegido es "other".
+    # Única excepción de idioma del perfil: el dueño escribe en SU idioma y va tal cual al prompt
+    # (Gemini es multilingüe; la Regla de Oro aplica a los datos contables, no a este contexto).
+    trade = payload.get("trade")
+    if isinstance(trade, str) and trade.strip():
+        out["trade"] = trade.strip()[:120]
     return out
 
 
@@ -150,6 +156,10 @@ def format_profile_facts(profile: Optional[dict]) -> str:
     if not profile:
         return ""
     lines: list[str] = []
+    trade = profile.get("trade")
+    if trade:
+        lines.append(f'- The owner describes the business as: "{trade}" '
+                     "(may be written in the owner's language).")
     v = profile.get("uses_subcontractors")
     if v:
         lines.append("- The owner USES subcontractors." if v == "yes"

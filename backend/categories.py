@@ -46,6 +46,50 @@ SECTOR_CATEGORIES: dict[str, dict[str, list[str]]] = {
                               "Repairs & Maintenance", "Marketing", "Front-of-House Wages",
                               "Kitchen Wages"],
     },
+    # --- Segunda ola (3-jul-2026): los oficios inmigrantes más comunes fuera de los 3 verticales.
+    # Planes alineados a IRS Schedule C + planes de cuentas estándar por industria (QuickBooks).
+    # Detalle contable en docs/REFERENCIA CONTABLE.md §8.
+    "landscaping": {
+        "REVENUE": ["Landscaping Revenue"],
+        "COGS": ["Plants & Materials", "Subcontractors", "Direct Labor", "Equipment Rental",
+                 "Small Tools & Equipment", "Equipment Fuel", "Dumping & Disposal"],
+        "OPERATING_EXPENSE": ["Insurance", "Marketing", "Admin Wages", "Vehicle Fuel",
+                              "Vehicle Expenses", "Repairs & Maintenance", "Uniforms"],
+    },
+    "painting": {
+        "REVENUE": ["Painting Revenue"],
+        "COGS": ["Paint & Materials", "Subcontractors", "Direct Labor", "Equipment Rental",
+                 "Small Tools & Equipment", "Permits"],
+        "OPERATING_EXPENSE": ["Insurance", "Marketing", "Admin Wages", "Vehicle Fuel",
+                              "Vehicle Expenses", "Utilities", "Repairs & Maintenance"],
+    },
+    "trucking": {
+        # Owner-operator: el combustible y el mantenimiento del camión SON el costo directo del
+        # flete (no overhead). La banda de gasolinera lo respeta (ver rules.amount_band_category).
+        "REVENUE": ["Freight Revenue"],
+        "COGS": ["Fuel", "Truck Repairs & Maintenance", "Tires", "Tolls & Scales",
+                 "Truck Lease", "Driver Pay", "Dispatch & Broker Fees"],
+        "OPERATING_EXPENSE": ["Insurance", "Parking & Storage", "Marketing", "Admin Wages"],
+    },
+    "beauty": {  # salón de belleza / barbería
+        "REVENUE": ["Service Revenue", "Product Sales"],
+        "COGS": ["Products & Supplies", "Contract Stylists", "Direct Labor"],
+        "OPERATING_EXPENSE": ["Salon Rent", "Utilities", "Insurance", "Marketing", "Equipment",
+                              "Uniforms & Laundry", "Admin Wages"],
+    },
+    "auto_repair": {  # taller mecánico
+        "REVENUE": ["Repair Revenue", "Parts Sales"],
+        "COGS": ["Parts", "Shop Supplies", "Direct Labor", "Subcontractors",
+                 "Small Tools & Equipment"],
+        "OPERATING_EXPENSE": ["Shop Rent", "Utilities", "Insurance", "Marketing", "Equipment",
+                              "Uniforms", "Admin Wages", "Vehicle Fuel"],
+    },
+    "retail": {  # tienda / bodega / minimercado
+        "REVENUE": ["Sales Revenue"],
+        "COGS": ["Merchandise Purchases", "Freight-In", "Packaging & Bags"],
+        "OPERATING_EXPENSE": ["Store Rent", "Utilities", "Insurance", "Marketing", "Wages",
+                              "Equipment"],
+    },
 }
 
 # Para sectores no reconocidos: un set genérico mínimo.

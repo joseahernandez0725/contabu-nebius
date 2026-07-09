@@ -390,7 +390,8 @@ def ingest_csv(
             if rule is not None:
                 rule_hits[idx] = rule
                 continue
-            band = amount_band_category(desc, float(signed), super_thr, gas_thr, extra_gas, extra_super)
+            band = amount_band_category(desc, float(signed), super_thr, gas_thr, extra_gas,
+                                        extra_super, sector=sector)
             if band is not None:
                 band_hits[idx] = band
                 continue
