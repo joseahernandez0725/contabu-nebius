@@ -11,6 +11,12 @@
     "construction": "निर्माण",
     "cleaning": "सफ़ाई",
     "restaurant": "रेस्तरां",
+    "landscaping": "बाग़बानी",
+    "painting": "पेंटिंग",
+    "trucking": "ट्रकिंग",
+    "beauty": "ब्यूटी सैलून",
+    "auto_repair": "गाड़ी मरम्मत",
+    "retail": "दुकान",
     "other": "अन्य"
   },
   "auth": {
@@ -215,7 +221,9 @@
     "namePlaceholder": "जैसे गार्सिया कंस्ट्रक्शन LLC",
     "sectorLabel": "आपके व्यवसाय का सेक्टर क्या है?",
     "continue": "जारी रखें",
-    "saving": "सेट हो रहा है…"
+    "saving": "सेट हो रहा है…",
+    "otherTradeLabel": "आपका व्यवसाय क्या करता है?",
+    "otherTradePlaceholder": "जैसे मोबाइल कार वॉश, सिलाई…"
   },
   "settings": {
     "title": "सेटिंग्स",

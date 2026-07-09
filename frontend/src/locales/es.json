@@ -11,6 +11,12 @@
     "construction": "Construcción",
     "cleaning": "Limpieza",
     "restaurant": "Restaurante",
+    "landscaping": "Jardinería",
+    "painting": "Pintura",
+    "trucking": "Transporte (troca)",
+    "beauty": "Salón de belleza",
+    "auto_repair": "Taller mecánico",
+    "retail": "Tienda",
     "other": "Otro"
   },
   "onboarding": {
@@ -20,7 +26,9 @@
     "namePlaceholder": "ej. García Construcción LLC",
     "sectorLabel": "¿Cuál es el sector de tu negocio?",
     "continue": "Continuar",
-    "saving": "Configurando…"
+    "saving": "Configurando…",
+    "otherTradeLabel": "¿A qué se dedica tu negocio?",
+    "otherTradePlaceholder": "ej. lavado de autos a domicilio, costura…"
   },
   "company": {
     "yours": "Tus empresas",

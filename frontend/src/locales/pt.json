@@ -11,6 +11,12 @@
     "construction": "Construção",
     "cleaning": "Limpeza",
     "restaurant": "Restaurante",
+    "landscaping": "Jardinagem",
+    "painting": "Pintura",
+    "trucking": "Transporte (caminhão)",
+    "beauty": "Salão de beleza",
+    "auto_repair": "Oficina mecânica",
+    "retail": "Loja",
     "other": "Outro"
   },
   "auth": {
@@ -215,7 +221,9 @@
     "namePlaceholder": "ex. García Construções LLC",
     "sectorLabel": "Qual é o setor do seu negócio?",
     "continue": "Continuar",
-    "saving": "Configurando…"
+    "saving": "Configurando…",
+    "otherTradeLabel": "O que seu negócio faz?",
+    "otherTradePlaceholder": "ex. lava-jato móvel, costura…"
   },
   "settings": {
     "title": "Configurações",

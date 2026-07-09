@@ -47,6 +47,8 @@ export interface Company {
 
 // Perfil de la empresa — hechos de la entrevista (valores SIEMPRE en inglés; la UI solo traduce).
 export interface CompanyProfile {
+  // Oficio en texto libre (sector "other"). Única excepción de idioma: va tal cual al prompt.
+  trade?: string;
   uses_subcontractors?: "yes" | "no";
   client_payment_methods?: string[]; // "checks" | "zelle" | "cash" | "card" | "bank_transfer"
   payroll?: "none" | "w2" | "1099" | "both";

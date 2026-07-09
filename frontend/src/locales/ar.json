@@ -11,6 +11,12 @@
     "construction": "البناء",
     "cleaning": "التنظيف",
     "restaurant": "مطعم",
+    "landscaping": "تنسيق الحدائق",
+    "painting": "الدهان",
+    "trucking": "النقل بالشاحنات",
+    "beauty": "صالون تجميل",
+    "auto_repair": "ورشة سيارات",
+    "retail": "متجر",
     "other": "أخرى"
   },
   "auth": {
@@ -215,7 +221,9 @@
     "namePlaceholder": "مثال: شركة غارسيا للإنشاءات",
     "sectorLabel": "ما قطاع عملك؟",
     "continue": "متابعة",
-    "saving": "جارٍ الإعداد…"
+    "saving": "جارٍ الإعداد…",
+    "otherTradeLabel": "ما نشاط عملك؟",
+    "otherTradePlaceholder": "مثال: غسيل سيارات متنقل، خياطة…"
   },
   "settings": {
     "title": "الإعدادات",

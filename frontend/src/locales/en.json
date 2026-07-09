@@ -11,6 +11,12 @@
     "construction": "Construction",
     "cleaning": "Cleaning",
     "restaurant": "Restaurant",
+    "landscaping": "Landscaping",
+    "painting": "Painting",
+    "trucking": "Trucking",
+    "beauty": "Beauty salon",
+    "auto_repair": "Auto repair",
+    "retail": "Store / Retail",
     "other": "Other"
   },
   "auth": {
@@ -215,7 +221,9 @@
     "namePlaceholder": "e.g. Garcia Construction LLC",
     "sectorLabel": "What's your business sector?",
     "continue": "Continue",
-    "saving": "Setting up…"
+    "saving": "Setting up…",
+    "otherTradeLabel": "What does your business do?",
+    "otherTradePlaceholder": "e.g. mobile car wash, tailoring…"
   },
   "settings": {
     "title": "Settings",
