@@ -1291,6 +1291,7 @@ def update_transaction(
     # default = aprende/actualiza regla por frase específica (comportamiento clásico).
     applied = 0  # cuántas OTRAS transacciones alineó la regla (para feedback "en vivo")
     rule_updated = False
+    rule_skipped_generic = False  # el guardián vetó la frase automática (era genérica)
     if any(k in data for k in ("account_type", "category", "subcategory")):
         prev_rule_id = tx.matched_rule_id  # QUÉ regla la cubría (antes de limpiar la procedencia)
         tx.source = "manual"
@@ -1322,11 +1323,16 @@ def update_transaction(
             # Corregir una → corregir todas: alinea las demás transacciones del mismo comercio.
             if rule is not None:
                 applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
+            elif tx.account_type is not None and tx.category:
+                # El GUARDIÁN vetó la frase (genérica: cazaría otros comercios) → la corrección
+                # queda como excepción puntual y el frontend se lo explica al dueño.
+                rule_skipped_generic = True
     session.add(tx)
     session.commit()
     session.refresh(tx)
     # Devuelve la tx + cuántas OTRAS alineó la regla → el frontend lo muestra y re-pinta de verde.
-    return {"id": tx.id, "applied": applied, "rule_updated": rule_updated}
+    return {"id": tx.id, "applied": applied, "rule_updated": rule_updated,
+            "rule_skipped_generic": rule_skipped_generic}
 
 
 @app.post("/api/transactions/{transaction_id}/clarify")

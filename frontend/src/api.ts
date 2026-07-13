@@ -534,7 +534,7 @@ export async function updateTransaction(
     // sin enviar = comportamiento clásico (aprende regla por frase específica).
     rule_action: "only_this" | "update_rule";
   }>,
-): Promise<{ id: number; applied: number; rule_updated: boolean }> {
+): Promise<{ id: number; applied: number; rule_updated: boolean; rule_skipped_generic?: boolean }> {
   const res = await fetch(`${API}/api/transactions/${id}`, {
     method: "PATCH",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },

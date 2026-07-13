@@ -294,12 +294,15 @@ export default function Transactions({
           catToType={catToType}
           rule={quickEdit.matched_rule_id != null ? rulesById[quickEdit.matched_rule_id] ?? null : null}
           onClose={() => setQuickEdit(null)}
-          onSaved={(applied, ruleUpdated) => {
+          onSaved={(applied, ruleUpdated, ruleSkippedGeneric) => {
             setQuickEdit(null);
             if (ruleUpdated)
               setNote(t("tx.ruleUpdated", { defaultValue: "Rule updated · {{n}} more transactions aligned", n: applied }));
             else if (applied > 0)
               setNote(t("tx.ruleApplied", { defaultValue: "Rule created · {{n}} more transactions updated", n: applied }));
+            else if (ruleSkippedGeneric)
+              // El guardián vetó la regla automática (frase genérica) → corrección puntual + cómo sí crearla.
+              setNote(t("tx.ruleSkippedGeneric", { defaultValue: "Fixed this transaction only — the merchant text is too generic for a safe rule. You can create one by hand in Rules." }));
             else setNote(null);
             load();
             getRules().then(setRules).catch(() => {}); // los conteos de las reglas cambiaron
@@ -315,13 +318,15 @@ export default function Transactions({
           catToType={catToType}
           onClose={() => setEditing(null)}
           onAddCategory={onAddCategory}
-          onSaved={(applied) => {
+          onSaved={(applied, ruleSkippedGeneric) => {
             setEditing(null);
             if (applied > 0)
               setNote(t("tx.ruleApplied", {
                 defaultValue: "Rule created · {{n}} more transactions updated",
                 n: applied,
               }));
+            else if (ruleSkippedGeneric)
+              setNote(t("tx.ruleSkippedGeneric", { defaultValue: "Fixed this transaction only — the merchant text is too generic for a safe rule. You can create one by hand in Rules." }));
             else setNote(null);
             load(); // recarga → las recién cubiertas por la regla se pintan de verde (en vivo)
           }}
@@ -350,7 +355,7 @@ function QuickCategoryMenu({
   catToType: Record<string, string>;
   rule: Rule | null; // la regla que cubría esta tx (null si no fue regla o ya no existe)
   onClose: () => void;
-  onSaved: (applied: number, ruleUpdated: boolean) => void;
+  onSaved: (applied: number, ruleUpdated: boolean, ruleSkippedGeneric?: boolean) => void;
 }) {
   const { t, i18n } = useTranslation();
   const [picked, setPicked] = useState<string | null>(null); // categoría elegida (paso de intención)
@@ -366,7 +371,7 @@ function QuickCategoryMenu({
         account_type: catToType[category],
         ...(ruleAction ? { rule_action: ruleAction } : {}),
       });
-      onSaved(res.applied, res.rule_updated);
+      onSaved(res.applied, res.rule_updated, res.rule_skipped_generic);
     } catch {
       setSaving(false);
     }
@@ -548,7 +553,7 @@ function EditModal({
   chart: ChartOfAccounts;
   catToType: Record<string, string>;
   onClose: () => void;
-  onSaved: (applied: number) => void;
+  onSaved: (applied: number, ruleSkippedGeneric?: boolean) => void;
   onAddCategory?: () => void;
 }) {
   const { t } = useTranslation();
@@ -564,7 +569,7 @@ function EditModal({
         account_type: catToType[category],
         subcategory,
       });
-      onSaved(res.applied);
+      onSaved(res.applied, res.rule_skipped_generic);
     } catch {
       setSaving(false);
     }

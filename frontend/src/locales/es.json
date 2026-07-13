@@ -147,7 +147,8 @@
       "changeRule": "Cambiar la regla (afecta {{n}} movimientos)",
       "onlyThis": "Solo esta transacción"
     },
-    "addCategory": "Agregar una categoría"
+    "addCategory": "Agregar una categoría",
+    "ruleSkippedGeneric": "Se corrigió solo esta transacción — el texto del comercio es demasiado genérico para una regla segura. Puedes crearla a mano en Reglas."
   },
   "upload": {
     "title": "Sube tu extracto bancario",

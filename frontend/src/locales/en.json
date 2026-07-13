@@ -127,7 +127,8 @@
       "changeRule": "Change the rule (affects {{n}} transactions)",
       "onlyThis": "Only this transaction"
     },
-    "addCategory": "Add a category"
+    "addCategory": "Add a category",
+    "ruleSkippedGeneric": "Fixed this transaction only — the merchant text is too generic for a safe rule. You can create one by hand in Rules."
   },
   "upload": {
     "title": "Upload your bank statement",

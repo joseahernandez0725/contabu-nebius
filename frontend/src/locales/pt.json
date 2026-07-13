@@ -127,7 +127,8 @@
       "changeRule": "Mudar a regra (afeta {{n}} transações)",
       "onlyThis": "Somente esta transação"
     },
-    "addCategory": "Adicionar uma categoria"
+    "addCategory": "Adicionar uma categoria",
+    "ruleSkippedGeneric": "Corrigida só esta transação — o texto do comércio é genérico demais para uma regra segura. Você pode criá-la à mão em Regras."
   },
   "upload": {
     "title": "Envie seu extrato bancário",

@@ -672,6 +672,22 @@ def upsert_company_rule(
             session.add(rule)
             return rule
 
+    # EL GUARDIÁN también en el camino AUTOMÁTICO (hallazgo 8.10): la frase derivada puede ser
+    # genérica ("BAY POINT" es el pueblo, no el comercio). Si caza transacciones de OTROS
+    # comercios, NO se crea la regla — la corrección queda como excepción puntual (un falso match
+    # miscategoriza en silencio). Solo aplica a reglas NUEVAS: editar una existente ya pasó por acá.
+    if description is not None:
+        own_sig = merchant_signature(description)
+        if own_sig:
+            items = [
+                {"description": t.description}
+                for t in session.exec(
+                    select(Transaction).where(Transaction.company_id == company_id)
+                ).all()
+            ]
+            if validate_keyword(phrase, [own_sig], items)["conflicts"] > 0:
+                return None
+
     rule = CategoryRule(
         scope=RuleScope.COMPANY,
         company_id=company_id,
