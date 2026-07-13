@@ -2,7 +2,12 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { uploadCsv, uploadReceipt, setTransactionsAccount, type ReceiptResult, type UploadResult } from "../api";
 
-export default function Upload({ onDone }: { onDone: () => void }) {
+export default function Upload({ onDone, onProposeRules }: {
+  onDone: () => void;
+  // La IA categorizó movimientos → paso siguiente del agente: proponer el REGLAMENTO (lleva a
+  // Reglas y genera las propuestas solo). Sin esto el proponedor queda escondido tras un botón.
+  onProposeRules?: () => void;
+}) {
   const { t } = useTranslation();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -43,7 +48,7 @@ export default function Upload({ onDone }: { onDone: () => void }) {
     try {
       const agg: UploadResult = {
         inserted: 0, errors: 0, skipped_duplicates: 0, held_pending: 0,
-        account_detected: false, transaction_ids: [], quota_blocked: 0,
+        account_detected: false, transaction_ids: [], quota_blocked: 0, by_ai: 0,
       };
       let offset = 0;
       let total = Infinity;
@@ -59,6 +64,7 @@ export default function Upload({ onDone }: { onDone: () => void }) {
         agg.skipped_duplicates += res.skipped_duplicates;
         agg.held_pending += res.held_pending;
         agg.quota_blocked = (agg.quota_blocked ?? 0) + (res.quota_blocked ?? 0);
+        agg.by_ai = (agg.by_ai ?? 0) + (res.by_ai ?? 0);
         agg.account_detected = agg.account_detected || res.account_detected;
         agg.transaction_ids.push(...res.transaction_ids);
         // El AUDITOR automático corre en el ÚLTIMO lote → solo ese trae el conteo (FASE 9 Paso 4).
@@ -201,6 +207,25 @@ export default function Upload({ onDone }: { onDone: () => void }) {
                 count: result.audit_findings,
               })}
             </p>
+          )}
+          {/* PASO SIGUIENTE del agente: la IA categorizó → convertir lo aprendido en REGLAS que el
+              dueño aprueba (a la pantalla de propuestas, generándolas solas). */}
+          {(result.by_ai ?? 0) > 0 && onProposeRules && (
+            <div className="mt-4 text-start bg-brand-green/5 border border-brand-green/20 rounded-xl px-4 py-3">
+              <p className="text-sm text-slate-700">
+                {t("upload.proposeHint", {
+                  defaultValue: "The AI categorized {{count}} transactions. Turn what it learned into rules you approve — next time they won't need AI.",
+                  count: result.by_ai,
+                })}
+              </p>
+              <button
+                onClick={onProposeRules}
+                className="mt-2 px-4 py-2 rounded-xl font-semibold text-white shadow-sm"
+                style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+              >
+                {t("upload.proposeCta", { defaultValue: "Create my rules" })}
+              </button>
+            </div>
           )}
           <button onClick={onDone} className="btn mt-4 bg-brand-green text-white border-none hover:bg-brand-green-dark">
             {t("upload.seeSummary")}

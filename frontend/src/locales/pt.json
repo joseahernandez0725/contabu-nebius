@@ -151,7 +151,9 @@
     },
     "progress": "Categorizando {{done}} / {{total}}…",
     "quotaBlocked": "{{count}} transações não foram categorizadas — você atingiu sua cota de IA. Faça upgrade do plano para categorizá-las.",
-    "audit": "O auditor revisou seus livros e encontrou {{count}} itens para olhar — veja a aba Revisar."
+    "audit": "O auditor revisou seus livros e encontrou {{count}} itens para olhar — veja a aba Revisar.",
+    "proposeHint": "A IA categorizou {{count}} transações. Transforme o que ela aprendeu em regras que você aprova — na próxima vez não precisarão de IA.",
+    "proposeCta": "Criar minhas regras"
   },
   "receipt": {
     "title": "Tire uma foto de um recibo",
@@ -212,7 +214,8 @@
       "owner": "Eu (o dono)",
       "skip": "Pular"
     },
-    "r2Applied": "{{count}} transações atualizadas"
+    "r2Applied": "{{count}} transações atualizadas",
+    "back": "Voltar"
   },
   "onboarding": {
     "title": "Configure seu negócio",
@@ -223,7 +226,8 @@
     "continue": "Continuar",
     "saving": "Configurando…",
     "otherTradeLabel": "O que seu negócio faz?",
-    "otherTradePlaceholder": "ex. lava-jato móvel, costura…"
+    "otherTradePlaceholder": "ex. lava-jato móvel, costura…",
+    "signedInAs": "Conectado como"
   },
   "settings": {
     "title": "Configurações",
@@ -320,7 +324,15 @@
     "in": "entrou",
     "out": "saiu",
     "goToTx": "Abrir esta transação",
-    "fixRule": "Corrigir → voltar à regra ({{s}})"
+    "fixRule": "Corrigir → voltar à regra ({{s}})",
+    "pendingAi": "{{n}} transações ainda estão sem categoria (atingiram seu limite de IA no envio).",
+    "categorizePending": "Categorizá-las agora",
+    "pendingRunning": "Categorizando…",
+    "pendingDone": "Todas as {{done}} foram categorizadas. ✅",
+    "pendingBlocked": "{{done}} categorizadas; {{left}} ainda precisam de cota de IA.",
+    "pendingNoQuota": "{{n}} transações ainda estão sem categoria e sua cota de IA acabou — assine um plano para categorizá-las.",
+    "upgradeCta": "Melhorar meu plano",
+    "rulesOnly": "Aplicar só minhas regras (grátis)"
   },
   "billing": {
     "title": "Plano",
@@ -381,6 +393,20 @@
       "income": "Receita",
       "expense": "Despesa",
       "nonpl": "Fora do P&L"
-    }
+    },
+    "new": "Nova regra",
+    "keyword": "Palavra-chave (como aparece no extrato)",
+    "keywordPlaceholder": "ex. HOME DEPOT",
+    "validating": "Verificando contra suas transações…",
+    "matchesNone": "Não corresponde a nenhuma transação ainda — confira a grafia. Mesmo assim valerá para envios futuros.",
+    "matchesCount": "Corresponde a {{count}} das suas transações.",
+    "pickCategory": "Escolha uma categoria…",
+    "subcategory": "Subcategoria",
+    "subcategoryLabel": "Subcategoria (opcional — nome limpo do comércio)",
+    "subcategoryPlaceholder": "ex. Home Depot",
+    "create": "Criar regra",
+    "created": "Regra criada — aplicada a {{count}} transações.",
+    "dup": "Já existe uma regra com essa palavra-chave.",
+    "createError": "Não foi possível criar a regra."
   }
 }

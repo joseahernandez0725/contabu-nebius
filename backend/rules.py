@@ -292,6 +292,8 @@ def apply_rule_to_transactions(
             continue  # ya está alineada
         t.account_type = rule.account_type
         t.category = rule.category
+        if rule.subcategory:  # la regla trae comercio presentable → unifica; si no, se respeta el de cada tx
+            t.subcategory = rule.subcategory.upper()
         t.source = "rule"
         t.matched_rule_id = rule.id  # procedencia: esta regla la alineó
         t.needs_review = False

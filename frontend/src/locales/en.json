@@ -151,7 +151,9 @@
     },
     "progress": "Categorizing {{done}} / {{total}}…",
     "quotaBlocked": "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them.",
-    "audit": "The auditor checked your books and found {{count}} things to look at — see the Review tab."
+    "audit": "The auditor checked your books and found {{count}} things to look at — see the Review tab.",
+    "proposeHint": "The AI categorized {{count}} transactions. Turn what it learned into rules you approve — next time they won't need AI.",
+    "proposeCta": "Create my rules"
   },
   "receipt": {
     "title": "Snap a receipt",
@@ -212,7 +214,8 @@
       "owner": "Me (the owner)",
       "skip": "Skip"
     },
-    "r2Applied": "{{count}} transactions updated"
+    "r2Applied": "{{count}} transactions updated",
+    "back": "Back"
   },
   "onboarding": {
     "title": "Set up your business",
@@ -223,7 +226,8 @@
     "continue": "Continue",
     "saving": "Setting up…",
     "otherTradeLabel": "What does your business do?",
-    "otherTradePlaceholder": "e.g. mobile car wash, tailoring…"
+    "otherTradePlaceholder": "e.g. mobile car wash, tailoring…",
+    "signedInAs": "Signed in as"
   },
   "settings": {
     "title": "Settings",
@@ -263,7 +267,15 @@
     "in": "in",
     "out": "out",
     "goToTx": "Open this transaction",
-    "fixRule": "Fix → back to the rule ({{s}})"
+    "fixRule": "Fix → back to the rule ({{s}})",
+    "pendingAi": "{{n}} transactions have no category yet (they hit your AI limit when uploaded).",
+    "categorizePending": "Categorize them now",
+    "pendingRunning": "Categorizing…",
+    "pendingDone": "All {{done}} categorized. ✅",
+    "pendingBlocked": "{{done}} categorized; {{left}} still need AI quota.",
+    "pendingNoQuota": "{{n}} transactions have no category yet and you're out of AI quota — upgrade your plan to categorize them.",
+    "upgradeCta": "Upgrade my plan",
+    "rulesOnly": "Apply my rules only (free)"
   },
   "billing": {
     "title": "Plan",
@@ -324,6 +336,20 @@
       "income": "Income",
       "expense": "Expense",
       "nonpl": "Non-P&L"
-    }
+    },
+    "new": "New rule",
+    "keyword": "Keyword (as it appears on the bank statement)",
+    "keywordPlaceholder": "e.g. HOME DEPOT",
+    "validating": "Checking against your transactions…",
+    "matchesNone": "Matches no transactions yet — double-check the spelling. It will still apply to future uploads.",
+    "matchesCount": "Matches {{count}} of your transactions.",
+    "pickCategory": "Pick a category…",
+    "subcategory": "Subcategory",
+    "subcategoryLabel": "Subcategory (optional — clean merchant name)",
+    "subcategoryPlaceholder": "e.g. Home Depot",
+    "create": "Create rule",
+    "created": "Rule created — applied to {{count}} transactions.",
+    "dup": "A rule with that keyword already exists.",
+    "createError": "Couldn't create the rule."
   }
 }

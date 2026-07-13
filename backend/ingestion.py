@@ -263,6 +263,94 @@ def make_fingerprint(d: date, description: str, signed: Decimal, account: str | 
     return f"{d.isoformat()}|{desc}|{signed:.2f}|{acct}"
 
 
+def _apply_categorization(tx: Transaction, idx: int, description: str,
+                          rule_hits: dict, band_hits: dict, transfer_hits: dict,
+                          ai_cats: dict) -> "str | None":
+    """Aplica a `tx` lo que decidió el motor (regla → banda → transferencia → IA) + los dos
+    guardias (revisión humana en ambiguos resueltos por IA, detector de signo). Compartido por la
+    SUBIDA y por `categorize_pending` (mismo cerebro en ambos caminos). Devuelve la fuente
+    ("rule"|"band"|"transfer"|"ai") o None si nada decidió."""
+    source = None
+    if idx in rule_hits:
+        rule = rule_hits[idx]
+        tx.account_type = rule.account_type
+        tx.category = rule.category
+        # El comercio presentable de la regla; sin él, el patrón que la disparó (histórico).
+        tx.subcategory = (rule.subcategory or rule.match_text).upper()
+        tx.confidence = 1.0
+        tx.needs_review = False
+        tx.review_question = None
+        tx.ai_categorized = False  # vino de una regla, no de la IA
+        tx.source = "rule"
+        tx.matched_rule_id = rule.id  # procedencia exacta: QUÉ regla decidió (FASE 9)
+        source = "rule"
+    elif idx in band_hits:
+        at, cat, near = band_hits[idx]
+        tx.account_type = at
+        tx.category = cat
+        tx.ai_categorized = False  # banda de monto determinista, no IA
+        tx.source = "band"
+        source = "band"
+        if near:  # zona gris alrededor del umbral → la banda no está segura, que el dueño confirme
+            tx.confidence = 0.5
+            tx.needs_review = True
+            tx.review_question = _BAND_REVIEW_QUESTIONS.get(cat)
+        else:
+            tx.confidence = 0.85  # banda = heurística, no certeza absoluta (era 1.0)
+            tx.needs_review = False
+            tx.review_question = None
+    elif idx in transfer_hits:
+        at, cat = transfer_hits[idx]
+        tx.account_type = at  # NON_PL (transferencia entre cuentas propias → fuera del P&L)
+        tx.category = cat
+        tx.confidence = 1.0
+        tx.needs_review = False
+        tx.review_question = None
+        tx.ai_categorized = False  # determinista, no IA
+        tx.source = "transfer"
+        source = "transfer"
+    elif idx in ai_cats:
+        cat = ai_cats[idx]
+        tx.account_type = cat.account_type
+        tx.category = cat.category
+        tx.subcategory = (cat.subcategory or "").upper() or None
+        tx.confidence = cat.confidence
+        tx.needs_review = cat.needs_review
+        tx.review_question = cat.review_question or None
+        tx.ai_categorized = True
+        tx.source = "ai"
+        # Predicción ORIGINAL de la IA (FASE 9 Paso 6): se congela aquí y NUNCA se toca al
+        # corregir → precisión online (comparar contra la categoría final, la verdad del dueño).
+        tx.ai_original_account_type = cat.account_type.value if cat.account_type else None
+        tx.ai_original_category = cat.category
+        source = "ai"
+
+    # Forzar revisión humana en movimientos AMBIGUOS por naturaleza (cheques, depósitos,
+    # retiros, remesas, transferencias) que resolvió la IA: no puede saber su propósito → que
+    # el dueño decida. Si ya había REGLA (source="rule"), el usuario ya decidió → NO re-preguntar.
+    if source == "ai" and needs_human_review(description):
+        tx.needs_review = True
+        if tx.confidence is None or tx.confidence > 0.5:
+            tx.confidence = 0.5
+
+    # Detector de SIGNO (vale para regla, banda e IA): si la dirección del banco contradice la
+    # sección del P&L, casi seguro es un return/reembolso o un cobro mal clasificado → revisar.
+    # Cubre el caso "return de Home Depot": entró plata pero la regla lo etiquetó como gasto
+    # (COGS/Materials) → sin esto sumaría como gasto en vez de restarlo. NON_PL se exime
+    # (transferencias/retiros/aportes van en cualquier dirección legítimamente).
+    if tx.account_type is not None and tx.account_type != AccountType.NON_PL:
+        is_income = tx.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
+        if is_income != tx.is_inflow:  # plata que entró etiquetada como gasto, o al revés
+            tx.needs_review = True
+            if tx.review_question is None:
+                tx.review_question = (
+                    "Money came IN but this looks like an expense — is it a refund/return?"
+                    if tx.is_inflow else
+                    "Money went OUT but this looks like income — is it categorized right?"
+                )
+    return source
+
+
 def ingest_csv(
     session: Session,
     company_id: int,
@@ -455,87 +543,16 @@ def ingest_csv(
                          check_number=check_number(description))  # número de cheque (si lo es)
         if account:
             any_account = True
-        source = None
-        if idx in rule_hits:
-            rule = rule_hits[idx]
-            tx.account_type = rule.account_type
-            tx.category = rule.category
-            tx.subcategory = rule.match_text.upper()  # el comercio/patrón que disparó la regla
-            tx.confidence = 1.0
-            tx.needs_review = False
-            tx.review_question = None
-            tx.ai_categorized = False  # vino de una regla, no de la IA
-            tx.source = "rule"
-            tx.matched_rule_id = rule.id  # procedencia exacta: QUÉ regla decidió (FASE 9)
-            source = "rule"
+        source = _apply_categorization(tx, idx, description, rule_hits, band_hits,
+                                       transfer_hits, ai_cats)
+        if source == "rule":
             by_rule += 1
-        elif idx in band_hits:
-            at, cat, near = band_hits[idx]
-            tx.account_type = at
-            tx.category = cat
-            tx.ai_categorized = False  # banda de monto determinista, no IA
-            tx.source = "band"
-            source = "band"
-            if near:  # zona gris alrededor del umbral → la banda no está segura, que el dueño confirme
-                tx.confidence = 0.5
-                tx.needs_review = True
-                tx.review_question = _BAND_REVIEW_QUESTIONS.get(cat)
-            else:
-                tx.confidence = 0.85  # banda = heurística, no certeza absoluta (era 1.0)
-                tx.needs_review = False
-                tx.review_question = None
+        elif source == "band":
             by_band += 1
-        elif idx in transfer_hits:
-            at, cat = transfer_hits[idx]
-            tx.account_type = at  # NON_PL (transferencia entre cuentas propias → fuera del P&L)
-            tx.category = cat
-            tx.confidence = 1.0
-            tx.needs_review = False
-            tx.review_question = None
-            tx.ai_categorized = False  # determinista, no IA
-            tx.source = "transfer"
-            source = "transfer"
+        elif source == "transfer":
             by_transfer += 1
-        elif idx in ai_cats:
-            cat = ai_cats[idx]
-            tx.account_type = cat.account_type
-            tx.category = cat.category
-            tx.subcategory = (cat.subcategory or "").upper() or None
-            tx.confidence = cat.confidence
-            tx.needs_review = cat.needs_review
-            tx.review_question = cat.review_question or None
-            tx.ai_categorized = True
-            tx.source = "ai"
-            # Predicción ORIGINAL de la IA (FASE 9 Paso 6): se congela aquí y NUNCA se toca al
-            # corregir → precisión online (comparar contra la categoría final, la verdad del dueño).
-            tx.ai_original_account_type = cat.account_type.value if cat.account_type else None
-            tx.ai_original_category = cat.category
-            source = "ai"
+        elif source == "ai":
             by_ai += 1
-
-        # Forzar revisión humana en movimientos AMBIGUOS por naturaleza (cheques, depósitos,
-        # retiros, remesas, transferencias) que resolvió la IA: no puede saber su propósito → que
-        # el dueño decida. Si ya había REGLA (source="rule"), el usuario ya decidió → NO re-preguntar.
-        if source == "ai" and needs_human_review(description):
-            tx.needs_review = True
-            if tx.confidence is None or tx.confidence > 0.5:
-                tx.confidence = 0.5
-
-        # Detector de SIGNO (vale para regla, banda e IA): si la dirección del banco contradice la
-        # sección del P&L, casi seguro es un return/reembolso o un cobro mal clasificado → revisar.
-        # Cubre el caso "return de Home Depot": entró plata pero la regla lo etiquetó como gasto
-        # (COGS/Materials) → sin esto sumaría como gasto en vez de restarlo. NON_PL se exime
-        # (transferencias/retiros/aportes van en cualquier dirección legítimamente).
-        if tx.account_type is not None and tx.account_type != AccountType.NON_PL:
-            is_income = tx.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
-            if is_income != tx.is_inflow:  # plata que entró etiquetada como gasto, o al revés
-                tx.needs_review = True
-                if tx.review_question is None:
-                    tx.review_question = (
-                        "Money came IN but this looks like an expense — is it a refund/return?"
-                        if tx.is_inflow else
-                        "Money went OUT but this looks like income — is it categorized right?"
-                    )
 
         if source is not None:
             preview.append({
@@ -586,6 +603,94 @@ def ingest_csv(
         "account_detected": any_account,
         "transaction_ids": transaction_ids,
     }
+
+
+def categorize_pending(session: Session, company: Company, ai_limit: "int | None" = None) -> dict:
+    """Re-corre el MOTOR sobre las transacciones SIN categorizar de la empresa — las que quedaron
+    fuera por el cupo de IA (`quota_blocked`) o porque la IA falló. Es la otra mitad de la promesa
+    "sube de plan para categorizarlas": tras pagar (o al liberarse cupo el mes siguiente), esto las
+    resuelve SIN re-subir el archivo. Mismo orden y semántica que la subida: regla → banda →
+    transferencia → IA (hasta `ai_limit`); congela `ai_original_*`; aprende gasolineras."""
+    sector = company.sector
+    txs = list(session.exec(
+        select(Transaction)
+        .where(Transaction.company_id == company.id)
+        .where(Transaction.account_type == None)  # noqa: E711 — SQL "IS NULL"
+        .order_by(Transaction.date, Transaction.id)
+    ).all())
+    result = {"pending": len(txs), "by_rule": 0, "by_band": 0, "by_transfer": 0, "by_ai": 0,
+              "quota_blocked": 0, "consistency_adjusted": 0, "still_uncategorized": 0}
+    if not txs:
+        return result
+
+    # La misma forma (fecha, descripción, monto CON signo, cuenta, huella) que usa el pipeline.
+    parsed = [
+        (tx.date, tx.description,
+         Decimal(tx.amount) if tx.is_inflow else -Decimal(tx.amount),
+         tx.bank_account, tx.fingerprint)
+        for tx in txs
+    ]
+
+    rules = load_rules(session, company.id, sector)
+    extra_gas, extra_super = load_learned_merchants(session, company.id, sector)
+    rule_hits: dict[int, CategoryRule] = {}
+    band_hits: dict[int, tuple] = {}
+    transfer_hits: dict[int, tuple] = {}
+    ai_indices: list[int] = []
+    for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
+        rule = match_rule(rules, desc)
+        if rule is not None:
+            rule_hits[idx] = rule
+            continue
+        band = amount_band_category(desc, float(signed), company.supermarket_threshold,
+                                    company.gas_station_threshold, extra_gas, extra_super,
+                                    sector=sector)
+        if band is not None:
+            band_hits[idx] = band
+            continue
+        transfer = classify_transfer(desc)
+        if transfer is not None:
+            transfer_hits[idx] = transfer
+            continue
+        ai_indices.append(idx)
+
+    # Cupo de IA: igual que en la subida — lo que excede queda sin categorizar (otro intento
+    # cuando haya cupo; el saldo lo reporta `quota_blocked`).
+    if ai_limit is not None and len(ai_indices) > max(0, ai_limit):
+        keep = max(0, ai_limit)
+        result["quota_blocked"] = len(ai_indices) - keep
+        ai_indices = ai_indices[:keep]
+
+    profile_facts = format_profile_facts(company.profile)
+
+    def _categorize_one(idx: int):
+        try:
+            return idx, categorize_transaction(parsed[idx][1], float(parsed[idx][2]),
+                                               sector, profile_facts)
+        except Exception:
+            return idx, None
+
+    ai_cats: dict[int, object] = {}
+    if ai_indices:
+        with ThreadPoolExecutor(max_workers=AI_CONCURRENCY) as pool:
+            for idx, cat in pool.map(_categorize_one, ai_indices):
+                if cat is not None:
+                    ai_cats[idx] = cat
+
+    result["consistency_adjusted"] = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
+    if ai_cats:
+        learn_merchants_from_ai(session, company.id, sector, parsed, ai_cats)
+
+    for idx, tx in enumerate(txs):
+        source = _apply_categorization(tx, idx, parsed[idx][1], rule_hits, band_hits,
+                                       transfer_hits, ai_cats)
+        if source is not None:
+            result[f"by_{source}"] += 1
+            session.add(tx)
+    session.commit()
+    done = result["by_rule"] + result["by_band"] + result["by_transfer"] + result["by_ai"]
+    result["still_uncategorized"] = len(txs) - done
+    return result
 
 
 if __name__ == "__main__":

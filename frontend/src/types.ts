@@ -47,6 +47,9 @@ export interface Company {
 
 // Perfil de la empresa — hechos de la entrevista (valores SIEMPRE en inglés; la UI solo traduce).
 export interface CompanyProfile {
+  // La ronda 1 terminó (respondida o saltada). ESTE flag decide si el onboarding vuelve a salir;
+  // sin él, un refresh a media entrevista la perdía (el sector se guarda antes de las preguntas).
+  round1_done?: boolean;
   // Oficio en texto libre (sector "other"). Única excepción de idioma: va tal cual al prompt.
   trade?: string;
   uses_subcontractors?: "yes" | "no";

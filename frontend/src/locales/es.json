@@ -28,7 +28,8 @@
     "continue": "Continuar",
     "saving": "Configurando…",
     "otherTradeLabel": "¿A qué se dedica tu negocio?",
-    "otherTradePlaceholder": "ej. lavado de autos a domicilio, costura…"
+    "otherTradePlaceholder": "ej. lavado de autos a domicilio, costura…",
+    "signedInAs": "Conectado como"
   },
   "company": {
     "yours": "Tus empresas",
@@ -170,7 +171,9 @@
     },
     "progress": "Categorizando {{done}} / {{total}}…",
     "quotaBlocked": "{{count}} transacciones no se categorizaron — alcanzaste tu cupo de IA. Sube de plan para categorizarlas.",
-    "audit": "El auditor revisó tus libros y encontró {{count}} cosas para mirar — ve a Por revisar."
+    "audit": "El auditor revisó tus libros y encontró {{count}} cosas para mirar — ve a Por revisar.",
+    "proposeHint": "La IA categorizó {{count}} transacciones. Convierte lo que aprendió en reglas que tú apruebas — la próxima vez no necesitarán IA.",
+    "proposeCta": "Crear mis reglas"
   },
   "receipt": {
     "title": "Toma una foto de un recibo",
@@ -231,7 +234,8 @@
       "owner": "Yo (el dueño)",
       "skip": "Omitir"
     },
-    "r2Applied": "{{count}} movimientos actualizados"
+    "r2Applied": "{{count}} movimientos actualizados",
+    "back": "Regresar"
   },
   "settings": {
     "title": "Ajustes",
@@ -293,7 +297,21 @@
       "income": "Ingreso",
       "expense": "Egreso",
       "nonpl": "No-P&L"
-    }
+    },
+    "new": "Nueva regla",
+    "keyword": "Palabra clave (como aparece en el extracto)",
+    "keywordPlaceholder": "ej. HOME DEPOT",
+    "validating": "Verificando contra tus transacciones…",
+    "matchesNone": "No matchea ninguna transacción todavía — revisa la ortografía. Igual aplicará a subidas futuras.",
+    "matchesCount": "Matchea {{count}} de tus transacciones.",
+    "pickCategory": "Elige una categoría…",
+    "subcategory": "Subcategoría",
+    "subcategoryLabel": "Subcategoría (opcional — nombre limpio del comercio)",
+    "subcategoryPlaceholder": "ej. Home Depot",
+    "create": "Crear regla",
+    "created": "Regla creada — aplicada a {{count}} transacciones.",
+    "dup": "Ya existe una regla con esa palabra clave.",
+    "createError": "No se pudo crear la regla."
   },
   "cat": {
     "Small Tools & Equipment": "Herramientas y equipo menor",
@@ -376,7 +394,15 @@
     "in": "entró",
     "out": "salió",
     "goToTx": "Abrir esta transacción",
-    "fixRule": "Arreglar → volver a la regla ({{s}})"
+    "fixRule": "Arreglar → volver a la regla ({{s}})",
+    "pendingAi": "{{n}} transacciones siguen sin categoría (alcanzaron tu cupo de IA al subirlas).",
+    "categorizePending": "Categorizarlas ahora",
+    "pendingRunning": "Categorizando…",
+    "pendingDone": "Las {{done}} quedaron categorizadas. ✅",
+    "pendingBlocked": "{{done}} categorizadas; a {{left}} les falta cupo de IA.",
+    "pendingNoQuota": "{{n}} transacciones siguen sin categoría y no te queda cupo de IA — suscríbete para categorizarlas.",
+    "upgradeCta": "Subir de plan",
+    "rulesOnly": "Aplicar solo mis reglas (gratis)"
   },
   "billing": {
     "title": "Plan",

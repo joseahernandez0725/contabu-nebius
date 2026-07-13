@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  getRules, updateRule, deleteRule, cleanupRules, getCategories,
-  type ChartOfAccounts, type Rule,
+  getRules, createRule, updateRule, deleteRule, cleanupRules, getCategories,
+  validateRuleProposal, type ChartOfAccounts, type Rule,
 } from "../api";
 import { SECTION_LABEL, sectionFamily, FAMILY_STYLE } from "../accounting";
 import RuleProposals from "./RuleProposals";
@@ -11,11 +11,16 @@ const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER
 
 // Tabla de reglas editable: el "reglamento" (comercio → categoría) que el dueño/firma cura.
 // Editar una regla re-aplica a las transacciones existentes (los libros se ajustan al instante).
-export default function Rules() {
+export default function Rules({ autoPropose, onAutoProposeDone }: {
+  // Venimos de una subida con IA ("Crear mis reglas") → generar las propuestas al llegar.
+  autoPropose?: boolean;
+  onAutoProposeDone?: () => void;
+} = {}) {
   const { t } = useTranslation();
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
   const [editing, setEditing] = useState<Rule | null>(null);
+  const [creating, setCreating] = useState(false); // regla nueva A MANO (hallazgo 8.10)
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -42,12 +47,21 @@ export default function Rules() {
 
   return (
     <div className="space-y-4">
-      <RuleProposals />
+      <RuleProposals autoStart={autoPropose} onAutoStartDone={onAutoProposeDone} onApplied={load} />
       <div className="border-t border-slate-100" />
       <div>
-        <h2 className="text-lg font-bold text-slate-900">
-          {t("rules.title", { defaultValue: "Rules" })}
-        </h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-bold text-slate-900">
+            {t("rules.title", { defaultValue: "Rules" })}
+          </h2>
+          <button
+            onClick={() => { setCreating(true); setNote(null); }}
+            className="px-3.5 py-2 rounded-xl font-semibold text-white shadow-sm shrink-0"
+            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+          >
+            + {t("rules.new", { defaultValue: "New rule" })}
+          </button>
+        </div>
         <p className="text-sm text-slate-500 mt-1">
           {t("rules.subtitle", { defaultValue: "Your rulebook: each merchant maps to a category. Edit one and all its transactions update." })}
         </p>
@@ -91,6 +105,7 @@ export default function Rules() {
               <tr className="text-start text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
                 <th className="px-3 py-2 font-medium text-start">{t("rules.merchant", { defaultValue: "Merchant" })}</th>
                 <th className="px-2 py-2 font-medium text-start">{t("rules.category", { defaultValue: "Category" })}</th>
+                <th className="px-2 py-2 font-medium text-start hidden sm:table-cell">{t("rules.subcategory", { defaultValue: "Subcategory" })}</th>
                 <th className="px-2 py-2 font-medium text-end">{t("rules.affects", { defaultValue: "Affects" })}</th>
                 <th className="px-2 py-2" />
               </tr>
@@ -119,6 +134,12 @@ export default function Rules() {
                     onClick={() => { setEditing(r); setNote(null); }}
                   >
                     {r.category}
+                  </td>
+                  <td
+                    className="px-2 py-2.5 cursor-pointer text-slate-500 hidden sm:table-cell"
+                    onClick={() => { setEditing(r); setNote(null); }}
+                  >
+                    {r.subcategory ?? <span className="text-slate-300 uppercase">{r.match_text}</span>}
                   </td>
                   <td className="px-2 py-2.5 text-end tabular-nums text-slate-500">{r.matches}</td>
                   <td className="px-2 py-2.5 text-end">
@@ -157,6 +178,153 @@ export default function Rules() {
           }}
         />
       )}
+
+      {creating && (
+        <NewRuleModal
+          chart={chart}
+          catToType={catToType}
+          onClose={() => setCreating(false)}
+          onSaved={(applied) => {
+            setCreating(false);
+            setNote(t("rules.created", { defaultValue: "Rule created — applied to {{count}} transactions.", count: applied }));
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Regla nueva A MANO. El keyword pasa por el GUARDIÁN (validación contra los datos reales) antes
+// de poder guardar: así no entran keywords genéricos ("BAY POINT" = el pueblo, no un comercio)
+// que cazarían transacciones de otros comercios en silencio.
+function NewRuleModal({
+  chart,
+  catToType,
+  onClose,
+  onSaved,
+}: {
+  chart: ChartOfAccounts;
+  catToType: Record<string, string>;
+  onClose: () => void;
+  onSaved: (applied: number) => void;
+}) {
+  const { t } = useTranslation();
+  const [keyword, setKeyword] = useState("");
+  const [category, setCategory] = useState("");
+  const [subcategory, setSubcategory] = useState("");
+  const [matches, setMatches] = useState<number | null>(null); // cuántas tx caza (del guardián)
+  const [validating, setValidating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function validate() {
+    const kw = keyword.trim();
+    if (kw.length < 2) { setMatches(null); return; }
+    setValidating(true);
+    try {
+      const v = await validateRuleProposal(kw.toUpperCase(), []);
+      setMatches(v.matches);
+    } catch {
+      setMatches(null);
+    } finally {
+      setValidating(false);
+    }
+  }
+
+  async function save() {
+    setSaving(true); setError(null);
+    try {
+      const res = await createRule({
+        match_text: keyword.trim().toUpperCase(),
+        account_type: catToType[category],
+        category,
+        ...(subcategory.trim() ? { subcategory: subcategory.trim() } : {}),
+      });
+      onSaved(res.applied);
+    } catch (e) {
+      setError(e instanceof Error && e.message === "dup"
+        ? t("rules.dup", { defaultValue: "A rule with that keyword already exists." })
+        : t("rules.createError", { defaultValue: "Couldn't create the rule." }));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-20 bg-black/40 flex items-end sm:items-center justify-center sm:p-4" onClick={onClose}>
+      <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <h3 className="font-bold text-slate-900">{t("rules.new", { defaultValue: "New rule" })}</h3>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-800 mb-1">
+            {t("rules.keyword", { defaultValue: "Keyword (as it appears on the bank statement)" })}
+          </label>
+          <input
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onBlur={validate}
+            placeholder={t("rules.keywordPlaceholder", { defaultValue: "e.g. HOME DEPOT" })}
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 uppercase focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+          />
+          {/* El guardián: cuántas transacciones reales caza el keyword. 0 = no matchea nada (¿typo?). */}
+          {validating && <p className="text-xs text-slate-400 mt-1">{t("rules.validating", { defaultValue: "Checking against your transactions…" })}</p>}
+          {!validating && matches !== null && (
+            <p className={`text-xs mt-1 ${matches === 0 ? "text-amber-600" : "text-slate-500"}`}>
+              {matches === 0
+                ? t("rules.matchesNone", { defaultValue: "Matches no transactions yet — double-check the spelling. It will still apply to future uploads." })
+                : t("rules.matchesCount", { defaultValue: "Matches {{count}} of your transactions.", count: matches })}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-800 mb-1">
+            {t("rules.category", { defaultValue: "Category" })}
+          </label>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+          >
+            <option value="" disabled>{t("rules.pickCategory", { defaultValue: "Pick a category…" })}</option>
+            {SECTIONS.filter((s) => chart[s]?.length).map((s) => (
+              <optgroup key={s} label={SECTION_LABEL[s] ?? s}>
+                {chart[s].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-800 mb-1">
+            {t("rules.subcategoryLabel", { defaultValue: "Subcategory (optional — clean merchant name)" })}
+          </label>
+          <input
+            value={subcategory}
+            onChange={(e) => setSubcategory(e.target.value)}
+            placeholder={t("rules.subcategoryPlaceholder", { defaultValue: "e.g. Home Depot" })}
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+          />
+        </div>
+
+        {error && <div className="text-sm text-rose-600">{error}</div>}
+
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 font-medium text-slate-600">
+            {t("rules.cancel", { defaultValue: "Cancel" })}
+          </button>
+          <button
+            onClick={save}
+            disabled={saving || keyword.trim().length < 2 || !category}
+            className="flex-1 py-2.5 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
+            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+          >
+            {saving ? t("rules.saving", { defaultValue: "Saving…" }) : t("rules.create", { defaultValue: "Create rule" })}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -176,12 +344,16 @@ function EditRuleModal({
 }) {
   const { t } = useTranslation();
   const [category, setCategory] = useState(rule.category);
+  const [subcategory, setSubcategory] = useState(rule.subcategory ?? "");
   const [saving, setSaving] = useState(false);
 
   async function save() {
     setSaving(true);
     try {
-      const res = await updateRule(rule.id, { category, account_type: catToType[category] });
+      const res = await updateRule(rule.id, {
+        category, account_type: catToType[category],
+        subcategory: subcategory.trim(),  // "" = limpiar (volver al match_text)
+      });
       onSaved(res.applied);
     } catch {
       setSaving(false);
@@ -212,6 +384,17 @@ function EditRuleModal({
               </optgroup>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-800 mb-1">
+            {t("rules.subcategoryLabel", { defaultValue: "Subcategory (optional — clean merchant name)" })}
+          </label>
+          <input
+            value={subcategory}
+            onChange={(e) => setSubcategory(e.target.value)}
+            placeholder={t("rules.subcategoryPlaceholder", { defaultValue: "e.g. Home Depot" })}
+            className="w-full rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-green/40"
+          />
         </div>
         <p className="text-xs text-slate-400">
           {t("rules.editHint", { defaultValue: "Saving re-applies this rule to all matching transactions." })}

@@ -31,7 +31,12 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 // Reglas para el dueño: la IA SUGIERE (proponedor) o el usuario IMPORTA su archivo. Aprueba/edita/aplica.
-export default function RuleProposals() {
+export default function RuleProposals({ autoStart, onAutoStartDone, onApplied }: {
+  // "Crear mis reglas" tras la subida: generar las propuestas al montar, sin otro clic.
+  autoStart?: boolean;
+  onAutoStartDone?: () => void;
+  onApplied?: () => void; // reglas creadas → que el padre refresque la tabla de reglas
+} = {}) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
@@ -41,6 +46,14 @@ export default function RuleProposals() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => { getCategories().then(setChart).catch(() => {}); }, []);
+
+  // Disparo automático ("Crear mis reglas" tras la subida): una sola vez, luego el padre baja el flag.
+  useEffect(() => {
+    if (autoStart) {
+      onAutoStartDone?.();
+      void generate();
+    }
+  }, [autoStart]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const catToType = useMemo(() => {
     const m: Record<string, string> = {};
@@ -113,6 +126,7 @@ export default function RuleProposals() {
         c: res.created, a: res.applied,
       }));
       setRows(null);
+      onApplied?.(); // la tabla de reglas de abajo se refresca con las recién creadas
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {

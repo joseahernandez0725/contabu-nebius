@@ -40,7 +40,8 @@ PERSON_ROLES = ("subcontractor", "customer", "owner")
 _P2P_RE = re.compile(r"\b(ZELLE|VENMO|CASH\s?APP|CASHAPP|QUICKPAY|APPLE\s?CASH)\b")
 # El nombre viene después de TO/FROM; se corta en la basura dinámica (refs, IDs, fechas).
 _NAME_AFTER_RE = re.compile(r"\b(?:TO|FROM)[:\s]+([A-Z][A-Z .'-]*[A-Z])")
-_NAME_STOPWORDS = {"ON", "REF", "CONF", "ID", "MEMO", "PPD", "WEB", "PAYMENT", "TRANSFER", "JPM"}
+_NAME_STOPWORDS = {"ON", "REF", "CONF", "ID", "MEMO", "PPD", "WEB", "PAYMENT", "TRANSFER", "JPM",
+                   "INC", "LLC", "CORP", "LTD"}
 
 
 def sanitize_round1(payload: dict) -> dict:
@@ -63,6 +64,11 @@ def sanitize_round1(payload: dict) -> dict:
     trade = payload.get("trade")
     if isinstance(trade, str) and trade.strip():
         out["trade"] = trade.strip()[:120]
+    # `round1_done`: la entrevista terminó (respondida O saltada). Es lo que decide si el
+    # onboarding vuelve a mostrarse — sin esto, un refresh a media entrevista la perdía en
+    # silencio (el gate viejo era "tiene sector", que se guarda ANTES de las preguntas).
+    if payload.get("round1_done") is True:
+        out["round1_done"] = True
     return out
 
 
@@ -77,13 +83,23 @@ def p2p_counterparty(description: Optional[str]) -> Optional[str]:
     m = _NAME_AFTER_RE.search(text)
     if not m:
         return None
+    raw = re.sub(r"[^A-Z']+", " ", m.group(1)).split()
+    # Referencia bancaria PEGADA a dígitos al final ("WFCT0ZND…", "BACs0hm…", "USBkI79…"): el regex
+    # corta en el dígito y deja el prefijo de letras como si fuera un apellido → si el capture
+    # termina pegado a un dígito, la ÚLTIMA palabra del capture es referencia, no nombre. Se quita
+    # ANTES del filtro de stopwords (si no, el pop se comería una palabra buena).
+    if raw and m.end(1) < len(text) and text[m.end(1)].isdigit():
+        raw.pop()
     words = []
-    for w in re.sub(r"[^A-Z']+", " ", m.group(1)).split():
-        if w in _NAME_STOPWORDS or len(w) < 2:
+    for w in raw:
+        if w in _NAME_STOPWORDS:
             break
+        # Letras sueltas SON parte del nombre (inicial: "LAURA L GALINDO"; conector: "PIZZA N PASTA").
         words.append(w)
         if len(words) == 4:  # nombres reales: 2-4 palabras; más es basura
             break
+    while words and len(words[-1]) < 2:  # sin iniciales colgando al final ("LAURA L" → "LAURA")
+        words.pop()
     name = " ".join(words)
     return name if len(name) >= 4 else None
 
@@ -105,7 +121,10 @@ def interview_questions(txs: list[Transaction], profile: Optional[dict]) -> list
             g["total_in"] += float(t.amount)
         else:
             g["total_out"] += float(t.amount)
-    out = [g for g in groups.values() if g["count"] >= 2]  # 1 pago suelto no amerita entrevista
+    # TODA persona sin rol confirmado amerita pregunta (decisión 8.9, caminata 12-jul): en archivos
+    # reales casi todos aparecen UNA vez y el filtro `>= 2` dejaba al agente mudo. Una respuesta
+    # además cubre los pagos futuros de esa persona (perfil → prompts → proponedor).
+    out = list(groups.values())
     out.sort(key=lambda g: -(g["total_in"] + g["total_out"]))
     return out
 

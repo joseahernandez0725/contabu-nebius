@@ -236,6 +236,7 @@ export interface Rule {
   match_text: string;
   account_type: string | null;
   category: string;
+  subcategory: string | null; // comercio presentable que asigna la regla (null → el match_text)
   matches: number; // cuántas transacciones afecta
 }
 
@@ -245,9 +246,23 @@ export async function getRules(): Promise<Rule[]> {
   return res.json();
 }
 
+// Regla creada A MANO desde la tabla (el reglamento también se escribe directo — hallazgo 8.10).
+export async function createRule(payload: {
+  match_text: string; account_type: string; category: string; subcategory?: string;
+}): Promise<{ id: number; applied: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (res.status === 409) throw new Error("dup");
+  if (!res.ok) throw new Error("No se pudo crear la regla");
+  return res.json();
+}
+
 export async function updateRule(
   id: number,
-  payload: { account_type: string; category: string },
+  payload: { account_type: string; category: string; subcategory?: string },
 ): Promise<{ applied: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
     method: "PATCH",
@@ -318,6 +333,42 @@ export interface AuditFinding {
 export async function getAudit(): Promise<AuditFinding[]> {
   const res = await fetch(`${API}/api/companies/${cid()}/audit`, { headers: await authHeaders() });
   if (!res.ok) throw new Error("No se pudo auditar la categorización");
+  return res.json();
+}
+
+// Cupo de IA vigente: con esto la UI decide qué ofrecer (categorizar ahora vs subir de plan).
+export interface AiQuota {
+  used: number;
+  limit: number;
+  remaining: number;
+  monthly: boolean; // true = cupo mensual del tier pagado; false = prueba gratis de por vida
+}
+
+export async function getAiQuota(): Promise<AiQuota> {
+  const res = await fetch(`${API}/api/companies/${cid()}/quota`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo consultar el cupo de IA");
+  return res.json();
+}
+
+// Re-corre el motor sobre las transacciones SIN categorizar (quedaron bloqueadas por el cupo de
+// IA en una subida): regla → banda → transferencia → IA hasta donde alcance el cupo vigente.
+export interface CategorizePendingResult {
+  pending: number;
+  by_rule: number;
+  by_band: number;
+  by_transfer: number;
+  by_ai: number;
+  quota_blocked: number;          // volvieron a quedar fuera por cupo (subir de plan / esperar mes)
+  still_uncategorized: number;
+  audit_findings?: number;
+}
+
+export async function categorizePending(): Promise<CategorizePendingResult> {
+  const res = await fetch(`${API}/api/companies/${cid()}/transactions/categorize-pending`, {
+    method: "POST",
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudieron categorizar las pendientes");
   return res.json();
 }
 
@@ -525,6 +576,7 @@ export interface UploadResult {
   processed?: number; // filas cubiertas por este lote
   quota_blocked?: number; // tx que NO se categorizaron por exceder el cupo de IA (subir de plan)
   audit_findings?: number; // hallazgos del AUDITOR automático (solo en el último lote — FASE 9)
+  by_ai?: number; // cuántas categorizó la IA → si >0, ofrecer "crear mis reglas de esto"
 }
 
 // Sube un lote del archivo: rows[offset : offset+chunk]. chunk=0 → archivo completo (1 sola llamada).

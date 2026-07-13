@@ -28,7 +28,7 @@ from company_profile import (
     apply_person_answer, format_profile_facts, interview_questions, sanitize_round1,
 )
 from db import get_session
-from ingestion import ingest_csv, make_fingerprint, mask_account, parse_spreadsheet
+from ingestion import categorize_pending, ingest_csv, make_fingerprint, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
@@ -114,6 +114,16 @@ class RuleUpdate(BaseModel):
     """Edición de una regla de empresa desde la tabla de reglas (comercio → categoría)."""
     account_type: Optional[AccountType] = None
     category: Optional[str] = None
+    subcategory: Optional[str] = None  # comercio presentable que asigna la regla ("" → limpiar)
+
+
+class RuleCreate(BaseModel):
+    """Regla creada A MANO por el dueño desde la tabla de reglas (hallazgo 8.10: el reglamento
+    también se escribe directo, no solo vía correcciones/propuestas)."""
+    match_text: str
+    account_type: AccountType
+    category: str
+    subcategory: Optional[str] = None
 
 
 class PnlReportCreate(BaseModel):
@@ -239,6 +249,37 @@ async def upload_transactions(
     is_last_chunk = result.get("offset", 0) + result.get("processed", 0) >= result.get("total", 0)
     if is_last_chunk:
         result["audit_findings"] = len(_company_audit(session, company_id))
+    return result
+
+
+@app.get("/api/companies/{company_id}/quota")
+def get_quota(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Cupo de IA vigente (used/limit/remaining/monthly). El frontend decide con esto qué ofrecer:
+    con cupo → "categorizar ahora"; sin cupo → mandar a suscribirse (Billing)."""
+    company = owned_company(company_id, user, session)
+    return ai_quota_status(session, company)
+
+
+@app.post("/api/companies/{company_id}/transactions/categorize-pending")
+def categorize_pending_endpoint(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Categoriza las transacciones que quedaron SIN categorizar (bloqueadas por el cupo de IA en
+    una subida, o fallo puntual de la IA). Es el cobro de la promesa "sube de plan para
+    categorizarlas": tras suscribirse (o al renovarse el cupo mensual), un toque las resuelve sin
+    re-subir el archivo. Respeta el cupo vigente y re-corre el auditor al final."""
+    company = owned_company(company_id, user, session, write=True)
+    quota = ai_quota_status(session, company)
+    result = categorize_pending(session, company, ai_limit=quota["remaining"])
+    result["quota"] = ai_quota_status(session, company)  # estado DESPUÉS (lo que quedó de cupo)
+    # Igual que la subida: el auditor revisa solo y el frontend refresca el badge.
+    result["audit_findings"] = len(_company_audit(session, company_id))
     return result
 
 
@@ -727,10 +768,48 @@ def list_rules(
         out.append({
             "id": r.id, "match_text": r.match_text,
             "account_type": r.account_type.value if r.account_type else None,
-            "category": r.category, "matches": matches,
+            "category": r.category, "subcategory": r.subcategory, "matches": matches,
         })
     out.sort(key=lambda x: x["matches"], reverse=True)
     return out
+
+
+@app.post("/api/companies/{company_id}/rules")
+def create_rule(
+    company_id: int,
+    payload: RuleCreate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Crea una regla A MANO y la aplica a las transacciones existentes que matchee. El frontend
+    valida el keyword con el guardián (cobertura/colisiones) ANTES de llamar aquí."""
+    company = owned_company(company_id, user, session, write=True)
+    match_text = payload.match_text.strip().upper()
+    if len(match_text) < 2:
+        raise HTTPException(status_code=422, detail="keyword demasiado corto")
+    dup = session.exec(
+        select(CategoryRule)
+        .where(CategoryRule.scope == RuleScope.COMPANY)
+        .where(CategoryRule.company_id == company_id)
+        .where(CategoryRule.match_text == match_text)
+    ).first()
+    if dup:
+        raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword")
+    chart = categories_for_company(session, company_id, company.sector)  # sector + propias
+    if payload.category not in (chart.get(payload.account_type.value) or []):
+        raise HTTPException(status_code=422, detail="categoría fuera del plan de cuentas")
+    rule = CategoryRule(
+        scope=RuleScope.COMPANY, company_id=company_id, match_text=match_text,
+        account_type=payload.account_type, category=payload.category,
+        subcategory=(payload.subcategory or "").strip() or None,
+    )
+    session.add(rule)
+    applied = apply_rule_to_transactions(session, company_id, rule)
+    session.commit()
+    session.refresh(rule)
+    return {"id": rule.id, "match_text": rule.match_text,
+            "account_type": rule.account_type.value, "category": rule.category,
+            "subcategory": rule.subcategory, "applied": applied}
 
 
 @app.patch("/api/companies/{company_id}/rules/{rule_id}")
@@ -746,6 +825,8 @@ def update_rule(
     owned_company(company_id, user, session, write=True)
     rule = _owned_company_rule(company_id, rule_id, session)
     data = payload.model_dump(exclude_unset=True)
+    if "subcategory" in data:  # "" desde la UI = limpiar (volver al match_text)
+        data["subcategory"] = (data["subcategory"] or "").strip() or None
     for field, value in data.items():
         setattr(rule, field, value)
     session.add(rule)
@@ -754,7 +835,7 @@ def update_rule(
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
             "account_type": rule.account_type.value if rule.account_type else None,
-            "category": rule.category, "applied": applied}
+            "category": rule.category, "subcategory": rule.subcategory, "applied": applied}
 
 
 @app.delete("/api/companies/{company_id}/rules/{rule_id}")

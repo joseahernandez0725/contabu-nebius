@@ -70,6 +70,7 @@ function App() {
   const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
+  const [autoPropose, setAutoPropose] = useState(false); // "Crear mis reglas" tras la subida → Reglas genera solo
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
   const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(undefined);
 
@@ -162,8 +163,12 @@ function App() {
   // Sin sesión → pantalla de acceso.
   if (fbUser === null) return <Login />;
 
-  // Empresa cargada pero SIN sector elegido → onboarding (elegir sector antes de usar la app).
-  if (company && !company.sector) return <Onboarding company={company} onDone={onCompanyReady} />;
+  // Empresa SIN sector o con la entrevista a medias → onboarding. El gate es `round1_done` (no
+  // solo el sector): el sector se guarda ANTES de las preguntas, y un refresh a media entrevista
+  // la saltaba en silencio. Con el flag, el onboarding reanuda donde iba.
+  if (company && (!company.sector || !company.profile?.round1_done)) {
+    return <Onboarding company={company} onDone={onCompanyReady} />;
+  }
 
   // Vista de escritorio (§5.B): las herramientas de operador (movimientos, reglas) usan MÁS ancho en
   // pantallas grandes; el resto del flujo del dueño queda angosto (mobile-first).
@@ -246,14 +251,20 @@ function App() {
                 <Audit
                   onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
                   onCount={setAuditCount}
+                  onUpgrade={() => setView("settings")}
                 />
                 <Review items={reviewTxs} reload={reloadReview} />
               </div>
             )}
             {view === "pnl" && <Pnl companyName={company.name} />}
-            {view === "rules" && <Rules />}
+            {view === "rules" && (
+              <Rules autoPropose={autoPropose} onAutoProposeDone={() => setAutoPropose(false)} />
+            )}
             {view === "upload" && (
-              <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
+              <Upload
+                onDone={() => { reloadReview(); setView("dashboard"); }}
+                onProposeRules={() => { reloadReview(); setAutoPropose(true); setView("rules"); }}
+              />
             )}
             {view === "settings" && (
               <Settings company={company} onSaved={onCompanyReady} onDeleted={onCompanyDeleted} canDelete={companies.length > 1} />

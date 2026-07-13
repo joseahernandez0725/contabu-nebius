@@ -1,8 +1,32 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
+import { signOut } from "firebase/auth";
+import { auth } from "../firebase";
+import LanguageSwitcher from "./LanguageSwitcher";
 import { updateCompany, updateProfile } from "../api";
 import type { Company, CompanyProfile } from "../types";
+
+// Idioma + con qué cuenta estás + salir. El onboarding se muestra a pantalla completa (sin el
+// header de la app, donde viven el selector de idioma y el logout): sin esto, quien entra con la
+// cuenta equivocada queda atrapado, y no puede cambiar el idioma de la entrevista.
+function AccountStrip() {
+  const { t } = useTranslation();
+  const email = auth.currentUser?.email;
+  return (
+    <div className="absolute top-4 end-4 flex items-center gap-2 text-xs text-slate-400">
+      <LanguageSwitcher />
+      {email && (
+        <>
+          <span className="truncate max-w-48">{t("onboarding.signedInAs", { defaultValue: "Signed in as" })} {email}</span>
+          <button onClick={() => signOut(auth)} className="text-slate-500 hover:text-rose-500 underline shrink-0">
+            {t("login.logout", { defaultValue: "Log out" })}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 
 // Sectores disponibles (las claves coinciden con categories.py). Segunda ola 3-jul-2026: los
 // oficios inmigrantes más comunes fuera de los 3 verticales originales. "other" usa el plan
@@ -44,14 +68,19 @@ export default function Onboarding({ company, onDone }: {
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState(company.name === "My Business" ? "" : company.name);
-  const [sector, setSector] = useState<string>("");
-  const [otherTrade, setOtherTrade] = useState(""); // "other": el oficio en texto libre → perfil
+  const [sector, setSector] = useState<string>(company.sector || "");
+  const [otherTrade, setOtherTrade] = useState(company.profile?.trade ?? ""); // "other": oficio libre
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Paso 2 — entrevista: empresa ya guardada, índice de pregunta y respuestas acumuladas.
-  const [ready, setReady] = useState<Company | null>(null);
+  // Si la empresa YA tiene sector (refresh a media entrevista), se reanuda directo en el paso 2
+  // con lo que alcanzó a guardarse (cada respuesta se persiste al momento).
+  const [ready, setReady] = useState<Company | null>(company.sector ? company : null);
   const [qIndex, setQIndex] = useState(0);
-  const [answers, setAnswers] = useState<Partial<CompanyProfile>>({});
+  const [answers, setAnswers] = useState<Partial<CompanyProfile>>(() => {
+    const { people: _people, round1_done: _r1, ...round1 } = company.profile ?? {};
+    return round1;
+  });
   const [multiPick, setMultiPick] = useState<string[]>([]);
 
   async function save() {
@@ -70,34 +99,56 @@ export default function Onboarding({ company, onDone }: {
     }
   }
 
-  // Termina la entrevista: guarda lo respondido (si hay algo) y entra a la app. Un fallo del
-  // perfil NO bloquea la entrada (el perfil se puede completar después; la empresa ya existe).
+  // Termina la entrevista (respondida o saltada): marca `round1_done` — el gate del onboarding —
+  // y entra a la app. Un fallo del perfil NO bloquea la entrada (se reintentaría al refrescar).
   async function finishInterview(finalAnswers: Partial<CompanyProfile>) {
     if (!ready) return;
     setSaving(true);
+    let profile: CompanyProfile = { ...(ready.profile ?? {}), ...finalAnswers, round1_done: true };
     try {
-      if (Object.keys(finalAnswers).length > 0) await updateProfile(finalAnswers);
+      profile = await updateProfile({ ...finalAnswers, round1_done: true });
     } catch {
       /* el perfil es opcional: no bloquear la entrada a la app */
     }
-    onDone(ready);
+    onDone({ ...ready, profile });
+  }
+
+  // Al moverse a una pregunta, restaurar lo ya respondido (si es multi) para poder re-editarla.
+  function restoreMultiPick(index: number, from: Partial<CompanyProfile>) {
+    const q = QUESTIONS[index];
+    setMultiPick(q.multi ? ((from[q.key] as string[] | undefined) ?? []) : []);
   }
 
   function advance(nextAnswers: Partial<CompanyProfile>) {
     setAnswers(nextAnswers);
-    setMultiPick([]);
     if (qIndex + 1 >= QUESTIONS.length) {
+      setMultiPick([]);
       void finishInterview(nextAnswers);
     } else {
+      // Guardar al momento (fire-and-forget): un refresh a media entrevista ya no pierde nada.
+      void updateProfile(nextAnswers).catch(() => {});
+      restoreMultiPick(qIndex + 1, nextAnswers);
       setQIndex(qIndex + 1);
     }
+  }
+
+  // Regresar: a la pregunta anterior, o desde la primera al paso 1 (nombre + sector, re-editable —
+  // la empresa ya quedó guardada, pero volver a "Continuar" la re-guarda con lo nuevo).
+  function goBack() {
+    if (qIndex === 0) {
+      setReady(null);
+      return;
+    }
+    restoreMultiPick(qIndex - 1, answers);
+    setQIndex(qIndex - 1);
   }
 
   // ---- Paso 2: la entrevista ----
   if (ready) {
     const q = QUESTIONS[qIndex];
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
+      <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
+        <AccountStrip />
         <div className="w-full max-w-md space-y-6">
           <div className="text-center">
             <div className="size-14 rounded-2xl mx-auto flex items-center justify-center text-white shadow-sm"
@@ -127,7 +178,8 @@ export default function Onboarding({ company, onDone }: {
             </p>
             <div className="flex flex-wrap gap-2">
               {q.options.map((opt) => {
-                const active = q.multi ? multiPick.includes(opt) : false;
+                // Marcar lo ya elegido (al regresar a una pregunta respondida se ve la respuesta).
+                const active = q.multi ? multiPick.includes(opt) : answers[q.key] === opt;
                 return (
                   <button
                     key={opt}
@@ -160,6 +212,10 @@ export default function Onboarding({ company, onDone }: {
           </div>
 
           <div className="flex justify-center gap-6 text-sm">
+            <button onClick={goBack} className="text-slate-500 hover:underline" disabled={saving}>
+              <span className="rtl:hidden">←</span><span className="hidden rtl:inline">→</span>{" "}
+              {t("interview.back", { defaultValue: "Back" })}
+            </button>
             <button onClick={() => advance(answers)} className="text-slate-500 hover:underline" disabled={saving}>
               {t("interview.skip", { defaultValue: "Skip this question" })}
             </button>
@@ -174,7 +230,8 @@ export default function Onboarding({ company, onDone }: {
 
   // ---- Paso 1: nombre + sector ----
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
+    <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
+      <AccountStrip />
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
           <div className="size-14 rounded-2xl mx-auto flex items-center justify-center text-white shadow-sm"

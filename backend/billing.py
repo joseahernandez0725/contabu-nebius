@@ -49,6 +49,14 @@ def ai_quota_status(session: Session, company: Company) -> dict:
     )
     if active:
         start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        # El mes del cupo arranca en lo que sea MÁS reciente: el mes calendario o el inicio de la
+        # suscripción. Así lo consumido antes de pagar (prueba gratis de 100) NO cuenta contra el
+        # primer mes pagado; de ahí en adelante, mes calendario normal.
+        started = company.subscription_started_at
+        if started is not None:
+            if started.tzinfo is None:  # la DB puede devolverlo naive (columna sin tz) — es UTC
+                started = started.replace(tzinfo=timezone.utc)
+            start = max(start, started)
         used = session.exec(q.where(Transaction.created_at >= start)).one()
         limit = company.tx_quota or 0
     else:
@@ -85,6 +93,14 @@ def create_checkout_session(session: Session, company: Company, quota: int, emai
 
 
 def _set_subscription(company: Company, sub_id: str | None, status: str | None, quota: int | None) -> None:
+    # Marca el ARRANQUE de la suscripción al pasar a "active" desde otro estado o al cambiar de
+    # suscripción (upgrade/re-alta). NO en renovaciones (mismo sub, ya active): el cupo mensual
+    # cuenta desde aquí, así la prueba gratis usada antes no se come el primer mes pagado.
+    became_active = status == "active" and (
+        company.subscription_status != "active" or company.stripe_subscription_id != sub_id
+    )
+    if became_active:
+        company.subscription_started_at = datetime.now(timezone.utc)
     company.stripe_subscription_id = sub_id
     company.subscription_status = status
     company.tx_quota = quota

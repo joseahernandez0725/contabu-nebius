@@ -96,6 +96,10 @@ class Company(SQLModel, table=True):
     subscription_status: Optional[str] = Field(default=None)
     # Cupo mensual de transacciones del tier pagado (100/200/400/1000). None = plan gratis (sin IA).
     tx_quota: Optional[int] = Field(default=None)
+    # Cuándo ARRANCÓ la suscripción vigente. El cupo mensual cuenta solo desde aquí: lo consumido
+    # ANTES (la prueba gratis de 100) no se descuenta del primer mes pagado. Se re-marca solo al
+    # pasar a "active" desde otro estado o al cambiar de suscripción — NO en renovaciones.
+    subscription_started_at: Optional[datetime] = Field(default=None)
     # PERFIL de la empresa — la ENTREVISTA del bookkeeper (FASE 9 Paso 5). Hechos que solo el dueño
     # sabe, guardados SIEMPRE en inglés (Regla de Oro): uses_subcontractors, client_payment_methods,
     # payroll, work_vehicles, personal_expenses_mixed, y people {firma: {name, role}} de la ronda 2.
@@ -180,6 +184,10 @@ class CategoryRule(SQLModel, table=True):
     match_text: str  # texto/comercio que dispara la regla (ej. "MIKE SMITH")
     account_type: Optional[AccountType] = Field(default=None)  # sección a asignar
     category: str    # categoría a asignar
+    # Subcategoría (el comercio/contraparte presentable) que asigna la regla. None → se usa el
+    # match_text (comportamiento histórico). Permite keyword técnico + nombre limpio ("HD SUPPLY
+    # CONST" → subcategoría "Home Depot Supply").
+    subcategory: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
