@@ -51,3 +51,11 @@ Thumbs.db
 
 # ===== Claude Code (config local de la máquina) =====
 .claude/settings.local.json
+
+# ===== Firebase (cache de deploy, no versionar) =====
+.firebase/
+
+# ===== Datos de CLIENTES REALES y extractos de prueba (NUNCA subir) =====
+# El repo se hará PÚBLICO (FASE 10): aquí viven nombres, propuestas y extractos bancarios reales.
+clientes/
+pruebas/
