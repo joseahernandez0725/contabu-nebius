@@ -35,7 +35,11 @@
     "haveAccount": "Already have an account?",
     "error": "Couldn't sign in. Check your details.",
     "signupError": "Couldn't sign up. The email may already be in use.",
-    "logout": "Sign out"
+    "logout": "Sign out",
+    "forgot": "Forgot your password?",
+    "resetNeedsEmail": "Type your email above first.",
+    "resetSent": "If that email has an account, we sent a link to reset your password.",
+    "resetError": "Couldn't send the reset email."
   },
   "review": {
     "count": "{{count}} transactions",
@@ -352,5 +356,12 @@
     "created": "Rule created — applied to {{count}} transactions.",
     "dup": "A rule with that keyword already exists.",
     "createError": "Couldn't create the rule."
+  },
+  "verify": {
+    "title": "Verify your email — we sent a link to {{email}}.",
+    "resend": "Resend",
+    "sent": "Sent ✓",
+    "check": "I verified it",
+    "still": "Not verified yet — check your spam folder."
   }
 }

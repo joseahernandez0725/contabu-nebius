@@ -35,7 +35,11 @@
     "haveAccount": "Já tem conta?",
     "error": "Não foi possível entrar. Verifique seus dados.",
     "signupError": "Não foi possível criar a conta. O e-mail pode já estar em uso.",
-    "logout": "Sair"
+    "logout": "Sair",
+    "forgot": "Esqueceu sua senha?",
+    "resetNeedsEmail": "Digite seu e-mail acima primeiro.",
+    "resetSent": "Se esse e-mail tiver conta, enviamos um link para redefinir sua senha.",
+    "resetError": "Não foi possível enviar o e-mail de redefinição."
   },
   "review": {
     "count": "{{count}} movimentos",
@@ -409,5 +413,12 @@
     "created": "Regra criada — aplicada a {{count}} transações.",
     "dup": "Já existe uma regra com essa palavra-chave.",
     "createError": "Não foi possível criar a regra."
+  },
+  "verify": {
+    "title": "Verifique seu e-mail — enviamos um link para {{email}}.",
+    "resend": "Reenviar",
+    "sent": "Enviado ✓",
+    "check": "Já verifiquei",
+    "still": "Ainda não está verificado — confira sua pasta de spam."
   }
 }

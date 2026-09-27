@@ -4,6 +4,7 @@ import type { TFunction } from "i18next";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import LanguageSwitcher from "./LanguageSwitcher";
+import VerifyEmailBanner from "./VerifyEmailBanner";
 import { updateCompany, updateProfile } from "../api";
 import type { Company, CompanyProfile } from "../types";
 
@@ -150,6 +151,7 @@ export default function Onboarding({ company, onDone }: {
       <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
         <AccountStrip />
         <div className="w-full max-w-md space-y-6">
+          <VerifyEmailBanner />
           <div className="text-center">
             <div className="size-14 rounded-2xl mx-auto flex items-center justify-center text-white shadow-sm"
               style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
@@ -233,6 +235,7 @@ export default function Onboarding({ company, onDone }: {
     <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
       <AccountStrip />
       <div className="w-full max-w-md space-y-6">
+        <VerifyEmailBanner />
         <div className="text-center">
           <div className="size-14 rounded-2xl mx-auto flex items-center justify-center text-white shadow-sm"
             style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>

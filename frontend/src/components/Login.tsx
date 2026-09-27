@@ -4,6 +4,8 @@ import {
   signInWithPopup,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendEmailVerification,
+  sendPasswordResetEmail,
 } from "firebase/auth";
 import { auth, googleProvider } from "../firebase";
 import LanguageSwitcher from "./LanguageSwitcher";
@@ -11,12 +13,16 @@ import LanguageSwitcher from "./LanguageSwitcher";
 // Pantalla de acceso. Al autenticar, `onAuthStateChanged` (en App) detecta la sesión y
 // renderiza la app — por eso aquí no navegamos a mano.
 export default function Login() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null); // "te enviamos el enlace…"
+
+  // Los correos de Firebase (verificación/reset) salen en el idioma del usuario.
+  auth.languageCode = (i18n.language || "en").split("-")[0];
 
   // Muestra el CÓDIGO real de Firebase (auth/…) para diagnosticar, no un mensaje opaco.
   function fail(base: string, e: unknown) {
@@ -39,11 +45,36 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     setError(null);
+    setNote(null);
     try {
-      if (mode === "signup") await createUserWithEmailAndPassword(auth, email, password);
-      else await signInWithEmailAndPassword(auth, email, password);
+      if (mode === "signup") {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        // Verificación de correo: se envía al registrarse, SIN bloquear la entrada (la fricción
+        // mata activación). El aviso persistente vive en la app (VerifyEmailBanner).
+        sendEmailVerification(cred.user).catch(() => {});
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
     } catch (err) {
       fail(mode === "signup" ? t("login.signupError") : t("login.error"), err);
+    }
+  }
+
+  // "Olvidé mi contraseña": Firebase manda el enlace de reset (no revelamos si el correo existe).
+  async function resetPassword() {
+    if (!email.trim()) {
+      setError(t("login.resetNeedsEmail", { defaultValue: "Type your email above first." }));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      setNote(t("login.resetSent", { defaultValue: "If that email has an account, we sent a link to reset your password." }));
+    } catch (e) {
+      fail(t("login.resetError", { defaultValue: "Couldn't send the reset email." }), e);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -97,6 +128,7 @@ export default function Login() {
               className="w-full rounded-xl border border-slate-200 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-brand-green/40"
             />
             {error && <p className="text-sm text-rose-600">{error}</p>}
+            {note && <p className="text-sm text-brand-green">{note}</p>}
             <button
               type="submit"
               disabled={busy}
@@ -105,6 +137,16 @@ export default function Login() {
             >
               {busy ? t("login.loading") : mode === "signup" ? t("login.signUp") : t("login.signIn")}
             </button>
+            {mode === "signin" && (
+              <button
+                type="button"
+                onClick={resetPassword}
+                disabled={busy}
+                className="w-full text-center text-sm text-slate-500 hover:underline"
+              >
+                {t("login.forgot", { defaultValue: "Forgot your password?" })}
+              </button>
+            )}
           </form>
 
           <p className="text-center text-sm text-slate-500">

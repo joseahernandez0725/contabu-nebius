@@ -51,7 +51,11 @@
     "haveAccount": "¿Ya tienes cuenta?",
     "error": "No se pudo entrar. Revisa tus datos.",
     "signupError": "No se pudo crear la cuenta. El correo ya podría estar en uso.",
-    "logout": "Salir"
+    "logout": "Salir",
+    "forgot": "¿Olvidaste tu contraseña?",
+    "resetNeedsEmail": "Escribe tu correo arriba primero.",
+    "resetSent": "Si ese correo tiene cuenta, te enviamos un enlace para restablecer tu contraseña.",
+    "resetError": "No se pudo enviar el correo de restablecimiento."
   },
   "review": {
     "count": "{{count}} movimientos",
@@ -442,5 +446,12 @@
       "needs_section": "falta sección"
     },
     "applied": "Se crearon {{c}} reglas y se alinearon {{a}} transacciones."
+  },
+  "verify": {
+    "title": "Verifica tu correo — te enviamos un enlace a {{email}}.",
+    "resend": "Reenviar",
+    "sent": "Enviado ✓",
+    "check": "Ya lo verifiqué",
+    "still": "Aún no aparece verificado — revisa tu carpeta de spam."
   }
 }
