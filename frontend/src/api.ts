@@ -1,6 +1,6 @@
 // Capa de acceso al backend. Centraliza las llamadas HTTP en un solo lugar.
 import { auth } from "./firebase";
-import type { Company, CompanyProfile, IncomeStatement, InterviewQuestion, Transaction } from "./types";
+import type { Company, CompanyProfile, IncomeStatement, InterviewQuestion, Transaction, SheetRow, SheetLabel } from "./types";
 
 // URL del backend según entorno: en dev, localhost; en prod, el Cloud Run (VITE_API_URL).
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -8,7 +8,14 @@ const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 // --- Identidad / sesión (FASE 7) ---------------------------------------------------------------
 // Cada petición lleva el ID token de Firebase del usuario actual. El backend lo verifica
 // (firebase-admin) y de ahí saca la identidad — nunca de la URL. El `company_id` sale de /api/me.
+// Costura de DESARROLLO, espejo de `AUTH_DEV_MODE` en backend/auth.py: con `VITE_DEV_UID` en un
+// `.env.local`, se manda ese uid en `X-Dev-Uid` en vez del token de Firebase. Permite trabajar en la
+// UI sin login real. Doble candado: solo existe si la variable está puesta Y solo en `import.meta.env.DEV`
+// (Vite hornea las variables al compilar, así que un build de producción NUNCA puede activarlo).
+const DEV_UID = import.meta.env.DEV ? (import.meta.env.VITE_DEV_UID as string | undefined) : undefined;
+
 async function authHeaders(): Promise<Record<string, string>> {
+  if (DEV_UID) return { "X-Dev-Uid": DEV_UID };
   const u = auth.currentUser;
   if (!u) throw new Error("No autenticado");
   return { Authorization: `Bearer ${await u.getIdToken()}` };
@@ -188,6 +195,113 @@ export async function getTransactions(): Promise<Transaction[]> {
   return res.json();
 }
 
+/** Transacciones + la observación del auditor por fila (la hoja, FASE 10).
+ *  El auditor es determinista y corre en memoria, así que viene en la MISMA llamada:
+ *  no cuesta nada y evita que el frontend tenga que cruzar dos listas. */
+export async function getSheetRows(): Promise<SheetRow[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/transactions?with_audit=true`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudieron cargar las transacciones");
+  return res.json();
+}
+
+/** VOLVER A SEGUIR LA REGLA: el inverso de escribir a mano. La celda deja de ser un valor
+ *  escrito y vuelve a ser "fórmula" — busca la regla que cubre esta descripción y la aplica. */
+export async function followRule(txId: number): Promise<{
+  id: number; followed_rule?: { id: number; match_text: string; category: string };
+}> {
+  const res = await fetch(`${API}/api/transactions/${txId}`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ rule_action: "follow_rule" }),
+  });
+  if (res.status === 404) throw new Error("no-rule");
+  if (!res.ok) throw new Error("No se pudo volver a seguir la regla");
+  return res.json();
+}
+
+// ── EL PIVOTE (FASE 10 paso 7): categoría → subcategoría → mes → transacciones ────────────────
+
+export interface PivotNode {
+  key: string;
+  level: "category" | "subcategory" | "month";
+  section?: string;
+  label: string;
+  amount: string;   // Decimal como string
+  count: number;
+  children: PivotNode[] | null;   // null en el nivel mes: las hojas se piden aparte
+}
+
+export interface PivotLeaf {
+  id: number; date: string; description: string;
+  amount: string; is_inflow: boolean | null; subcategory: string | null;
+}
+
+export async function getPivot(account?: string): Promise<PivotNode[]> {
+  const qs = account ? `?account=${encodeURIComponent(account)}` : "";
+  const res = await fetch(`${API}/api/companies/${cid()}/pivot${qs}`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo cargar el pivote");
+  return res.json();
+}
+
+/** El último `+`: solo se pide cuando el bookkeeper abre ese mes. */
+export async function getPivotLeaves(
+  section: string, category: string, subcategory: string, month: string,
+): Promise<PivotLeaf[]> {
+  const qs = new URLSearchParams({ section, category, subcategory, month });
+  const res = await fetch(`${API}/api/companies/${cid()}/pivot/leaves?${qs}`, {
+    headers: await authHeaders(),
+  });
+  if (!res.ok) throw new Error("No se pudieron cargar las transacciones");
+  return res.json();
+}
+
+// ── LA HOJA: etiquetas (dato) y formato de celda (presentación) ────────────────────────────────
+
+export async function getLabels(): Promise<SheetLabel[]> {
+  const res = await fetch(`${API}/api/companies/${cid()}/labels`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudieron cargar las etiquetas");
+  return res.json();
+}
+
+export async function createLabel(name: string, color: string): Promise<SheetLabel> {
+  const res = await fetch(`${API}/api/companies/${cid()}/labels`, {
+    method: "POST", headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ name, color }),
+  });
+  if (!res.ok) throw new Error("No se pudo crear la etiqueta");
+  return res.json();
+}
+
+export async function deleteLabel(id: number): Promise<void> {
+  const res = await fetch(`${API}/api/labels/${id}`, { method: "DELETE", headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo borrar la etiqueta");
+}
+
+/** PUT = estado completo: marcar y desmarcar son la misma operación. */
+export async function setTransactionLabels(txId: number, label_ids: number[]): Promise<void> {
+  const res = await fetch(`${API}/api/transactions/${txId}/labels`, {
+    method: "PUT", headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ label_ids }),
+  });
+  if (!res.ok) throw new Error("No se pudieron guardar las etiquetas");
+}
+
+/** Aplica formato a una o muchas celdas de una vez (un rango seleccionado). */
+export async function applyCellFormat(payload: {
+  transaction_ids: number[]; column?: string | null;
+  bold?: boolean; italic?: boolean; bg?: string | null; fg?: string | null;
+  font_size?: number | null; font_family?: string | null; clear?: boolean;
+}): Promise<{ changed: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/cell-formats`, {
+    method: "POST", headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("No se pudo aplicar el formato");
+  return res.json();
+}
+
 // Plan de cuentas del sector: { account_type: [categorías] }.
 export type ChartOfAccounts = Record<string, string[]>;
 export async function getCategories(): Promise<ChartOfAccounts> {
@@ -238,6 +352,8 @@ export interface Rule {
   category: string;
   subcategory: string | null; // comercio presentable que asigna la regla (null → el match_text)
   matches: number; // cuántas transacciones afecta
+  scope: "COMPANY" | "SECTOR";  // de ESTE libro, o compartida por todo un sector
+  sector: string | null;        // el sector, cuando scope === "SECTOR"
 }
 
 export async function getRules(): Promise<Rule[]> {
@@ -528,6 +644,8 @@ export async function updateTransaction(
     account_type: string;
     category: string;
     subcategory: string;
+    note: string;
+    description_extra: string;
     needs_review: boolean;
     // Intención sobre el REGLAMENTO al corregir (FASE 9 Paso 2):
     // "only_this" = excepción (no toca reglas) · "update_rule" = edita la regla que la cubría ·

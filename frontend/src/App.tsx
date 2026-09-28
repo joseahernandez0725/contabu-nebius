@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { onAuthStateChanged, signOut, type User as FirebaseUser } from "firebase/auth";
 import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
+import Sheet from "./components/Sheet";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
@@ -11,6 +12,7 @@ import Rules from "./components/Rules";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
+import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Login from "./components/Login";
 import LanguageSwitcher from "./components/LanguageSwitcher";
 import CompanySwitcher from "./components/CompanySwitcher";
@@ -18,7 +20,7 @@ import { auth } from "./firebase";
 import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, getAudit, confirmCheckout } from "./api";
 import type { Company, Transaction } from "./types";
 
-type View = "dashboard" | "transactions" | "review" | "upload" | "pnl" | "rules" | "settings";
+type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "rules" | "settings";
 
 function Logo() {
   // Logo de marca real (public/icon.svg): cuadro verde con el lettermark "ContaBu".
@@ -38,7 +40,7 @@ const ICONS: Partial<Record<View, ReactNode>> = {
       <circle cx="4" cy="7" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="17" r="1" />
     </svg>
   ),
-  review: (
+  audit: (
     <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
       <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9z" /><path d="M9 13l2 2 4-4" />
     </svg>
@@ -71,8 +73,21 @@ function App() {
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
   const [autoPropose, setAutoPropose] = useState(false); // "Crear mis reglas" tras la subida → Reglas genera solo
+  // LA HOJA (FASE 10): la consola del bookkeeper reemplaza la lista móvil simplificada.
+  // Se deja un interruptor a la vista anterior mientras se termina de construir, para poder comparar.
+  // Va aquí con los demás hooks a propósito: declararlo después de los `return` tempranos rompe
+  // las Reglas de Hooks — en cuanto `fbUser` pasa de undefined a usuario, React lanza "Rendered
+  // more hooks than during the previous render". Con VITE_DEV_UID no se ve, porque ese camino
+  // arranca con sesión y nunca pasa por el return de `undefined`.
+  const [useSheet, setUseSheet] = useState(true);
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
-  const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(undefined);
+  // Costura de DESARROLLO (espejo de VITE_DEV_UID en api.ts y de AUTH_DEV_MODE en el backend):
+  // permite trabajar en la UI sin login de Firebase. Doble candado: la variable tiene que estar
+  // puesta Y solo existe en `import.meta.env.DEV` — un build de producción no puede activarla.
+  const DEV_UID = import.meta.env.DEV ? (import.meta.env.VITE_DEV_UID as string | undefined) : undefined;
+  const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(
+    DEV_UID ? ({ uid: DEV_UID } as FirebaseUser) : undefined,
+  );
 
   const reloadReview = useCallback(() => {
     getReviewTransactions().then(setReviewTxs).catch(() => setReviewTxs([]));
@@ -82,6 +97,7 @@ function App() {
 
   // Observa el login de Firebase. Al cerrar sesión, limpia el estado de la empresa.
   useEffect(() => {
+    if (DEV_UID) return;               // modo desarrollo: no se escucha a Firebase
     return onAuthStateChanged(auth, (u) => {
       setFbUser(u);
       if (!u) { setCompany(null); setCompanies([]); setReviewTxs([]); }
@@ -150,7 +166,7 @@ function App() {
     }
   }, [company, t]);
 
-  const views: View[] = ["dashboard", "transactions", "review", "pnl", "rules"];
+  const views: View[] = ["dashboard", "transactions", "audit", "pnl", "rules"];
 
   // Verificando sesión de Firebase.
   if (fbUser === undefined) {
@@ -173,7 +189,12 @@ function App() {
   // Vista de escritorio (§5.B): las herramientas de operador (movimientos, reglas) usan MÁS ancho en
   // pantallas grandes; el resto del flujo del dueño queda angosto (mobile-first).
   const wideView = view === "transactions" || view === "rules";
-  const contentWidth = wideView ? "max-w-2xl lg:max-w-5xl" : "max-w-2xl";
+  // LA CONSOLA DEL BOOKKEEPER (FASE 10): la hoja usa TODA la ventana. Un bookkeeper trabaja por
+  // volumen en un monitor grande — cada píxel de margen es una transacción menos que ve de un
+  // vistazo. El resto de vistas siguen centradas y angostas (son para el dueño, en el celular).
+  const fullBleed = view === "transactions" && useSheet;
+  const contentWidth = fullBleed ? "max-w-none" : wideView ? "max-w-2xl lg:max-w-5xl" : "max-w-2xl";
+  const contentPad = fullBleed ? "px-3 sm:px-4 py-3" : "px-4 py-5";
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
@@ -217,7 +238,8 @@ function App() {
         </div>
       </header>
 
-      <main className={`flex-1 w-full ${contentWidth} mx-auto px-4 py-5 pb-24`}>
+      <main className={`flex-1 w-full ${contentWidth} mx-auto ${contentPad} pb-24`}>
+        <VerifyEmailBanner />
         {!company ? (
           <div className="flex justify-center py-16">
             {authError ? (
@@ -238,13 +260,29 @@ function App() {
               <Dashboard onNavigate={setView} />
             )}
             {view === "transactions" && (
-              <Transactions
-                onAddCategory={() => setView("settings")}
-                focusTxId={focusTxId}
-                onFocusHandled={() => setFocusTxId(null)}
-              />
+              <>
+                <div className="flex justify-end mb-2">
+                  <button
+                    onClick={() => setUseSheet((v) => !v)}
+                    className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
+                  >
+                    {useSheet
+                      ? t("sheet.useClassic", { defaultValue: "Use the previous view" })
+                      : t("sheet.useSheet", { defaultValue: "Use the sheet" })}
+                  </button>
+                </div>
+                {useSheet ? (
+                  <Sheet />
+                ) : (
+                  <Transactions
+                    onAddCategory={() => setView("settings")}
+                    focusTxId={focusTxId}
+                    onFocusHandled={() => setFocusTxId(null)}
+                  />
+                )}
+              </>
             )}
-            {view === "review" && (
+            {view === "audit" && (
               <div className="space-y-4">
                 {/* ENTREVISTA ronda 2 (FASE 9): preguntas del agente ancladas en los datos. */}
                 <Interview onApplied={reloadReview} />
@@ -277,8 +315,8 @@ function App() {
         <div className="max-w-2xl mx-auto grid grid-cols-5">
           {views.map((id) => {
             const active = view === id;
-            const count = id === "review" ? reviewTxs.length : 0;
-            const audits = id === "review" ? auditCount : 0; // hallazgos del auditor (ámbar)
+            const count = id === "audit" ? reviewTxs.length : 0;
+            const audits = id === "audit" ? auditCount : 0; // hallazgos del auditor (ámbar)
             return (
               <button
                 key={id}

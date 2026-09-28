@@ -27,8 +27,48 @@ export interface Transaction {
   // Quién categorizó (procedencia). Filas anteriores a FASE 9: banda/transferencia
   // quedaron guardadas como "rule" (eran indistinguibles).
   source: "rule" | "band" | "transfer" | "ai" | "manual" | null;
+  /** Texto que el bookkeeper AGREGA a la descripción del banco. No la reemplaza: `description`
+   *  es la evidencia del extracto y queda intacta. Entra al matcheo de reglas — por eso un cheque
+   *  con destinatario escrito ("CHECK 1234" + "JOE'S PLUMBING") ya puede tener regla. */
+  description_extra: string | null;
+  /** Nota LIBRE del bookkeeper sobre esta línea. No es una `SheetLabel` (catálogo reutilizable)
+   *  ni la observación (la escribe el agente): es lo que él quiere recordar de ESA transacción. */
+  note: string | null;
   matched_rule_id: number | null; // QUÉ regla decidió (referencia suave; null si no fue una regla)
 }
+
+/** Observación del AGENTE AUDITOR para UNA fila — la 6ª columna de la hoja (FASE 10, paso 6).
+ *  Llega con `GET /transactions?with_audit=true`. El `text` viene en INGLÉS (regla de oro);
+ *  la UI traduce por `type` usando los campos estructurados, no el texto crudo. */
+export interface Observation {
+  type: "rule_deviation" | "merchant_inconsistency" | "sign_mismatch" | "uncategorized" | string;
+  severity: "high" | "medium" | "low";
+  text: string | null;
+  account_type?: string | null;   // sign_mismatch
+  direction?: "in" | "out";       // sign_mismatch
+  merchant?: string | null;       // merchant_inconsistency
+  suggested_account_type?: string | null; // rule_deviation → fix de 1 toque
+  suggested_category?: string | null;
+}
+
+/** Etiqueta CON SIGNIFICADO que el bookkeeper define ("falta el recibo"). Es dato: se filtra
+ *  y la IA la puede leer — a diferencia del formato, que son solo píxeles. */
+export interface SheetLabel { id: number; name: string; color: string; }
+
+/** Formato VISUAL de una celda (presentación pura, no entra al P&L). */
+export interface CellFormat {
+  bold?: boolean; italic?: boolean;
+  bg?: string | null; fg?: string | null;
+  font_size?: number | null; font_family?: string | null;
+}
+
+/** Fila de la hoja: la transacción + su observación + sus etiquetas + su formato.
+ *  En `formats`, la clave es la columna; `_row` significa la fila entera. */
+export type SheetRow = Transaction & {
+  observation: Observation | null;
+  labels: SheetLabel[];
+  formats: Record<string, CellFormat>;
+};
 
 export interface Company {
   id: number;
