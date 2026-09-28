@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ContaBu — Bookkeeping, done right</title>
+<meta name="description" content="Monthly bookkeeping for small business owners, and the software platform that modernizes bookkeeping firms. Concord, California." />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<meta name="theme-color" content="#1A8754" />
+<style>
+  :root{--green:#1A8754;--green-dark:#14532d;--green-mid:#15803d;--cream:#FBF7EE;
+    --gold:#f4b400;--slate:#0f172a;--muted:#5b6b62;--line:#e3ded2;--white:#fff}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--cream);color:var(--slate);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:900px;margin:0 auto;padding:0 20px}
+  a{color:var(--green-mid)}
+  header{padding-block:26px 0;display:flex;align-items:center;justify-content:space-between;gap:16px}
+  .brand{display:flex;align-items:center;gap:11px;font-weight:700;font-size:19px;letter-spacing:-.02em}
+  .brand img{width:34px;height:34px;border-radius:9px;display:block}
+  .lang{display:flex;gap:2px;background:var(--white);border:1px solid var(--line);border-radius:999px;padding:3px}
+  .lang button{border:0;background:transparent;font:inherit;font-size:13px;font-weight:600;color:var(--muted);
+    padding:5px 13px;border-radius:999px;cursor:pointer;transition:.15s}
+  .lang button[aria-pressed="true"]{background:var(--green);color:#fff}
+
+  h1{font-size:clamp(30px,5.6vw,47px);line-height:1.1;letter-spacing:-.033em;margin:52px 0 18px;font-weight:800}
+  h1 em{font-style:normal;color:var(--green)}
+  .lede{font-size:clamp(16.5px,2.3vw,19.5px);color:var(--muted);margin:0 0 46px;max-width:640px}
+  h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
+    font-weight:700;margin:0 0 18px}
+
+  .paths{display:grid;grid-template-columns:1fr 1fr;gap:17px;margin-bottom:56px}
+  .path{background:var(--white);border:1px solid var(--line);border-radius:15px;padding:26px;display:flex;flex-direction:column}
+  .path.dark{background:var(--green-dark);border-color:var(--green-dark);color:var(--cream)}
+  .tag{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:700;letter-spacing:.05em;
+    text-transform:uppercase;color:var(--green);margin-bottom:12px}
+  .path.dark .tag{color:var(--gold)}
+  .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+  .path h3{margin:0 0 9px;font-size:21px;letter-spacing:-.02em;line-height:1.25}
+  .path>p{margin:0 0 17px;font-size:15px;color:var(--muted);line-height:1.55}
+  .path.dark>p{color:#c9dcd0}
+  ul{list-style:none;padding:0;margin:0 0 22px;font-size:14.5px}
+  li{padding-left:22px;position:relative;margin-bottom:8px;color:var(--muted);line-height:1.5}
+  .path.dark li{color:#c9dcd0}
+  li::before{content:"✓";position:absolute;left:0;color:var(--green);font-weight:700}
+  .path.dark li::before{color:var(--gold)}
+  .btn{display:inline-block;text-align:center;background:var(--green);color:#fff;text-decoration:none;
+    font-weight:700;font-size:14.5px;padding:12px 20px;border-radius:9px;transition:.15s;margin-top:auto;border:0;cursor:pointer}
+  .btn:hover{background:var(--green-mid)}
+  .path.dark .btn{background:var(--cream);color:var(--green-dark)}
+  .path.dark .btn:hover{background:#fff}
+
+  .form-card{background:var(--white);border:1px solid var(--line);border-radius:15px;padding:28px;margin-bottom:56px}
+  .form-card h2{margin:0 0 8px;font-size:23px;letter-spacing:-.02em}
+  .form-card>p{margin:0 0 22px;color:var(--muted);font-size:15px}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  label{display:block;font-size:13.5px;font-weight:600;margin-bottom:6px}
+  input,select,textarea{width:100%;font:inherit;font-size:15px;padding:11px 13px;border:1px solid var(--line);
+    border-radius:9px;background:var(--cream);color:var(--slate);margin-bottom:15px}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--green);outline-offset:-1px;background:#fff}
+  textarea{min-height:110px;resize:vertical}
+  .hp{position:absolute;left:-9999px}
+  .note{font-size:12.5px;color:var(--muted);margin:13px 0 0}
+  .status{margin-top:14px;font-size:14.5px;font-weight:600;padding:12px 14px;border-radius:9px}
+  .status.ok{background:rgba(26,135,84,.1);color:var(--green-dark)}
+  .status.err{background:rgba(200,60,40,.1);color:#9b2c19}
+
+  footer{border-top:1px solid var(--line);padding-block:24px 44px;font-size:13.5px;color:var(--muted);
+    display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
+  footer a{text-decoration:none;font-weight:600}
+  [hidden]{display:none!important}
+  @media(max-width:660px){.paths,.row{grid-template-columns:1fr}h1{margin-top:38px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand"><img src="/icon.svg" alt="" /> ContaBu</div>
+  <div class="lang" role="group" aria-label="Language">
+    <button id="b-en" aria-pressed="true"  onclick="setLang('en')">EN</button>
+    <button id="b-es" aria-pressed="false" onclick="setLang('es')">ES</button>
+  </div>
+</header>
+
+<!-- ══════════════ EN ══════════════ -->
+<main id="en">
+  <h1>Your books, <em>actually understood.</em></h1>
+  <p class="lede">We keep the books for small business owners across the Bay Area — and we build the
+    software that lets bookkeeping firms do the same, faster. Two ways to work with us.</p>
+
+  <h2 class="sec">Which one are you?</h2>
+  <div class="paths">
+    <div class="path">
+      <span class="tag"><span class="dot"></span> Business owners</span>
+      <h3>We keep your books</h3>
+      <p>Month to month, no contract. In English or Spanish — whichever you actually think in.</p>
+      <ul>
+        <li>Every bank and card transaction categorized</li>
+        <li>A real P&amp;L each month: what came in, what went out, what you actually made</li>
+        <li>Year-end package ready for your tax preparer</li>
+        <li>Behind on your books? We catch you up</li>
+        <li>Payroll handled, taxes filed on time</li>
+      </ul>
+      <a class="btn" href="#contact" onclick="pick('owner')">Get a quote</a>
+    </div>
+
+    <div class="path dark">
+      <span class="tag"><span class="dot"></span> Bookkeeping firms · early access</span>
+      <h3>The platform behind it</h3>
+      <p>One sheet for every client account, with an AI agent that reviews each line. In development —
+        we're onboarding a small group first.</p>
+      <ul>
+        <li>A spreadsheet you already know how to use, not a review queue</li>
+        <li>You write the rules; the agent checks them and finds the errors</li>
+        <li>Per client, or shared across a whole sector</li>
+        <li>P&amp;L and balance sheet in your format, editable any time</li>
+        <li>Bank accounts synced automatically</li>
+      </ul>
+      <a class="btn" href="#contact" onclick="pick('firm')">Request early access</a>
+    </div>
+  </div>
+</main>
+
+<!-- ══════════════ ES ══════════════ -->
+<main id="es" hidden>
+  <h1>Tus libros, <em>de verdad entendidos.</em></h1>
+  <p class="lede">Llevamos la contabilidad de dueños de negocio en el Bay Area — y construimos el
+    software que le permite a las oficinas de bookkeeping hacer lo mismo, más rápido. Dos formas de
+    trabajar con nosotros.</p>
+
+  <h2 class="sec">¿Cuál eres tú?</h2>
+  <div class="paths">
+    <div class="path">
+      <span class="tag"><span class="dot"></span> Dueños de negocio</span>
+      <h3>Nosotros llevamos tus libros</h3>
+      <p>Mes a mes, sin contrato de permanencia. En español o inglés — en el idioma en el que piensas.</p>
+      <ul>
+        <li>Cada movimiento del banco y la tarjeta, clasificado</li>
+        <li>Tu Estado de Resultados cada mes: cuánto entró, cuánto salió, cuánto ganaste de verdad</li>
+        <li>Reporte de fin de año listo para tu preparador de impuestos</li>
+        <li>¿Atrasado con tus libros? Te ponemos al día</li>
+        <li>Nómina corrida y sus impuestos presentados a tiempo</li>
+      </ul>
+      <a class="btn" href="#contact" onclick="pick('owner')">Pedir cotización</a>
+    </div>
+
+    <div class="path dark">
+      <span class="tag"><span class="dot"></span> Oficinas de bookkeeping · acceso anticipado</span>
+      <h3>La plataforma detrás</h3>
+      <p>Una sola hoja para todas las cuentas de tus clientes, con un agente de IA que revisa cada
+        renglón. En desarrollo — estamos entrando con un grupo pequeño primero.</p>
+      <ul>
+        <li>Una hoja de cálculo que ya sabes usar, no una fila de revisión</li>
+        <li>Tú escribes las reglas; el agente las verifica y encuentra los errores</li>
+        <li>Por cliente, o compartidas por sector completo</li>
+        <li>Estado de resultados y balance en tu formato, editables cuando quieras</li>
+        <li>Cuentas de banco sincronizadas automáticamente</li>
+      </ul>
+      <a class="btn" href="#contact" onclick="pick('firm')">Pedir acceso anticipado</a>
+    </div>
+  </div>
+</main>
+
+<!-- ══════════════ FORMULARIO ══════════════ -->
+<div class="form-card" id="contact">
+  <h2 data-en="Talk to us" data-es="Hablemos">Talk to us</h2>
+  <p data-en="Tell us a bit about your situation and we'll get back to you personally."
+     data-es="Cuéntanos un poco de tu situación y te respondemos personalmente.">Tell us a bit about your situation and we'll get back to you personally.</p>
+
+  <form id="cform" action="https://api.web3forms.com/submit" method="POST">
+    <!-- Access key de Web3Forms. Los mensajes llegan a jose@contabu.com.
+         NO es secreta: va en el HTML público por diseño (solo enruta al correo).
+         250 envíos/mes gratis. Si algún día entra spam, se genera otra en
+         web3forms.com y esta deja de servir. Creada el 26-sep-2026. -->
+    <input type="hidden" name="access_key" value="55552668-ff0a-431f-a0c9-aee1130928c2" />
+    <input type="hidden" name="subject" value="New ContaBu enquiry from the website" />
+    <input type="hidden" name="from_name" value="ContaBu website" />
+    <input type="checkbox" name="botcheck" class="hp" tabindex="-1" autocomplete="off" />
+
+    <div class="row">
+      <div>
+        <label for="name" data-en="Name" data-es="Nombre">Name</label>
+        <input id="name" name="name" required autocomplete="name" />
+      </div>
+      <div>
+        <label for="email" data-en="Email" data-es="Correo">Email</label>
+        <input id="email" name="email" type="email" required autocomplete="email" />
+      </div>
+    </div>
+
+    <label for="who" data-en="I am a…" data-es="Soy…">I am a…</label>
+    <select id="who" name="i_am" required>
+      <option value="owner"  data-en="A business owner looking for bookkeeping"
+                             data-es="Dueño de negocio que busca bookkeeping">A business owner looking for bookkeeping</option>
+      <option value="firm"   data-en="A bookkeeper / firm interested in the platform"
+                             data-es="Bookkeeper u oficina interesada en la plataforma">A bookkeeper / firm interested in the platform</option>
+      <option value="other"  data-en="Something else" data-es="Otra cosa">Something else</option>
+    </select>
+
+    <label for="msg" data-en="How can we help?" data-es="¿En qué te podemos ayudar?">How can we help?</label>
+    <textarea id="msg" name="message" required
+      data-en-ph="Your business, how many accounts, how far behind you are — whatever is useful."
+      data-es-ph="Tu negocio, cuántas cuentas tienes, qué tan atrasado estás — lo que sirva."></textarea>
+
+    <button class="btn" type="submit" id="submit-btn"
+      data-en="Send message" data-es="Enviar mensaje">Send message</button>
+
+    <p class="note" data-en="We reply within one business day. Please don't send account numbers or passwords here."
+       data-es="Respondemos en un día hábil. Por favor no envíes números de cuenta ni contraseñas aquí.">We reply within one business day.</p>
+  </form>
+  <div id="status" class="status" hidden></div>
+</div>
+
+<footer>
+  <span>© 2026 ContaBu · Concord, California</span>
+  <a href="mailto:jose@contabu.com">jose@contabu.com</a>
+</footer>
+</div>
+
+<script>
+var LANG = 'en';
+function setLang(l){
+  LANG = l;
+  document.getElementById('en').hidden = (l !== 'en');
+  document.getElementById('es').hidden = (l !== 'es');
+  document.getElementById('b-en').setAttribute('aria-pressed', l === 'en');
+  document.getElementById('b-es').setAttribute('aria-pressed', l === 'es');
+  document.documentElement.lang = l;
+  document.querySelectorAll('[data-' + l + ']').forEach(function(el){
+    el.textContent = el.getAttribute('data-' + l);
+  });
+  document.querySelectorAll('[data-' + l + '-ph]').forEach(function(el){
+    el.placeholder = el.getAttribute('data-' + l + '-ph');
+  });
+  try{ localStorage.setItem('contabu-lang', l); }catch(e){}
+}
+function pick(v){ document.getElementById('who').value = v; }
+
+var initial = 'en';
+try{
+  var saved = localStorage.getItem('contabu-lang');
+  initial = (saved === 'es' || saved === 'en') ? saved
+          : ((navigator.language || 'en').slice(0,2) === 'es' ? 'es' : 'en');
+}catch(e){}
+setLang(initial);
+
+document.getElementById('cform').addEventListener('submit', async function(e){
+  e.preventDefault();
+  var btn = document.getElementById('submit-btn'), box = document.getElementById('status');
+  btn.disabled = true;
+  btn.textContent = LANG === 'es' ? 'Enviando…' : 'Sending…';
+  try{
+    var res = await fetch('https://api.web3forms.com/submit', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Accept':'application/json'},
+      body: JSON.stringify(Object.fromEntries(new FormData(e.target)))
+    });
+    var data = await res.json();
+    box.hidden = false;
+    if (data.success){
+      box.className = 'status ok';
+      box.textContent = LANG === 'es'
+        ? '¡Gracias! Recibimos tu mensaje y te respondemos en un día hábil.'
+        : 'Thank you! We got your message and will reply within one business day.';
+      e.target.reset(); setLang(LANG);
+    } else {
+      throw new Error(data.message || 'failed');
+    }
+  } catch(err){
+    box.hidden = false;
+    box.className = 'status err';
+    box.textContent = LANG === 'es'
+      ? 'No se pudo enviar. Escríbenos directo a jose@contabu.com'
+      : "Couldn't send. Please email us directly at jose@contabu.com";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = LANG === 'es' ? 'Enviar mensaje' : 'Send message';
+  }
+});
+</script>
+</body>
+</html>
