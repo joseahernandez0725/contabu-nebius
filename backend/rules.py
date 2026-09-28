@@ -113,6 +113,18 @@ def merchant_signature(description: Optional[str], tokens: int = 2) -> str:
     return "".join(sig[:tokens])
 
 
+def matchable_text(description: Optional[str], extra: Optional[str] = None) -> str:
+    """El texto contra el que se evalúan las reglas: la descripción del banco **más** lo que el
+    bookkeeper agregó (`Transaction.description_extra`).
+
+    Existe porque el extracto casi nunca basta: un cheque llega como "CHECK 1234" y una ACH como
+    "ACH DEBIT 0398174 CO REF" — ninguna regla puede engancharse a eso. Escribiendo a quién fue el
+    cheque, esa transacción entra al reglamento como cualquier otra. El texto del banco NO se
+    modifica (es la evidencia); solo se concatena para buscar.
+    """
+    return " ".join(x for x in (description, extra) if x)
+
+
 def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryRule]:
     """Carga las reglas **COMPANY** de la empresa, ordenadas por especificidad (más largo primero).
 
@@ -284,12 +296,21 @@ def apply_rule_to_transactions(
     for t in txs:
         if exclude_id is not None and t.id == exclude_id:
             continue
-        if is_check(t.description):
-            continue  # los cheques no se agrupan por comercio
-        if match_rule([rule], t.description or "") is None:
+        # Un cheque SIN texto del bookkeeper sigue excluido (no hay nada a qué engancharse). Con
+        # texto ("JOE'S PLUMBING") entra al juego normal: el plomero mensual ya puede tener regla.
+        if is_check(t.description) and not getattr(t, "description_extra", None):
+            continue
+        if match_rule([rule], matchable_text(t.description, getattr(t, "description_extra", None))) is None:
             continue
         if (t.account_type, t.category) == (rule.account_type, rule.category):
-            continue  # ya está alineada
+            # Ya tiene los valores correctos, pero puede que le falte la PROCEDENCIA: esta regla sí
+            # la cubre, así que se estampa igual. Sin esto la hoja no puede mostrar la marca `ƒ`
+            # (celda = "fórmula") ni el auditor puede detectar un desvío más adelante.
+            if t.matched_rule_id != rule.id:
+                t.matched_rule_id = rule.id
+                t.source = "rule"
+                session.add(t)
+            continue
         t.account_type = rule.account_type
         t.category = rule.category
         if rule.subcategory:  # la regla trae comercio presentable → unifica; si no, se respeta el de cada tx

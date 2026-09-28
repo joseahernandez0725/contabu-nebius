@@ -32,11 +32,13 @@ from ingestion import categorize_pending, ingest_csv, make_fingerprint, mask_acc
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
-)
-from reports import income_statement
+    SheetLabel,
+    TransactionLabel,
+    CellFormat,)
+from reports import pivot, pivot_leaves, income_statement
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
-    is_check, load_rules, match_rule, upsert_company_rule, validate_keyword,
+    is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
 )
 
 
@@ -48,11 +50,16 @@ class TransactionUpdate(BaseModel):
     - "only_this": excepción puntual — NO toca ninguna regla (una excepción no reescribe el reglamento).
     - "update_rule": edita LA regla que cubría esta transacción (`matched_rule_id`) y re-alinea
       todas las que matchea (corregir el reglamento, no la transacción).
+    - "follow_rule": lo contrario de escribir a mano — la celda vuelve a ser "fórmula". Busca la
+      regla que matchearía esta descripción y la aplica, restaurando `matched_rule_id`.
     """
     account_type: Optional[AccountType] = None
     category: Optional[str] = None
     subcategory: Optional[str] = None
     needs_review: Optional[bool] = None
+    note: Optional[str] = None   # nota libre del bookkeeper sobre ESTA línea (FASE 10)
+    # Texto que el bookkeeper AGREGA a la descripción del banco (no la reemplaza). Entra al matcheo.
+    description_extra: Optional[str] = None
     rule_action: Optional[str] = None  # None | "only_this" | "update_rule"
 
 
@@ -764,11 +771,15 @@ def list_rules(
     ).all()
     out = []
     for r in rules:
-        matches = sum(1 for t in txs if match_rule([r], t.description or "") is not None)
+        matches = sum(1 for t in txs
+                      if match_rule([r], matchable_text(t.description, t.description_extra)) is not None)
         out.append({
             "id": r.id, "match_text": r.match_text,
             "account_type": r.account_type.value if r.account_type else None,
             "category": r.category, "subcategory": r.subcategory, "matches": matches,
+            # `scope`/`sector`: si la regla es de ESTE libro o de todo un sector (la hoja de reglas
+            # los muestra como una sola columna "Sector": "This book" o el nombre del sector).
+            "scope": r.scope.value, "sector": r.sector,
         })
     out.sort(key=lambda x: x["matches"], reverse=True)
     return out
@@ -927,6 +938,149 @@ def _company_audit(session: Session, company_id: int) -> list[dict]:
     return audit_categorization(items, rules_by_id)
 
 
+def _audit_by_transaction(session: Session, company_id: int) -> dict[int, dict]:
+    """Invierte la salida del AUDITOR (hallazgos por GRUPO, con `transaction_ids`) a un mapa
+    **por transacción** → la "observación" de la hoja (FASE 10, paso 6).
+
+    El auditor agrupa (una inconsistencia cubre varias transacciones del mismo comercio); la hoja
+    necesita un renglón por fila. Si una transacción cae en varios hallazgos, gana el más severo.
+    """
+    order = {"high": 3, "medium": 2, "low": 1}
+    by_tx: dict[int, dict] = {}
+    for f in _company_audit(session, company_id):
+        # Se pasa TODO el hallazgo menos lo voluminoso: el frontend traduce por `type` usando los
+        # campos estructurados (account_type, direction, merchant…), no el texto crudo.
+        obs = {k: v for k, v in f.items() if k not in ("transaction_ids", "examples")}
+        obs["text"] = f.get("detail")
+        for tid in f.get("transaction_ids", []):
+            prev = by_tx.get(tid)
+            if prev is None or order.get(obs["severity"], 0) > order.get(prev["severity"], 0):
+                by_tx[tid] = obs
+    return by_tx
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# LA HOJA (FASE 10): etiquetas con significado + formato libre de celda.
+# Son dos cosas a propósito: la etiqueta es DATO (se filtra, la IA la lee); el formato es
+# PRESENTACIÓN (no entra al P&L ni lo lee nadie más que el ojo del bookkeeper).
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+class LabelIn(BaseModel):
+    name: str
+    color: str = "#f4b400"
+
+
+@app.get("/api/companies/{company_id}/labels")
+def list_labels(company_id: int, user: User = Depends(current_user),
+                session: Session = Depends(get_session)):
+    """Catálogo de etiquetas que el bookkeeper definió para esta empresa."""
+    owned_company(company_id, user, session)
+    return session.exec(
+        select(SheetLabel).where(SheetLabel.company_id == company_id).order_by(SheetLabel.id)
+    ).all()
+
+
+@app.post("/api/companies/{company_id}/labels")
+def create_label(company_id: int, payload: LabelIn, user: User = Depends(current_user),
+                 session: Session = Depends(get_session)):
+    owned_company(company_id, user, session)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="la etiqueta necesita un nombre")
+    existing = session.exec(
+        select(SheetLabel).where(SheetLabel.company_id == company_id, SheetLabel.name == name)
+    ).first()
+    if existing:
+        return existing
+    label = SheetLabel(company_id=company_id, name=name, color=payload.color)
+    session.add(label); session.commit(); session.refresh(label)
+    return label
+
+
+@app.delete("/api/labels/{label_id}")
+def delete_label(label_id: int, user: User = Depends(current_user),
+                 session: Session = Depends(get_session)):
+    label = session.get(SheetLabel, label_id)
+    if not label:
+        raise HTTPException(status_code=404, detail="no existe")
+    owned_company(label.company_id, user, session)
+    # Se quitan primero las aplicaciones: borrar una etiqueta no debe dejar filas colgadas.
+    session.exec(delete(TransactionLabel).where(TransactionLabel.label_id == label_id))
+    session.delete(label); session.commit()
+    return {"ok": True}
+
+
+class TxLabelsIn(BaseModel):
+    """Estado COMPLETO de etiquetas de la transacción (reemplaza, no suma)."""
+    label_ids: list[int] = []
+
+
+@app.put("/api/transactions/{transaction_id}/labels")
+def set_transaction_labels(transaction_id: int, payload: TxLabelsIn,
+                           user: User = Depends(current_user),
+                           session: Session = Depends(get_session)):
+    """Fija las etiquetas de una transacción. Es un PUT (estado completo) para que marcar y
+    desmarcar sean la misma operación y no haya que llevar la cuenta en el frontend."""
+    tx = owned_transaction(transaction_id, user, session, write=True)
+    valid = {l.id for l in session.exec(
+        select(SheetLabel).where(SheetLabel.company_id == tx.company_id)).all()}
+    bad = set(payload.label_ids) - valid
+    if bad:
+        raise HTTPException(status_code=422, detail=f"etiquetas ajenas a esta empresa: {sorted(bad)}")
+    session.exec(delete(TransactionLabel).where(TransactionLabel.transaction_id == transaction_id))
+    for lid in dict.fromkeys(payload.label_ids):
+        session.add(TransactionLabel(transaction_id=transaction_id, label_id=lid))
+    session.commit()
+    return {"transaction_id": transaction_id, "label_ids": payload.label_ids}
+
+
+class CellFormatIn(BaseModel):
+    """Formato a aplicar. `transaction_ids` permite pintar un RANGO de una sola vez.
+    Un campo en `None` no se toca; para limpiar se manda `clear: true`."""
+    transaction_ids: list[int]
+    column: Optional[str] = None      # None = la fila entera
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    bg: Optional[str] = None
+    fg: Optional[str] = None
+    font_size: Optional[int] = None
+    font_family: Optional[str] = None
+    clear: bool = False
+
+
+@app.post("/api/companies/{company_id}/cell-formats")
+def apply_cell_format(company_id: int, payload: CellFormatIn,
+                      user: User = Depends(current_user),
+                      session: Session = Depends(get_session)):
+    """Aplica (o limpia) formato sobre una o muchas celdas. UPSERT por (transacción, columna)."""
+    owned_company(company_id, user, session)
+    owned = {t.id for t in session.exec(
+        select(Transaction).where(Transaction.company_id == company_id,
+                                  Transaction.id.in_(payload.transaction_ids))).all()}
+    bad = set(payload.transaction_ids) - owned
+    if bad:
+        raise HTTPException(status_code=403, detail=f"transacciones ajenas: {sorted(bad)}")
+
+    changed = 0
+    for tid in owned:
+        row = session.exec(select(CellFormat).where(
+            CellFormat.transaction_id == tid, CellFormat.col == payload.column)).first()
+        if payload.clear:
+            if row:
+                session.delete(row); changed += 1
+            continue
+        if row is None:
+            row = CellFormat(transaction_id=tid, col=payload.column)
+        for f in ("bold", "italic", "bg", "fg", "font_size", "font_family"):
+            v = getattr(payload, f)
+            if v is not None:
+                setattr(row, f, v)
+        row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(row); changed += 1
+    session.commit()
+    return {"changed": changed}
+
+
 @app.get("/api/companies/{company_id}/audit")
 def audit_company(
     company_id: int,
@@ -1083,7 +1237,7 @@ def cleanup_rules(
     ).all()
     removed = 0
     for r in rules:
-        if not any(match_rule([r], t.description or "") is not None for t in txs):
+        if not any(match_rule([r], matchable_text(t.description, t.description_extra)) is not None for t in txs):
             session.delete(r)
             removed += 1
     session.commit()
@@ -1230,16 +1384,58 @@ def delete_pnl_report(
 @app.get("/api/companies/{company_id}/transactions")
 def list_transactions(
     company_id: int,
+    with_audit: bool = False,
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Lista las transacciones de una empresa (más recientes primero)."""
+    """Lista las transacciones de una empresa (más recientes primero).
+
+    `with_audit=true` adjunta a cada fila su **observación** del agente auditor (la 6ª columna de la
+    hoja, FASE 10). Se calcula en memoria sobre los datos vivos — determinista y sin IA, así que no
+    cuesta nada; por eso va en la misma llamada en vez de obligar al frontend a cruzar dos listas.
+    """
     owned_company(company_id, user, session)
-    return session.exec(
+    txs = session.exec(
         select(Transaction)
         .where(Transaction.company_id == company_id)
         .order_by(Transaction.date.desc())
     ).all()
+    if not with_audit:
+        return txs
+    obs = _audit_by_transaction(session, company_id)
+
+    # Etiquetas aplicadas (dato) y formato de celda (presentación) — en la MISMA llamada para que
+    # la hoja pinte de una sola vez y no encadene tres peticiones al abrir.
+    labels = {l.id: l for l in session.exec(
+        select(SheetLabel).where(SheetLabel.company_id == company_id)).all()}
+    by_tx: dict[int, list[dict]] = {}
+    for tl in session.exec(
+        select(TransactionLabel).join(
+            Transaction, Transaction.id == TransactionLabel.transaction_id
+        ).where(Transaction.company_id == company_id)
+    ).all():
+        lab = labels.get(tl.label_id)
+        if lab:
+            by_tx.setdefault(tl.transaction_id, []).append(
+                {"id": lab.id, "name": lab.name, "color": lab.color})
+
+    fmts: dict[int, dict[str, dict]] = {}
+    for cf in session.exec(
+        select(CellFormat).join(
+            Transaction, Transaction.id == CellFormat.transaction_id
+        ).where(Transaction.company_id == company_id)
+    ).all():
+        fmts.setdefault(cf.transaction_id, {})[cf.col or "_row"] = {
+            "bold": cf.bold, "italic": cf.italic, "bg": cf.bg, "fg": cf.fg,
+            "font_size": cf.font_size, "font_family": cf.font_family,
+        }
+
+    return [{
+        **t.model_dump(),
+        "observation": obs.get(t.id),
+        "labels": by_tx.get(t.id, []),
+        "formats": fmts.get(t.id, {}),
+    } for t in txs]
 
 
 @app.get("/api/companies/{company_id}/income-statement")
@@ -1253,6 +1449,36 @@ def get_income_statement(
     """Estado de resultados (P&L) calculado en SQL, opcional por rango `start`/`end` (YYYY-MM-DD)."""
     owned_company(company_id, user, session)
     return income_statement(session, company_id, start, end)
+
+
+@app.get("/api/companies/{company_id}/pivot")
+def get_pivot(
+    company_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    account: Optional[str] = None,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """EL PIVOTE (FASE 10 paso 7): categoría → subcategoría → mes. Totales agregados en SQL."""
+    owned_company(company_id, user, session)
+    return pivot(session, company_id, start, end, account)
+
+
+@app.get("/api/companies/{company_id}/pivot/leaves")
+def get_pivot_leaves(
+    company_id: int,
+    section: str,
+    category: str,
+    subcategory: str,
+    month: str,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """El último `+` del pivote: las transacciones de ese mes, con día y descripción.
+    Se piden aparte para no cargar el árbol entero al abrir."""
+    owned_company(company_id, user, session)
+    return pivot_leaves(session, company_id, section, category, subcategory, month)
 
 
 @app.get("/api/companies/{company_id}/transactions/review")
@@ -1282,6 +1508,55 @@ def update_transaction(
     tx = owned_transaction(transaction_id, user, session, write=True)
     data = payload.model_dump(exclude_unset=True)
     rule_action = data.pop("rule_action", None)  # intención sobre el reglamento (no es campo de tx)
+
+    # VOLVER A SEGUIR LA REGLA (FASE 10) — el inverso de escribir a mano.
+    #
+    # Modelo mental de hoja de cálculo (idea de Jose): una celda puede tener una "fórmula" (la
+    # decidió una regla → `matched_rule_id`) o un valor escrito "a mano" (`source="manual"`, sin
+    # regla). Editar la celda rompe la fórmula; esto la restaura: busca la regla que matchearía
+    # esta descripción y la vuelve a aplicar.
+    if rule_action == "follow_rule":
+        company = session.get(Company, tx.company_id)
+        rules = load_rules(session, tx.company_id, company.sector if company else "")
+        rule = match_rule(rules, matchable_text(tx.description, tx.description_extra))
+        if rule is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Ninguna regla cubre esta transacción. Crea una en la hoja de reglas.",
+            )
+        tx.account_type = rule.account_type
+        tx.category = rule.category
+        tx.subcategory = (rule.subcategory or rule.match_text).upper()
+        tx.source = "rule"
+        tx.matched_rule_id = rule.id
+        tx.confidence = 1.0
+        session.add(tx); session.commit(); session.refresh(tx)
+        return {"id": tx.id, "applied": 0, "rule_updated": False,
+                "followed_rule": {"id": rule.id, "match_text": rule.match_text,
+                                  "category": rule.category}}
+
+    # EL CANDADO DEL PLAN DE CUENTAS (FASE 10). `categories.py` mantiene un plan CERRADO por sector
+    # para que la IA no invente cuentas — pero hasta ahora ese candado solo existía del lado de la IA:
+    # este endpoint guardaba cualquier string. Con la hoja editable (paso 6) eso se vuelve un agujero
+    # real: el P&L agrupa por el TEXTO de la categoría (`reports.py`), así que "Materials" y
+    # "Materiales" se parten en dos renglones, y el auditor reporta inconsistencias fantasma.
+    if data.get("category"):
+        company = session.get(Company, tx.company_id)
+        chart = categories_for_company(session, tx.company_id, company.sector if company else "")
+        valid = {c for cats in chart.values() for c in cats}
+        if data["category"] not in valid:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"'{data['category']}' no está en el plan de cuentas de esta empresa. "
+                        "Agrégala en Ajustes si de verdad hace falta."),
+            )
+        # La categoría PERTENECE a una sección: si llega sin `account_type`, se deduce del plan.
+        # Así una celda editada nunca queda con la cuenta en una sección y el monto sumando en otra.
+        if not data.get("account_type"):
+            for section, cats in chart.items():
+                if data["category"] in cats:
+                    data["account_type"] = AccountType(section)
+                    break
     if data.get("subcategory"):
         data["subcategory"] = data["subcategory"].upper()  # subcategorías siempre en MAYÚSCULA
     for field, value in data.items():

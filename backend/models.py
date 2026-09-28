@@ -159,6 +159,16 @@ class Transaction(SQLModel, table=True):
     # (sin FK a propósito): si la regla se edita/borra, el historial de "qué actuó en su momento"
     # se conserva; el frontend muestra "regla eliminada" si ya no existe. Alimenta al auditor
     # (señal de desvío exacta) y la higiene de reglas muertas.
+    # TEXTO QUE EL BOOKKEEPER AGREGA a la descripción del banco (FASE 10). NO la reemplaza: el
+    # extracto es la EVIDENCIA y se conserva intacto en `description`. Se usa sobre todo en cheques
+    # y líneas ACH crípticas ("CHECK 1234" → + "JOE'S PLUMBING"), y entra al MATCHEO DE REGLAS —
+    # que es el punto: un cheque con destinatario escrito ya puede tener regla.
+    description_extra: Optional[str] = Field(default=None)
+
+    # NOTA del bookkeeper sobre ESTA línea (FASE 10). Distinta de `SheetLabel`, que es un catálogo
+    # reutilizable: la nota es texto libre y única de esta transacción ("el cliente dijo que el
+    # recibo lo manda el lunes"). Distinta también de `observation`, que la escribe el agente.
+    note: Optional[str] = Field(default=None)
     matched_rule_id: Optional[int] = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=_utcnow)
@@ -223,6 +233,49 @@ class CompanyCategory(SQLModel, table=True):
     account_type: AccountType  # sección del P&L a la que pertenece la categoría
     name: str                  # nombre de la cuenta (inglés)
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class SheetLabel(SQLModel, table=True):
+    """Etiqueta CON SIGNIFICADO que el bookkeeper define para su empresa (la hoja, FASE 10).
+
+    Es el "resaltar en amarillo" de Excel, pero como DATO: un bookkeeper no pinta una celda por
+    decoración — la pinta porque significa algo ("falta el recibo", "preguntar al cliente"). Guardado
+    como etiqueta se puede **filtrar**, la **IA la puede leer** y sale en reportes; guardado como
+    color suelto serían solo píxeles. El formato libre de celda vive aparte, en `CellFormat`.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    name: str                      # lo que significa, escrito por el bookkeeper
+    color: str = Field(default="#f4b400")   # hex, para pintar la fila/celda
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class TransactionLabel(SQLModel, table=True):
+    """Una `SheetLabel` aplicada a una transacción (una transacción puede tener varias)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transaction_id: int = Field(foreign_key="transaction.id", index=True)
+    label_id: int = Field(foreign_key="sheetlabel.id", index=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class CellFormat(SQLModel, table=True):
+    """Formato VISUAL libre de una celda — negrilla, cursiva, colores, tamaño y tipo de letra.
+
+    Es presentación, no dato contable: no entra al P&L ni lo lee la IA. Existe porque el bookkeeper
+    viene de Excel y ahí marca cosas a su manera. Para lo que SÍ debe poder filtrarse o leer un
+    agente está `SheetLabel`. `col` = `None` significa la fila entera.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transaction_id: int = Field(foreign_key="transaction.id", index=True)
+    # `col`, no `column`: "column" es palabra reservada en SQL y rompe cualquier consulta manual.
+    col: Optional[str] = Field(default=None, index=True)  # date|description|amount|category|subcategory|None
+    bold: bool = Field(default=False)
+    italic: bool = Field(default=False)
+    bg: Optional[str] = Field(default=None)          # color de fondo (hex)
+    fg: Optional[str] = Field(default=None)          # color de texto (hex)
+    font_size: Optional[int] = Field(default=None)   # px
+    font_family: Optional[str] = Field(default=None)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class CompanyMember(SQLModel, table=True):

@@ -20,7 +20,22 @@ from dateutil import parser as dateparser
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+import os
+
 from ai import categorize_transaction, map_columns
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# LA IA NO CATEGORIZA (idea #15 de Jose, decidida el 27-sep-2026).
+#
+# "Toda la categorización sale de la base de reglas; los agentes únicamente supervisan que todo
+# esté coherente." Lo que ninguna regla/banda/transferencia cubre **NO se rellena con una
+# adivinanza**: queda como PENDIENTE (rojo en la hoja) y el bookkeeper decide — categoría a mano
+# (queda `✎`) o una regla nueva (queda `ƒ`). La IA pasa a dos trabajos: **proponer reglas** (a
+# pedido del usuario, `POST /rule-proposals`) y **auditar coherencia** (determinista, gratis).
+#
+# Se deja tras una bandera para poder volver atrás sin tocar código. Ver `IDEAS.md` #15.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+AI_CATEGORIZES = os.getenv("AI_CATEGORIZES", "").lower() in {"1", "true", "yes"}
 from company_profile import format_profile_facts
 from models import AccountType, CategoryRule, Company, Transaction
 
@@ -489,6 +504,10 @@ def ingest_csv(
                 continue
             ai_indices.append(idx)
 
+    # La IA no categoriza (ver AI_CATEGORIZES arriba): lo que ninguna regla cubrió queda PENDIENTE.
+    if not AI_CATEGORIZES:
+        ai_indices = []
+
     # Cupo de IA: lo que excede el `ai_limit` NO se categoriza con IA (se inserta sin categorizar).
     # El usuario debe suscribirse/subir de tier para cubrirlas. `quota_blocked` = cuántas se bloquearon.
     quota_blocked = 0
@@ -671,7 +690,7 @@ def categorize_pending(session: Session, company: Company, ai_limit: "int | None
             return idx, None
 
     ai_cats: dict[int, object] = {}
-    if ai_indices:
+    if ai_indices and AI_CATEGORIZES:   # la IA no categoriza: quedan pendientes
         with ThreadPoolExecutor(max_workers=AI_CONCURRENCY) as pool:
             for idx, cat in pool.map(_categorize_one, ai_indices):
                 if cat is not None:

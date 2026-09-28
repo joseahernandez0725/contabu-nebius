@@ -86,7 +86,10 @@ def audit_categorization(items: list[dict], rules_by_id: dict[int, dict] | None 
                     "type": "sign_mismatch",
                     "severity": "high",
                     "transaction_ids": [it["id"]],
-                    "detail": f"{at} pero el dinero {'ENTRÓ' if it.get('is_inflow') else 'SALIÓ'}",
+                    # REGLA DE ORO: el dato va en INGLÉS; el frontend traduce por `type` (i18n).
+                    "detail": f"{at} but the money came {'IN' if it.get('is_inflow') else 'OUT'}",
+                    "account_type": at,                         # estructurado, para que la UI lo traduzca
+                    "direction": "in" if it.get("is_inflow") else "out",
                     "examples": [{"id": it["id"], "description": it.get("description"), "is_inflow": bool(it.get("is_inflow"))}],
                 })
 
