@@ -215,7 +215,7 @@ export default function Onboarding({ company, onDone }: {
 
           <div className="flex justify-center gap-6 text-sm">
             <button onClick={goBack} className="text-slate-500 hover:underline" disabled={saving}>
-              <span className="rtl:hidden">←</span><span className="hidden rtl:inline">→</span>{" "}
+              ←{" "}
               {t("interview.back", { defaultValue: "Back" })}
             </button>
             <button onClick={() => advance(answers)} className="text-slate-500 hover:underline" disabled={saving}>
