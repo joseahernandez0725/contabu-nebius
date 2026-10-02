@@ -5,7 +5,8 @@ Mide con NÚMEROS (no "a ojo") la calidad del motor sobre el SET DE ORO etiqueta
 por un humano que conoce el negocio. Replica el motor REAL en el mismo orden que
 `ingestion.ingest_csv`:
 
-    regla COMPANY/SECTOR  →  banda de monto (super/gasolinera)  →  IA línea por línea
+    regla COMPANY/SECTOR  →  transferencia entre cuentas  →  IA línea por línea
+    (sin banda de monto desde el 1-oct-2026: decisión de Jose)
     →  pase de CONSISTENCIA (mismo comercio → misma categoría)
     →  forzado de revisión en ambiguos  →  detector de signo
 
@@ -15,7 +16,7 @@ confianza, consistencia por comercio, Δ del P&L y top de confusiones.
 
 Uso:
     python eval_engine.py                      # corrida completa (usa IA) → boletín + guarda artefactos
-    python eval_engine.py --no-ai              # solo reglas+bandas (prueba de plomería, sin gastar Gemini)
+    python eval_engine.py --no-ai              # solo reglas+transferencias = el motor de hoy (sin gastar Gemini)
     python eval_engine.py --baseline           # además guarda la corrida como LÍNEA BASE
     python eval_engine.py --compare baseline.json   # compara contra una corrida previa (¿subió o bajó?)
 
@@ -40,7 +41,7 @@ from company_profile import format_profile_facts, p2p_counterparty
 from db import engine
 from ingestion import AI_CONCURRENCY, needs_human_review, unify_merchant_categorization
 from models import AccountType, RuleScope
-from rules import amount_band_category, classify_transfer, load_rules, match_rule
+from rules import classify_transfer, load_rules, match_rule
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GOLD_DEFAULT = os.path.join(HERE, "private", "gold_set_template.csv")
@@ -111,7 +112,7 @@ def interview_profile_from_gold(gold: list[dict]) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Motor real (mismo orden que ingestion): regla → banda → IA → consistencia
+# Motor real (mismo orden que ingestion): regla → transferencia → IA → consistencia
 # --------------------------------------------------------------------------- #
 def run_engine(session: Session, gold: list[dict], sector: str, *,
                sector_only: bool, use_ai: bool, profile: dict | None = None) -> list[dict]:
@@ -126,17 +127,12 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
         rules = [r for r in rules if r.scope == RuleScope.SECTOR]
 
     rule_hits: dict[int, object] = {}
-    band_hits: dict[int, tuple] = {}
     transfer_hits: dict[int, tuple] = {}
     ai_indices: list[int] = []
     for idx, g in enumerate(gold):
         rule = match_rule(rules, g["description"])
         if rule is not None:
             rule_hits[idx] = rule
-            continue
-        band = amount_band_category(g["description"], float(g["signed"]), sector=sector)  # umbrales default
-        if band is not None:
-            band_hits[idx] = band
             continue
         transfer = classify_transfer(g["description"])  # transferencia entre cuentas → NON_PL
         if transfer is not None:
@@ -171,10 +167,6 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
             r = rule_hits[idx]
             p.update(source="rule", at=r.account_type, cat=r.category,
                      sub=(r.match_text or "").upper(), confidence=1.0, needs_review=False)
-        elif idx in band_hits:
-            at, cat, near = band_hits[idx]  # near = zona gris (cerca del umbral) → revisión
-            p.update(source="band", at=at, cat=cat, sub=None,
-                     confidence=0.5 if near else 0.85, needs_review=near)
         elif idx in transfer_hits:
             at, cat = transfer_hits[idx]  # transferencia entre cuentas → NON_PL, determinista
             p.update(source="transfer", at=at, cat=cat, sub=None, confidence=1.0, needs_review=False)
@@ -197,7 +189,7 @@ def run_engine(session: Session, gold: list[dict], sector: str, *,
         p["at"] = p["at"].value if p["at"] is not None else None
         preds.append(p)
 
-    return preds, {"by_rule": len(rule_hits), "by_band": len(band_hits),
+    return preds, {"by_rule": len(rule_hits), "by_band": 0,  # sin banda; la clave sigue para --compare
                    "by_transfer": len(transfer_hits),
                    "by_ai": len(ai_cats), "ai_failed": len(ai_indices) - len(ai_cats),
                    "consistency_adjusted": consistency_adjusted,
@@ -368,7 +360,7 @@ def print_scorecard(sc: dict, *, baseline: dict | None = None):
     print("\n" + "=" * 64)
     print(f"  BOLETÍN DEL CEREBRO — {sc['n']} transacciones del set de oro")
     print("=" * 64)
-    print(f"  Resueltas por: regla={e['by_rule']}  banda={e['by_band']}  "
+    print(f"  Resueltas por: regla={e['by_rule']}  transferencia={e.get('by_transfer', 0)}  "
           f"IA={e['by_ai']}  (IA falló={e['ai_failed']})  reglas cargadas={e['rules_loaded']}")
     print(f"  Pase de consistencia ajustó: {e['consistency_adjusted']} filas")
     print("-" * 64)

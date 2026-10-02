@@ -65,7 +65,7 @@ SECTOR_CATEGORIES: dict[str, dict[str, list[str]]] = {
     },
     "trucking": {
         # Owner-operator: el combustible y el mantenimiento del camión SON el costo directo del
-        # flete (no overhead). La banda de gasolinera lo respeta (ver rules.amount_band_category).
+        # flete (no overhead).
         "REVENUE": ["Freight Revenue"],
         "COGS": ["Fuel", "Truck Repairs & Maintenance", "Tires", "Tolls & Scales",
                  "Truck Lease", "Driver Pay", "Dispatch & Broker Fees"],
