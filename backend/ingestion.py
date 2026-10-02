@@ -28,7 +28,7 @@ from ai import categorize_transaction, map_columns
 # LA IA NO CATEGORIZA (idea #15 de Jose, decidida el 27-sep-2026).
 #
 # "Toda la categorización sale de la base de reglas; los agentes únicamente supervisan que todo
-# esté coherente." Lo que ninguna regla/banda/transferencia cubre **NO se rellena con una
+# esté coherente." Lo que ninguna regla/transferencia cubre **NO se rellena con una
 # adivinanza**: queda como PENDIENTE (rojo en la hoja) y el bookkeeper decide — categoría a mano
 # (queda `✎`) o una regla nueva (queda `ƒ`). La IA pasa a dos trabajos: **proponer reglas** (a
 # pedido del usuario, `POST /rule-proposals`) y **auditar coherencia** (determinista, gratis).
@@ -67,26 +67,14 @@ def is_pending(status: str | None) -> bool:
         return False
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
-from rules import (
-    amount_band_category, check_number, classify_transfer, is_check, load_learned_merchants,
-    load_rules, match_rule, specific_phrase, upsert_learned_merchant,
-)
+import criteria
+from rules import check_number, classify_transfer, is_check, load_rules, match_rule
 
 
 def needs_human_review(description: str) -> bool:
     """True si el movimiento es ambiguo por naturaleza (cheque/depósito/retiro/remesa/transferencia)
     → forzar revisión humana en vez de que la IA adivine."""
     return is_check(description) or bool(_AMBIGUOUS_RE.search(description or ""))
-
-
-# Preguntas para la zona gris de las bandas de monto (cuando el monto cae cerca del umbral y la
-# decisión binaria no es confiable). En inglés (dato contable interno).
-_BAND_REVIEW_QUESTIONS = {
-    "Equipment Fuel": "Is this fuel for equipment/machinery or for a vehicle?",
-    "Vehicle Fuel": "Is this fuel for a vehicle or for equipment/machinery?",
-    "Meals": "Is this a business meal or a personal purchase?",
-    "Owner Draw": "Is this a personal purchase (owner draw) or a business expense?",
-}
 
 
 # "Comercios" genéricos que NO representan una contraparte real (depósitos, pagadores desconocidos):
@@ -144,32 +132,6 @@ def unify_merchant_categorization(parsed: list[tuple], ai_cats: dict[int, object
             cat.needs_review = c.needs_review
             cat.review_question = c.review_question
     return adjusted
-
-
-# Categorías de combustible → la IA confirmó que el comercio es una gasolinera. (Solo gasolineras:
-# los supermercados se inferirían de "Meals"/"Owner Draw", señales demasiado ambiguas para aprender
-# automáticamente — un "Meals" puede ser un restaurante, no un supermercado.)
-_FUEL_CATEGORIES_TO_KIND = {"Equipment Fuel": "gas_station", "Vehicle Fuel": "gas_station"}
-
-
-def learn_merchants_from_ai(
-    session: Session, company_id: int, sector: str, parsed: list[tuple], ai_cats: dict[int, object]
-) -> int:
-    """Aprende gasolineras nuevas: por cada tx que la IA clasificó como combustible **con confianza**
-    (no needs_review, confidence ≥ 0.8), guarda su comercio como `LearnedMerchant` (scope COMPANY)
-    para que la banda lo reconozca en la próxima subida. Idempotente. Devuelve cuántas aprendió."""
-    learned = 0
-    for idx, cat in ai_cats.items():
-        kind = _FUEL_CATEGORIES_TO_KIND.get(getattr(cat, "category", None))
-        if kind is None:
-            continue
-        if getattr(cat, "needs_review", False) or (getattr(cat, "confidence", 0) or 0) < 0.8:
-            continue  # solo aprender cuando la IA está segura
-        # Una frase que SÍ aparece en la descripción → la banda la encontrará la próxima vez.
-        phrase = specific_phrase(parsed[idx][1], getattr(cat, "subcategory", None))
-        if phrase and upsert_learned_merchant(session, company_id, sector, phrase, kind) is not None:
-            learned += 1
-    return learned
 
 
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
@@ -279,12 +241,15 @@ def make_fingerprint(d: date, description: str, signed: Decimal, account: str | 
 
 
 def _apply_categorization(tx: Transaction, idx: int, description: str,
-                          rule_hits: dict, band_hits: dict, transfer_hits: dict,
+                          rule_hits: dict, transfer_hits: dict,
                           ai_cats: dict) -> "str | None":
-    """Aplica a `tx` lo que decidió el motor (regla → banda → transferencia → IA) + los dos
-    guardias (revisión humana en ambiguos resueltos por IA, detector de signo). Compartido por la
-    SUBIDA y por `categorize_pending` (mismo cerebro en ambos caminos). Devuelve la fuente
-    ("rule"|"band"|"transfer"|"ai") o None si nada decidió."""
+    """Aplica a `tx` lo que decidió el motor (regla → transferencia → IA) + los dos guardias
+    (revisión humana en ambiguos resueltos por IA, detector de signo). Compartido por la SUBIDA y
+    por `categorize_pending` (mismo cerebro en ambos caminos). Devuelve la fuente
+    ("rule"|"transfer"|"ai") o None si nada decidió → Pendiente.
+
+    Ya no hay banda de monto ni criterios que categoricen (decisión de Jose, 1-oct-2026): las filas
+    viejas con `source="band"` se quedan como historia."""
     source = None
     if idx in rule_hits:
         rule = rule_hits[idx]
@@ -299,21 +264,6 @@ def _apply_categorization(tx: Transaction, idx: int, description: str,
         tx.source = "rule"
         tx.matched_rule_id = rule.id  # procedencia exacta: QUÉ regla decidió (FASE 9)
         source = "rule"
-    elif idx in band_hits:
-        at, cat, near = band_hits[idx]
-        tx.account_type = at
-        tx.category = cat
-        tx.ai_categorized = False  # banda de monto determinista, no IA
-        tx.source = "band"
-        source = "band"
-        if near:  # zona gris alrededor del umbral → la banda no está segura, que el dueño confirme
-            tx.confidence = 0.5
-            tx.needs_review = True
-            tx.review_question = _BAND_REVIEW_QUESTIONS.get(cat)
-        else:
-            tx.confidence = 0.85  # banda = heurística, no certeza absoluta (era 1.0)
-            tx.needs_review = False
-            tx.review_question = None
     elif idx in transfer_hits:
         at, cat = transfer_hits[idx]
         tx.account_type = at  # NON_PL (transferencia entre cuentas propias → fuera del P&L)
@@ -348,7 +298,7 @@ def _apply_categorization(tx: Transaction, idx: int, description: str,
         if tx.confidence is None or tx.confidence > 0.5:
             tx.confidence = 0.5
 
-    # Detector de SIGNO (vale para regla, banda e IA): si la dirección del banco contradice la
+    # Detector de SIGNO (vale para regla e IA): si la dirección del banco contradice la
     # sección del P&L, casi seguro es un return/reembolso o un cobro mal clasificado → revisar.
     # Cubre el caso "return de Home Depot": entró plata pero la regla lo etiquetó como gasto
     # (COGS/Materials) → sin esto sumaría como gasto en vez de restarlo. NON_PL se exime
@@ -414,7 +364,8 @@ def ingest_csv(
     # Ventana de asentamiento de la empresa (o el default del sistema). Se retienen los
     # movimientos recientes/pending hasta que liquidan; entran solos en una subida posterior.
     company = session.get(Company, company_id)
-    buffer_days = company.settlement_buffer_days if company and company.settlement_buffer_days is not None \
+    # Los días de espera los define el bookkeeper en los criterios del libro (FASE 13).
+    buffer_days = criteria.settlement_days(session, company) if company \
         else DEFAULT_SETTLEMENT_BUFFER_DAYS
     today = datetime.now(timezone.utc).date()
 
@@ -474,17 +425,12 @@ def ingest_csv(
                 kept.append(row)
         parsed = kept
 
-    # 2) MOTOR DE REGLAS: lo que ya tiene regla (comercio conocido) o cae en una banda de monto
-    #    (super/gasolinera) se resuelve SIN IA. Solo lo que no matchea nada va al batch de la IA.
-    #    Precedencia: regla explícita de empresa → banda de monto → IA.
+    # 2) MOTOR DE REGLAS: lo que tiene regla (comercio conocido) se resuelve SIN IA.
+    #    Precedencia: regla explícita de empresa → transferencia entre cuentas → Pendiente.
+    #    (Sin categorizar por monto: decisión de Jose, 1-oct-2026. El criterio del bookkeeper sobre
+    #    montos pasa a las notas de la pestaña Auditoría, que reportan y nunca categorizan.)
     rules: list[CategoryRule] = load_rules(session, company_id, sector) if categorize else []
-    super_thr = company.supermarket_threshold if company else None
-    gas_thr = company.gas_station_threshold if company else None
-    # Comercios APRENDIDOS (gasolineras/supermercados que descubrió la IA en subidas pasadas): se
-    # suman a las listas base para que la banda los reconozca sin volver a llamar a la IA.
-    extra_gas, extra_super = load_learned_merchants(session, company_id, sector) if categorize else ([], [])
     rule_hits: dict[int, CategoryRule] = {}
-    band_hits: dict[int, tuple] = {}  # idx -> (account_type, category, near_threshold)
     transfer_hits: dict[int, tuple] = {}  # idx -> (account_type, category) — transferencia entre cuentas
     ai_indices: list[int] = []
     if categorize:
@@ -492,11 +438,6 @@ def ingest_csv(
             rule = match_rule(rules, desc)
             if rule is not None:
                 rule_hits[idx] = rule
-                continue
-            band = amount_band_category(desc, float(signed), super_thr, gas_thr, extra_gas,
-                                        extra_super, sector=sector)
-            if band is not None:
-                band_hits[idx] = band
                 continue
             transfer = classify_transfer(desc)  # transferencia entre cuentas propias → NON_PL
             if transfer is not None:
@@ -540,16 +481,9 @@ def ingest_csv(
     #     confianza) en todo el archivo. Corrige la incoherencia de categorizar fila por fila.
     consistency_adjusted = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
 
-    # 3c) APRENDER comercios nuevos: si la IA clasificó algo como combustible (Equipment/Vehicle
-    #     Fuel) con confianza, el comercio es una GASOLINERA que la banda no conocía → aprenderla
-    #     (scope COMPANY) para que la próxima subida la resuelva sin IA. Reversible y privado.
-    if categorize and not dry_run and ai_cats:
-        learn_merchants_from_ai(session, company_id, sector, parsed, ai_cats)
-
     # 4) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
     by_rule = 0
-    by_band = 0
     by_transfer = 0
     by_ai = 0
     preview: list[dict] = []
@@ -562,12 +496,9 @@ def ingest_csv(
                          check_number=check_number(description))  # número de cheque (si lo es)
         if account:
             any_account = True
-        source = _apply_categorization(tx, idx, description, rule_hits, band_hits,
-                                       transfer_hits, ai_cats)
+        source = _apply_categorization(tx, idx, description, rule_hits, transfer_hits, ai_cats)
         if source == "rule":
             by_rule += 1
-        elif source == "band":
-            by_band += 1
         elif source == "transfer":
             by_transfer += 1
         elif source == "ai":
@@ -603,7 +534,7 @@ def ingest_csv(
         "offset": offset,
         "processed": len(to_process),
         "by_rule": by_rule,
-        "by_band": by_band,
+        "by_band": 0,  # ya no hay banda de monto; la clave sigue para el frontend (Audit.tsx, api.ts)
         "by_transfer": by_transfer,
         # Transacciones que NO se categorizaron por exceder el cupo de IA (hay que subir de plan).
         "quota_blocked": quota_blocked,
@@ -628,8 +559,8 @@ def categorize_pending(session: Session, company: Company, ai_limit: "int | None
     """Re-corre el MOTOR sobre las transacciones SIN categorizar de la empresa — las que quedaron
     fuera por el cupo de IA (`quota_blocked`) o porque la IA falló. Es la otra mitad de la promesa
     "sube de plan para categorizarlas": tras pagar (o al liberarse cupo el mes siguiente), esto las
-    resuelve SIN re-subir el archivo. Mismo orden y semántica que la subida: regla → banda →
-    transferencia → IA (hasta `ai_limit`); congela `ai_original_*`; aprende gasolineras."""
+    resuelve SIN re-subir el archivo. Mismo orden y semántica que la subida: regla →
+    transferencia → IA (hasta `ai_limit`, hoy apagada); congela `ai_original_*`."""
     sector = company.sector
     txs = list(session.exec(
         select(Transaction)
@@ -651,21 +582,13 @@ def categorize_pending(session: Session, company: Company, ai_limit: "int | None
     ]
 
     rules = load_rules(session, company.id, sector)
-    extra_gas, extra_super = load_learned_merchants(session, company.id, sector)
     rule_hits: dict[int, CategoryRule] = {}
-    band_hits: dict[int, tuple] = {}
     transfer_hits: dict[int, tuple] = {}
     ai_indices: list[int] = []
     for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
         rule = match_rule(rules, desc)
         if rule is not None:
             rule_hits[idx] = rule
-            continue
-        band = amount_band_category(desc, float(signed), company.supermarket_threshold,
-                                    company.gas_station_threshold, extra_gas, extra_super,
-                                    sector=sector)
-        if band is not None:
-            band_hits[idx] = band
             continue
         transfer = classify_transfer(desc)
         if transfer is not None:
@@ -697,12 +620,9 @@ def categorize_pending(session: Session, company: Company, ai_limit: "int | None
                     ai_cats[idx] = cat
 
     result["consistency_adjusted"] = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
-    if ai_cats:
-        learn_merchants_from_ai(session, company.id, sector, parsed, ai_cats)
 
     for idx, tx in enumerate(txs):
-        source = _apply_categorization(tx, idx, parsed[idx][1], rule_hits, band_hits,
-                                       transfer_hits, ai_cats)
+        source = _apply_categorization(tx, idx, parsed[idx][1], rule_hits, transfer_hits, ai_cats)
         if source is not None:
             result[f"by_{source}"] += 1
             session.add(tx)

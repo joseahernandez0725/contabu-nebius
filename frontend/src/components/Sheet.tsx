@@ -278,7 +278,7 @@ export default function Sheet() {
 
   /** Formato sobre la selección. `column: null` = la fila entera (es lo que un bookkeeper
    *  espera al resaltar: se marca el movimiento, no una casilla suelta). */
-  const format = useCallback(async (patch: Parameters<typeof applyCellFormat>[0]) => {
+  const format = useCallback(async (patch: Omit<Parameters<typeof applyCellFormat>[0], "transaction_ids">) => {
     if (!selected.length) return;
     setSaving(t("sheet.saving", { defaultValue: "Saving…" }));
     try {

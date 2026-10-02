@@ -22,15 +22,10 @@ from sqlmodel import Session, select
 from merchants import GAS_STATIONS, SUPERMARKETS
 from models import AccountType, CategoryRule, LearnedMerchant, RuleScope, Transaction
 
-# Umbrales por defecto si la empresa no fijó los suyos (editables por empresa, ver Company).
-# Gasolinera $30: bajo eso suele ser combustible de equipos o compras pequeñas en la tienda;
-# por encima, llenar el tanque del vehículo (auto expense).
-DEFAULT_SUPERMARKET_THRESHOLD = Decimal("50")
-DEFAULT_GAS_STATION_THRESHOLD = Decimal("30")
-
-# Cerca del umbral la decisión binaria de la banda es poco confiable (un $28 vs $32 en gasolinera
-# no es obvio): en esa "zona gris" (±25% del umbral) la banda PROPONE una categoría pero marca
-# revisión humana en vez de decidir con confianza. Ataca el error silencioso de las bandas.
+# 1-oct-2026 (Jose): el motor YA NO categoriza por monto — se fue `amount_band_category()` con sus
+# umbrales por defecto (supermercado $50, gasolinera $30). Lo que no cubre una regla queda Pendiente.
+# ⚠️ `GRAY_ZONE_RATIO`, `_MEMBERSHIP_RE`, `classify_merchant` y `load_learned_merchants` siguen SOLO
+# porque `criteria.py` (área Firm) todavía los importa; se van cuando Firm borre sus criterios.
 GRAY_ZONE_RATIO = Decimal("0.25")
 
 # Un CHEQUE es un método de pago, no una contraparte: cada cheque puede ser para algo distinto
@@ -38,8 +33,7 @@ GRAY_ZONE_RATIO = Decimal("0.25")
 _CHECK_RE = re.compile(r"\b(check|chk|cheque|e-?check)\b", re.IGNORECASE)
 
 # Cargos que NO son una compra en el comercio sino una cuota/membresía/renovación (ej.
-# "COSTCO *ANNUAL RENEWAL"): la banda de monto por supermercado/gasolinera NO aplica (no es ni
-# comida ni combustible ni un retiro personal) → dejar que la IA lo categorice (Dues/Office Expense).
+# "COSTCO *ANNUAL RENEWAL"): no es ni comida ni combustible ni un retiro personal. Lo usa `criteria.py`.
 _MEMBERSHIP_RE = re.compile(r"\b(membership|annual|renewal|renew|subscription|dues|fee)\b", re.IGNORECASE)
 
 
@@ -62,6 +56,18 @@ def check_number(description: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
+# MÁSCARAS DE CUENTA: el banco tapa el número con una cantidad de X (o *) que cambia de banco a
+# banco y hasta de mes a mes — "XXXX7581", "XXXXXXXX7581", "****7581". Se quitan ANTES de comparar,
+# así la regla se escribe con los dígitos que importan (`TRANSFER*TO*7581`) y caza cualquier
+# máscara. Solo cuenta como máscara una racha de 2+ X/* pegada a dígitos: "XBOX" o "TAXES" no se tocan.
+_MASK_RE = re.compile(r"\b(?:X{2,}|\*{2,})(?=\d)")
+
+
+def _unmask(text: str) -> str:
+    """'XXXXXXXX7581' → ' 7581' (en mayúsculas). Ver `_MASK_RE`."""
+    return _MASK_RE.sub(" ", text.upper())
+
+
 def normalize(text: str) -> str:
     """Normaliza una descripción para comparar: MAYÚSCULAS y solo alfanuméricos.
 
@@ -69,7 +75,7 @@ def normalize(text: str) -> str:
     'HOMEDEPOTCOM' (ambas contienen 'HOMEDEPOT'), así un match por subcadena funciona
     pese al ruido del extracto bancario.
     """
-    return re.sub(r"[^A-Z0-9]", "", text.upper())
+    return re.sub(r"[^A-Z0-9]", "", _unmask(text))
 
 
 # --- Identidad de comercio (merchant signature) -------------------------------------------------
@@ -136,7 +142,8 @@ def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryR
 
     Solo devuelve reglas con `account_type` definido (necesario para el P&L) y `match_text` no vacío.
     El `match_text` más largo va primero → la regla **más específica gana** (`match_rule` toma el
-    primero que matchea); las genéricas quedan para el final.
+    primero que matchea); las genéricas quedan para el final. Las que tienen **prioridad manual**
+    (`priority`, 1 = primero) van antes que todas — es el "subir la fila" del Excel del bookkeeper.
     """
     rules = session.exec(
         select(CategoryRule).where(
@@ -145,14 +152,24 @@ def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryR
         )
     ).all()
     usable = [r for r in rules if r.account_type is not None and normalize(r.match_text)]
-    usable.sort(key=lambda r: -len(normalize(r.match_text)))  # más específico (largo) primero
+    # Más específico (largo) primero. EMPATE de largo → orden ALFABÉTICO (decisión de Jose, 1-oct):
+    # sin este segundo criterio ganaba la que la base devolviera primero, y el resultado podía
+    # cambiar sin que nadie tocara una regla.
+    usable.sort(key=rule_order)
     return usable
+
+
+def rule_order(r: CategoryRule) -> tuple:
+    """Clave del orden de evaluación: prioridad manual (1, 2, 3…) → sin prioridad, la más larga →
+    empate de largo, alfabético (decisión de Jose, 1-oct: sin esto ganaba la que la base devolviera
+    primero, y el resultado podía cambiar sin que nadie tocara una regla)."""
+    return (r.priority is None, r.priority or 0, -len(normalize(r.match_text)), _phrase(r.match_text))
 
 
 def _phrase(text: str) -> str:
     """Texto → PALABRAS en mayúsculas separadas por un solo espacio.
     'HOME DEPOT #2745' → 'HOME DEPOT 2745'. Sirve para match por **límite de palabra**."""
-    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", text.upper())).strip()
+    return re.sub(r"\s+", " ", re.sub(r"[^A-Z0-9]+", " ", _unmask(text))).strip()
 
 
 def _matches(match_text: str, desc_padded: str) -> bool:
@@ -161,7 +178,9 @@ def _matches(match_text: str, desc_padded: str) -> bool:
     - Sin `*`: la **frase completa** debe aparecer como palabra/frase (límite de palabra).
     - Con `*` (comodín = "lo que sea en medio"): cada parte debe aparecer **EN ORDEN**, con cualquier
       cosa entre ellas. Ej. `ONLINE TRANSFER*TO*7581` matchea
-      "ONLINE TRANSFER REF #ABC TO CARD XXXX7581" (útil para transferencias/ACH con basura intercalada).
+      "ONLINE TRANSFER REF #ABC TO CARD XXXX7581" (útil para transferencias/ACH con basura intercalada;
+      la máscara `XXXX` la quita `_unmask`, así que da igual cuántas X traiga el banco).
+    - El `*` va ENTRE palabras: no parte una palabra (`AMAZON` no caza "AMAZONMKTPL").
 
     Cada parte se compara por **límite de palabra** (la seguridad de `match_rule`: "Shell" ≠ "MICHELLE")."""
     pos = 0
@@ -252,8 +271,8 @@ def find_rule_candidates(rules: list[CategoryRule], items: list[dict]) -> list[d
             continue  # cheque/genérico → no se agrupa por comercio
         if match_rule(rules, desc) is not None:
             continue  # ya cubierto por una regla existente
-        if classify_merchant(desc) is not None:
-            continue  # gasolinera/super → lo maneja la banda de monto, no una regla (§3.7)
+        # (Antes se saltaban gasolineras y supermercados: los decidía la banda de monto. Desde el
+        # 1-oct ya no hay banda, así que ellos también necesitan regla → se proponen como cualquiera.)
         sign = "in" if it.get("is_inflow") else "out"
         groups[(sig, sign)].append(it)
 
@@ -274,6 +293,46 @@ def find_rule_candidates(rules: list[CategoryRule], items: list[dict]) -> list[d
         })
     candidates.sort(key=lambda c: -c["count"])
     return candidates
+
+
+def parse_priority(raw) -> Optional[int]:
+    """'3' / '3.0' / ' 3 ' → 3. Vacío, 0, negativo o texto → None (orden automático)."""
+    try:
+        n = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
+
+
+def reapply_rule_precedence(session: Session, company_id: int) -> int:
+    """Re-decide QUÉ regla gana en lo ya registrado tras cambiar el reglamento (p. ej. una
+    prioridad). Solo toca transacciones que decidió una regla (`source="rule"`): lo corregido a mano,
+    los criterios del libro y la IA no se mueven. Devuelve cuántas cambiaron de regla.
+
+    Hace falta porque `apply_rule_to_transactions` aplica UNA regla a todo lo que matchea, sin mirar
+    si otra debería ganarle."""
+    rules = load_rules(session, company_id, "")
+    txs = session.exec(
+        select(Transaction).where(Transaction.company_id == company_id)
+        .where(Transaction.source == "rule")
+    ).all()
+    moved = 0
+    for t in txs:
+        if is_check(t.description) and not t.description_extra:
+            continue
+        winner = match_rule(rules, matchable_text(t.description, t.description_extra))
+        if winner is None or winner.id == t.matched_rule_id:
+            continue
+        t.account_type = winner.account_type
+        t.category = winner.category
+        if winner.subcategory:
+            t.subcategory = winner.subcategory.upper()
+        t.matched_rule_id = winner.id
+        t.needs_review = False
+        t.review_question = None
+        session.add(t)
+        moved += 1
+    return moved
 
 
 def apply_rule_to_transactions(
@@ -352,69 +411,12 @@ def classify_merchant(
     return None
 
 
-def amount_band_category(
-    description: str,
-    amount: float,
-    supermarket_threshold: Optional[Decimal] = None,
-    gas_station_threshold: Optional[Decimal] = None,
-    extra_gas: Optional[list[str]] = None,
-    extra_super: Optional[list[str]] = None,
-    sector: Optional[str] = None,
-) -> Optional[tuple[AccountType, str, bool]]:
-    """Desambigua por MONTO en comercios mixtos (super/gasolinera). Determinista, antes de la IA.
-
-    Devuelve `(account_type, category, near_threshold)` o `None` si el comercio no es super/gasolinera.
-    `near_threshold=True` cuando el monto cae en la **zona gris** (±25% del umbral): la banda propone
-    una categoría pero pide revisión (su decisión binaria ahí es poco confiable).
-    `amount` puede venir con signo; se usa su magnitud. `extra_gas`/`extra_super`: comercios aprendidos.
-
-    --- MAPEO (centralizado aquí; ajustar cuando se defina el esquema final) ---
-    Supermercado:  < umbral → comida (Meals, OpEx) · ≥ umbral → personal (Owner Draw, NON_PL)
-    Gasolinera:    < umbral → maquinaria (Equipment Fuel, COGS) · ≥ umbral → vehículo (Vehicle Fuel, OpEx)
-
-    `sector` afina el lado GASOLINERA al plan de cuentas del sector (3-jul-2026):
-    - Si el sector tiene "Fuel" en COGS (trucking): TODO combustible → COGS/Fuel — para un
-      owner-operator el diésel ES el costo directo del flete, no hay split por monto.
-    - Si el sector NO tiene "Equipment Fuel" en COGS (beauty, retail, restaurante…): el lado bajo
-      no puede ser "maquinaria" → todo va a OpEx/Vehicle Fuel (sin inventar categorías fuera del plan).
-    """
-    # Cuota/membresía/renovación (ej. "COSTCO *ANNUAL RENEWAL"): no es compra de comida/combustible
-    # ni retiro → la banda NO aplica; que la IA decida (evita el falso "Owner Draw @1.00").
-    if _MEMBERSHIP_RE.search(description or ""):
-        return None
-
-    kind = classify_merchant(description, extra_gas, extra_super)
-    if kind is None:
-        return None
-
-    magnitude = abs(Decimal(str(amount)))
-
-    if kind == "supermarket":
-        threshold = supermarket_threshold or DEFAULT_SUPERMARKET_THRESHOLD
-        result = ((AccountType.OPERATING_EXPENSE, "Meals") if magnitude < threshold
-                  else (AccountType.NON_PL, "Owner Draw"))
-    else:  # gas_station
-        threshold = gas_station_threshold or DEFAULT_GAS_STATION_THRESHOLD
-        result = ((AccountType.COGS, "Equipment Fuel") if magnitude < threshold
-                  else (AccountType.OPERATING_EXPENSE, "Vehicle Fuel"))
-        if sector:
-            from categories import categories_for  # import local: evita ciclo en el arranque
-            cogs = categories_for(sector).get("COGS", [])
-            if "Fuel" in cogs:  # trucking: el combustible es el costo directo — sin split,
-                return (AccountType.COGS, "Fuel", False)  # sin umbral → no hay zona gris
-            if "Equipment Fuel" not in cogs and result[1] == "Equipment Fuel":
-                result = (AccountType.OPERATING_EXPENSE, "Vehicle Fuel")
-
-    near = abs(magnitude - threshold) <= threshold * GRAY_ZONE_RATIO
-    return (result[0], result[1], near)
-
-
 def load_learned_merchants(
     session: Session, company_id: int, sector: str
 ) -> tuple[list[str], list[str]]:
     """Comercios APRENDIDOS aplicables: los de la empresa (COMPANY) + los compartidos del sector
     (SECTOR). Devuelve `(gasolineras, supermercados)` como listas de `match_text`, listas para
-    pasarlas a `classify_merchant`/`amount_band_category` como `extra_gas`/`extra_super`."""
+    pasarlas a `classify_merchant` como `extra_gas`/`extra_super`. Solo la usa `criteria.py`."""
     rows = session.exec(
         select(LearnedMerchant).where(
             or_(
@@ -428,34 +430,6 @@ def load_learned_merchants(
     gas = [r.match_text for r in rows if r.kind == "gas_station"]
     sup = [r.match_text for r in rows if r.kind == "supermarket"]
     return gas, sup
-
-
-def upsert_learned_merchant(
-    session: Session, company_id: int, sector: str, match_text: str, kind: str
-) -> Optional[LearnedMerchant]:
-    """Aprende un comercio nuevo a scope **COMPANY** (privado, reversible). Idempotente: no duplica,
-    y no aprende lo que ya reconoce la lista base (`classify_merchant`). Devuelve la fila o None."""
-    phrase = _phrase(match_text or "")
-    if not phrase or kind not in ("gas_station", "supermarket"):
-        return None
-    if classify_merchant(match_text) is not None:
-        return None  # ya es un comercio conocido (built-in) → no hace falta aprenderlo
-    existing = session.exec(
-        select(LearnedMerchant).where(
-            (LearnedMerchant.scope == RuleScope.COMPANY)
-            & (LearnedMerchant.company_id == company_id)
-            & (LearnedMerchant.kind == kind)
-        )
-    ).all()
-    for m in existing:
-        if _phrase(m.match_text) == phrase:
-            return m  # ya aprendido
-    m = LearnedMerchant(
-        scope=RuleScope.COMPANY, company_id=company_id, sector=sector,
-        match_text=phrase, kind=kind,
-    )
-    session.add(m)
-    return m
 
 
 # Palabras genéricas que no aportan especificidad (no deben quedar como regla por sí solas).
@@ -584,6 +558,7 @@ def normalize_account_type(label: Optional[str]) -> str:
 def build_import_rules(
     headers: list[str], rows: list[list[str]], keyword_col: str, category_col: str,
     account_type_col: str, sector: str, existing_keywords: list[str],
+    subcategory_col: str = "", priority_col: str = "",
 ) -> list[dict]:
     """Construye el PREVIEW del import: por cada fila del archivo del usuario (ya mapeado por la IA),
     extrae keyword + categoría, **resuelve la sección** (del archivo si la trae, si no por el plan de
@@ -593,6 +568,8 @@ def build_import_rules(
     idx = {h: i for i, h in enumerate(headers)}
     ki, ci = idx.get(keyword_col), idx.get(category_col)
     ti = idx.get(account_type_col) if account_type_col else None
+    si = idx.get(subcategory_col) if subcategory_col else None
+    pi = idx.get(priority_col) if priority_col else None
     if ki is None or ci is None:
         return []
     cat_to_type = {normalize(c): at for at, cats in categories_for(sector).items() for c in cats}
@@ -618,17 +595,22 @@ def build_import_rules(
         else:
             status = "ok"
         seen.add(nkw)
-        out.append({"keyword": kw, "category": cat, "account_type": at, "status": status})
+        sub = (r[si] or "").strip() if (si is not None and si < len(r)) else ""
+        out.append({"keyword": kw, "category": cat, "subcategory": sub,
+                    "account_type": at, "status": status,
+                    "priority": parse_priority(r[pi]) if (pi is not None and pi < len(r)) else None})
     return out
 
 
 def create_company_rule(
     session: Session, company_id: int, sector: str,
     match_text: str, account_type: Optional[AccountType], category: Optional[str],
+    subcategory: Optional[str] = None, priority: Optional[int] = None,
 ) -> Optional[CategoryRule]:
     """Crea una regla COMPANY con el keyword **TAL CUAL** (preserva el comodín `*`, a diferencia de
     `upsert_company_rule` que lo normaliza con `specific_phrase`). Para reglas ya listas del
-    **proponedor** o del **import**. Idempotente por keyword normalizado. Devuelve la regla o None."""
+    **proponedor** o del **import**. Idempotente por keyword normalizado. Devuelve la regla o None.
+    `subcategory` solo se escribe si viene (el import la trae; el proponedor no)."""
     kw = (match_text or "").strip()
     if not kw or account_type is None or not category:
         return None
@@ -645,11 +627,16 @@ def create_company_rule(
             r.account_type = account_type
             r.category = category
             r.match_text = kw
+            if subcategory:
+                r.subcategory = subcategory
+            if priority:
+                r.priority = priority
             session.add(r)
             return r
     rule = CategoryRule(
         scope=RuleScope.COMPANY, company_id=company_id, sector=sector,
         match_text=kw, account_type=account_type, category=category,
+        subcategory=subcategory or None, priority=priority or None,
     )
     session.add(rule)
     return rule
