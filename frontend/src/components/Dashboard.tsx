@@ -4,7 +4,7 @@ import { getIncomeStatement, getTransactions, money } from "../api";
 import { KPI, SECTION_LABEL } from "../accounting";
 import type { IncomeStatement as IS, Transaction } from "../types";
 
-type View = "transactions" | "audit" | "upload" | "pnl" | "rules" | "settings";
+type View = "transactions" | "audit" | "upload" | "pnl" | "settings";
 
 function Kpi({ label, value, tone }: { label: string; value: number; tone: "green" | "rose" }) {
   const color = tone === "green" ? "text-brand-green" : "text-rose-600";
@@ -39,7 +39,6 @@ const HUB_ICON: Record<View, ReactNode> = {
   audit: <path d="M9 11l3 3 6-6M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" />,
   upload: <path d="M12 16V4M7 9l5-5 5 5M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" />,
   pnl: <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3" />,
-  rules: <path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2" />,
   settings: <path d="M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h2M19 12h2M12 3v2M12 19v2" />,
 };
 
@@ -84,7 +83,7 @@ export default function Dashboard({ onNavigate }: {
 
   const expenses = is.cogs + is.operating_expenses + is.other_expense;
   const positive = is.net_income >= 0;
-  const hub: View[] = ["pnl", "transactions", "audit", "rules", "upload", "settings"];
+  const hub: View[] = ["pnl", "transactions", "audit", "upload", "settings"];
   const hubLabel = (v: View) => (v === "pnl" ? t("nav.pnl", { defaultValue: "P&L" })
     : v === "settings" ? t("settings.title") : t(`nav.${v}`));
 

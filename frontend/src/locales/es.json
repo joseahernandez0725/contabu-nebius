@@ -195,8 +195,8 @@
     "label": "Quién decidió",
     "rule": "Tu regla: “{{keyword}}” → {{category}}",
     "ruleDeleted": "Una regla tuya (ya eliminada)",
-    "engine": "Motor determinista de ContaBu (regla/banda de monto)",
-    "band": "Banda de monto (comercio + umbral)",
+    "engine": "Motor determinista de ContaBu (regla)",
+    "band": "Banda de monto (retirada)",
     "transfer": "Transferencia entre tus cuentas detectada",
     "ai": "IA · {{pct}}% de confianza",
     "manual": "La pusiste tú",
@@ -244,7 +244,7 @@
   },
   "settings": {
     "title": "Ajustes",
-    "subtitle": "Montos que ayudan a categorizar tus compras automáticamente.",
+    "subtitle": "Lo que aplica solo a este libro.",
     "gasLabel": "Umbral de gasolinera",
     "gasHelp": "Menos de ${{amount}}: combustible de equipos. Más: gasolina del vehículo.",
     "superLabel": "Umbral de supermercado",
@@ -278,7 +278,19 @@
     "role": {
       "OWNER": "Dueño",
       "MEMBER": "Miembro",
-      "VIEWER": "Visor"
+      "VIEWER": "Visor",
+      "CLIENT": "Dueño del negocio"
+    },
+    "recent": {
+      "title": "Movimientos recientes",
+      "help": "Esperar antes de registrarlos, por si el banco todavía los está procesando.",
+      "none": "No esperar",
+      "days_one": "{{count}} día",
+      "days_other": "{{count}} días",
+      "err": {
+        "wait_days_range": "Elige entre 0 y 30 días.",
+        "error": "Algo salió mal. Inténtalo de nuevo."
+      }
     }
   },
   "rules": {
@@ -325,7 +337,25 @@
     "scope": "Sector",
     "section": "Sección del P&L",
     "subcatHint": "opcional — por defecto usa la palabra clave",
-    "thisBook": "Este libro"
+    "thisBook": "Este libro",
+    "import": "Importar",
+    "export": "Exportar",
+    "importReading": "Leyendo archivo…",
+    "importEmpty": "No se pudo leer ninguna regla de ese archivo.",
+    "imported": "Se importaron {{c}} reglas y se alinearon {{a}} transacciones.",
+    "importApprove_one": "Crear {{count}} regla",
+    "importApprove_other": "Crear {{count}} reglas",
+    "priority": "Prioridad",
+    "priorityAuto": "auto",
+    "priorityHint": "La 1 se evalúa primero, como subir una fila en Excel. Vacía = automático (gana la palabra clave más larga).",
+    "priorityInvalid": "La prioridad debe ser un número entero de 1 en adelante, o vacía para el orden automático.",
+    "reassigned_one": "{{count}} movimiento ahora sigue otra regla.",
+    "reassigned_other": "{{count}} movimientos ahora siguen otra regla.",
+    "importStatus": {
+      "exists": "ya existe",
+      "duplicate": "repetida en el archivo",
+      "needs_section": "elige una categoría"
+    }
   },
   "cat": {
     "Small Tools & Equipment": "Herramientas y equipo menor",
@@ -528,6 +558,22 @@
     "addText": "+ agregar",
     "pending": "Pendiente",
     "onlyPending": "Pendientes ({{n}})",
-    "pendingHint": "Ninguna regla la cubre todavía — elige categoría o crea una regla"
+    "pendingHint": "Ninguna regla la cubre todavía — elige categoría o crea una regla",
+    "useClassic": "Usar la vista anterior",
+    "useSheet": "Usar la hoja"
+  },
+  "shell": {
+    "office": "Oficina",
+    "book": "Este libro",
+    "client": "Cliente",
+    "soon": "Pronto",
+    "menu": "Menú",
+    "close": "Cerrar menú",
+    "clients": "Clientes",
+    "users": "Usuarios",
+    "calendar": "Calendario",
+    "requests": "Solicitudes",
+    "payroll": "Nómina",
+    "settings": "Ajustes del libro"
   }
 }

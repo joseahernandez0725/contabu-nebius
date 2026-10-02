@@ -2,8 +2,8 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { Company } from "../types";
 
-// Selector de empresa en el header (gestionar varias empresas desde una cuenta).
-// Toca el nombre → lista de empresas (cambiar) + "Agregar empresa".
+// Selector del CLIENTE (el libro abierto). Vive arriba en la barra lateral (FASE 13), fuera del área
+// con scroll para que su menú flotante no se recorte. Toca el nombre → lista (cambiar) + "Agregar".
 export default function CompanySwitcher({ companies, activeId, onSwitch, onAdd }: {
   companies: Company[];
   activeId: number;
@@ -20,7 +20,7 @@ export default function CompanySwitcher({ companies, activeId, onSwitch, onAdd }
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1 max-w-full text-start"
       >
-        <span className="text-xs text-slate-500 truncate">{active?.name ?? "…"}</span>
+        <span className="text-sm font-medium text-slate-800 truncate">{active?.name ?? "…"}</span>
         <svg viewBox="0 0 24 24" className="size-3.5 text-slate-400 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M6 9l6 6 6-6" />
         </svg>

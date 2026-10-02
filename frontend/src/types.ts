@@ -81,7 +81,7 @@ export interface Company {
   subscription_status?: string | null; // "active" · "canceled" · null = plan gratis
   tx_quota?: number | null; // cupo mensual del tier pagado (100/200/400/1000); null = gratis
   created_at: string;
-  role?: "OWNER" | "MEMBER" | "VIEWER"; // rol del usuario actual sobre esta empresa
+  role?: "OWNER" | "MEMBER" | "VIEWER" | "CLIENT"; // rol del usuario actual sobre esta empresa (CLIENT = dueño del negocio, FASE 13)
   profile?: CompanyProfile | null; // la ENTREVISTA del bookkeeper (FASE 9 Paso 5)
 }
 

@@ -1,17 +1,13 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  updateThresholds, getCategories, getCustomCategories, addCustomCategory,
+  getCategories, updateSettlement, getCustomCategories, addCustomCategory,
   deleteCustomCategory, updateCompany, deleteCompany,
   getMembers, inviteMember, updateMemberRole, removeMember,
   type ChartOfAccounts, type CustomCategory, type Member,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import type { Company } from "../types";
-import Billing from "./Billing";
-
-// Defaults del sistema (espejo del backend) si la empresa aún no fijó los suyos.
-const DEFAULTS = { supermarket: 50, gas: 30, settlement: 5 };
 
 // Secciones del P&L que se pueden personalizar (NON_PL no es parte del estado de resultados).
 const PL_SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE"];
@@ -28,103 +24,25 @@ export default function Settings({
   canDelete: boolean;
 }) {
   const { t } = useTranslation();
-  const [supermarket, setSupermarket] = useState(
-    company?.supermarket_threshold != null ? Number(company.supermarket_threshold) : DEFAULTS.supermarket,
-  );
-  const [gas, setGas] = useState(
-    company?.gas_station_threshold != null ? Number(company.gas_station_threshold) : DEFAULTS.gas,
-  );
-  const [settlement, setSettlement] = useState(
-    company?.settlement_buffer_days != null ? company.settlement_buffer_days : DEFAULTS.settlement,
-  );
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function save() {
-    setSaving(true);
-    setError(null);
-    setSaved(false);
-    try {
-      const updated = await updateThresholds({
-        supermarket_threshold: supermarket,
-        gas_station_threshold: gas,
-        settlement_buffer_days: settlement,
-      });
-      onSaved(updated);
-      setSaved(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   const role = company?.role ?? "OWNER";
   const isOwner = role === "OWNER";
   const canEdit = role !== "VIEWER";
 
   return (
     <div className="space-y-5">
-      <div>
-        <h2 className="text-lg font-bold text-slate-900">{t("settings.title")}</h2>
-        <p className="text-sm text-slate-500 mt-1">{t("settings.subtitle")}</p>
-      </div>
+      {/* El título ya lo pone la barra de arriba ("Ajustes del libro"); aquí solo el alcance. */}
+      <p className="text-sm text-slate-500">{t("settings.subtitle")}</p>
 
       {isOwner && company && (
         <BusinessProfile company={company} canDelete={canDelete} onSaved={onSaved} onDeleted={onDeleted} />
       )}
 
-      {isOwner && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-          <Billing />
-        </div>
-      )}
-
       {canEdit && (
         <>
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-5">
-            <ThresholdField
-              label={t("settings.gasLabel")}
-              help={t("settings.gasHelp", { amount: gas })}
-              value={gas}
-              onChange={(n) => { setGas(n); setSaved(false); }}
-            />
-            <div className="border-t border-slate-100" />
-            <ThresholdField
-              label={t("settings.superLabel")}
-              help={t("settings.superHelp", { amount: supermarket })}
-              value={supermarket}
-              onChange={(n) => { setSupermarket(n); setSaved(false); }}
-            />
-            <div className="border-t border-slate-100" />
-            <div>
-              <label className="block text-sm font-medium text-slate-800">{t("settings.settleLabel")}</label>
-              <div className="mt-2 flex items-center gap-2">
-                <input
-                  type="number"
-                  min={0}
-                  inputMode="numeric"
-                  value={settlement}
-                  onChange={(e) => { setSettlement(Number(e.target.value)); setSaved(false); }}
-                  className="w-28 rounded-lg border border-slate-200 px-3 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
-                />
-                <span className="text-slate-400">{t("settings.days")}</span>
-              </div>
-              <p className="text-xs text-slate-500 mt-2">{t("settings.settleHelp", { count: settlement })}</p>
-            </div>
-          </div>
-
-          {error && <div className="text-sm text-rose-600">{error}</div>}
-
-          <button
-            onClick={save}
-            disabled={saving}
-            className="w-full py-3 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
-            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-          >
-            {saving ? t("settings.saving") : saved ? t("settings.saved") : t("settings.save")}
-          </button>
+          {/* 🔄 1-oct, decisión de Jose: fuera los ajustes por monto (supermercado, gasolinera,
+              tarjetas propias). Lo que no decida una REGLA queda Pendiente; el criterio del bookkeeper
+              vive en las notas de Auditoría (F11). Los días de espera se quedan: no son un monto. */}
+          {company && <RecentWait company={company} onSaved={onSaved} />}
 
           <ChartEditor />
         </>
@@ -279,32 +197,42 @@ function BusinessProfile({ company, canDelete, onSaved, onDeleted }: {
   );
 }
 
-function ThresholdField({
-  label,
-  help,
-  value,
-  onChange,
-}: {
-  label: string;
-  help: string;
-  value: number;
-  onChange: (n: number) => void;
-}) {
+// MOVIMIENTOS RECIENTES: cuántos días esperar antes de registrarlos, por si el banco todavía los
+// está procesando (base caja: un "pending" puede cambiar de monto o desaparecer). Se guarda al tocar.
+const WAIT_CHOICES = [0, 3, 5, 7];
+
+function RecentWait({ company, onSaved }: { company: Company; onSaved: (c: Company) => void }) {
+  const { t } = useTranslation();
+  const current = company.settlement_buffer_days ?? 5;
+  const [err, setErr] = useState<string | null>(null);
+  // Si el libro ya tenía otro valor (p. ej. 10 días), también se muestra, marcado.
+  const choices = [...new Set([...WAIT_CHOICES, current])].sort((a, b) => a - b);
+
+  async function pick(n: number) {
+    try { onSaved(await updateSettlement(n)); setErr(null); }
+    catch (e) {
+      setErr(t(`settings.recent.err.${e instanceof Error ? e.message : "error"}`,
+        { defaultValue: t("settings.recent.err.error") }));
+    }
+  }
+
   return (
-    <div>
-      <label className="block text-sm font-medium text-slate-800">{label}</label>
-      <div className="mt-2 flex items-center gap-2">
-        <span className="text-slate-400">$</span>
-        <input
-          type="number"
-          min={0}
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => onChange(Number(e.target.value))}
-          className="w-28 rounded-lg border border-slate-200 px-3 py-2 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40"
-        />
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
+      <div>
+        <h3 className="font-semibold text-slate-900">{t("settings.recent.title")}</h3>
+        <p className="text-xs text-slate-500 mt-1">{t("settings.recent.help")}</p>
       </div>
-      <p className="text-xs text-slate-500 mt-2">{help}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {choices.map((n) => (
+          <button key={n} onClick={() => pick(n)}
+            className={`px-3 py-1 rounded-lg text-xs border transition-colors ${
+              current === n ? "border-brand-green text-brand-green bg-brand-green/5 font-medium"
+                : "border-slate-200 text-slate-500 hover:bg-slate-50"}`}>
+            {n === 0 ? t("settings.recent.none") : t("settings.recent.days", { count: n })}
+          </button>
+        ))}
+      </div>
+      {err && <div className="text-xs text-rose-600">{err}</div>}
     </div>
   );
 }

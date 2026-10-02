@@ -47,8 +47,10 @@
       "singleIn": "{{name}} sent you {{amount}} on {{date}}. What was it for?",
       "singleOut": "You paid {{amount}} to {{name}} on {{date}}. What was it for?",
       "groupIn": "{{name}} sent you {{count}} payments ({{amount}} total, {{from}}–{{to}}). What were they for?",
-      "groupOut": "{{count}} payments to {{name}} ({{amount}} total, {{from}}–{{to}}). What were they for?"
+      "groupOut": "{{count}} payments to {{name}} ({{amount}} total, {{from}}–{{to}}). What were they for?",
+      "check": "Who was check #{{number}} paid to, and what for? ({{amount}} on {{date}})"
     },
+    "checkLabel": "Check",
     "confirm": "Confirm",
     "empty": "Nothing to review",
     "emptyHint": "When the AI is unsure about a transaction, it appears here.",
@@ -67,7 +69,9 @@
     "whereMoneyGoes": "Where does the money go?",
     "recentActivity": "Recent activity",
     "seeAll": "See all",
-    "uploadNew": "+ Upload a new bank statement"
+    "uploadNew": "+ Upload a new bank statement",
+    "seePnl": "See full P&L →",
+    "workOn": "Work on"
   },
   "empty": {
     "welcome": "Welcome to ContaBu!",
@@ -175,8 +179,8 @@
     "label": "Who decided",
     "rule": "Your rule: “{{keyword}}” → {{category}}",
     "ruleDeleted": "One of your rules (since deleted)",
-    "engine": "ContaBu's deterministic engine (rule/amount band)",
-    "band": "Amount band (merchant + amount threshold)",
+    "engine": "ContaBu's deterministic engine (rule)",
+    "band": "Amount band (retired)",
     "transfer": "Detected transfer between your accounts",
     "ai": "AI · {{pct}}% confidence",
     "manual": "Set by you",
@@ -236,7 +240,7 @@
   },
   "settings": {
     "title": "Settings",
-    "subtitle": "Amounts that help auto-categorize your purchases.",
+    "subtitle": "Settings that apply only to this book.",
     "gasLabel": "Gas station threshold",
     "gasHelp": "Under ${{amount}}: equipment fuel. Over: vehicle fuel.",
     "superLabel": "Supermarket threshold",
@@ -246,7 +250,37 @@
     "days": "days",
     "save": "Save",
     "saving": "Saving…",
-    "saved": "Saved ✓"
+    "saved": "Saved ✓",
+    "business": "Business",
+    "cantDeleteLast": "You can't delete your only business.",
+    "confirmDelete": "Delete this business and ALL its data? This can't be undone.",
+    "deleteBusiness": "Delete this business",
+    "deleting": "Deleting…",
+    "invite": "Invite",
+    "invitePlaceholder": "teammate@email.com",
+    "nameLabel": "Name",
+    "pending": "pending",
+    "rename": "Rename",
+    "team": "Team",
+    "teamHelp": "Invite your team. Member = can edit · Viewer = read-only.",
+    "viewerNote": "You have view-only access to this business.",
+    "role": {
+      "OWNER": "Owner",
+      "MEMBER": "Member",
+      "VIEWER": "Viewer",
+      "CLIENT": "Business owner"
+    },
+    "recent": {
+      "title": "Recent transactions",
+      "help": "Wait before recording them, in case the bank is still processing them.",
+      "none": "Don't wait",
+      "days_one": "{{count}} day",
+      "days_other": "{{count}} days",
+      "err": {
+        "wait_days_range": "Pick between 0 and 30 days.",
+        "error": "Something went wrong. Try again."
+      }
+    }
   },
   "audit": {
     "title": "Audit my categorization",
@@ -364,7 +398,25 @@
     "add": "New rule",
     "hint": "The sheet looks up these rules. Editing a rule does not rewrite past months — the auditor flags what fell out of line.",
     "keywordHint": "e.g. HOME DEPOT",
-    "subcatHint": "optional — defaults to the keyword"
+    "subcatHint": "optional — defaults to the keyword",
+    "import": "Import",
+    "export": "Export",
+    "importReading": "Reading file…",
+    "importEmpty": "Couldn't read any rules from that file.",
+    "imported": "Imported {{c}} rules and aligned {{a}} transactions.",
+    "importApprove_one": "Create {{count}} rule",
+    "importApprove_other": "Create {{count}} rules",
+    "priority": "Priority",
+    "priorityAuto": "auto",
+    "priorityHint": "1 runs first, like moving a row up in Excel. Blank = automatic (longest keyword wins).",
+    "priorityInvalid": "Priority must be a whole number from 1 up, or blank for the automatic order.",
+    "reassigned_one": "{{count}} transaction now follows a different rule.",
+    "reassigned_other": "{{count}} transactions now follow a different rule.",
+    "importStatus": {
+      "exists": "already exists",
+      "duplicate": "repeated in file",
+      "needs_section": "pick a category"
+    }
   },
   "verify": {
     "title": "Verify your email — we sent a link to {{email}}.",
@@ -425,7 +477,9 @@
     "addText": "+ add",
     "pending": "Pending",
     "onlyPending": "Pending ({{n}})",
-    "pendingHint": "No rule covers this yet — pick a category or create a rule"
+    "pendingHint": "No rule covers this yet — pick a category or create a rule",
+    "useClassic": "Use the previous view",
+    "useSheet": "Use the sheet"
   },
   "common": {
     "loading": "Loading…",
@@ -439,5 +493,23 @@
     "total": "Total",
     "txs_one": "{{count}} tx",
     "txs_other": "{{count}} txs"
+  },
+  "company": {
+    "add": "Add business",
+    "yours": "Your businesses"
+  },
+  "shell": {
+    "office": "Office",
+    "book": "This book",
+    "client": "Client",
+    "soon": "Soon",
+    "menu": "Menu",
+    "close": "Close menu",
+    "clients": "Clients",
+    "users": "Users",
+    "calendar": "Calendar",
+    "requests": "Requests",
+    "payroll": "Payroll",
+    "settings": "Book settings"
   }
 }

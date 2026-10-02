@@ -10,6 +10,7 @@ tocarla. El `company_id` de la URL ya NO se confía a ciegas.
 import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import re
 from typing import Optional
 
 from dateutil import parser as dateparser
@@ -19,10 +20,13 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, delete, select
 
-from ai import extract_receipt, map_rule_columns, propose_rules, recategorize_with_answer
+from ai import RuleColumnMapping, extract_receipt, map_rule_columns, propose_rules, recategorize_with_answer
 from audit import audit_categorization
 from billing import ai_quota_status, apply_session, create_checkout_session, handle_event
-from auth import current_user, member_role, owned_company, owner_company, owned_transaction
+# `effective_role` es la única fuente de verdad del acceso (FASE 13); los helpers dicen la
+# INTENCIÓN de cada endpoint: leer · escribir como consola · escribir como cliente · ser dueño.
+from auth import (current_user, effective_role, owned_company, owner_company, owned_transaction,
+                  client_writable_company, console_company, user_firm)
 from categories import categories_for, categories_for_company
 from company_profile import (
     apply_person_answer, format_profile_facts, interview_questions, sanitize_round1,
@@ -39,6 +43,7 @@ from reports import pivot, pivot_leaves, income_statement
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
     is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
+    reapply_rule_precedence,
 )
 
 
@@ -122,6 +127,7 @@ class RuleUpdate(BaseModel):
     account_type: Optional[AccountType] = None
     category: Optional[str] = None
     subcategory: Optional[str] = None  # comercio presentable que asigna la regla ("" → limpiar)
+    priority: Optional[int] = None     # prioridad manual (1 = primero); null → orden automático
 
 
 class RuleCreate(BaseModel):
@@ -131,6 +137,7 @@ class RuleCreate(BaseModel):
     account_type: AccountType
     category: str
     subcategory: Optional[str] = None
+    priority: Optional[int] = None
 
 
 class PnlReportCreate(BaseModel):
@@ -205,6 +212,86 @@ def get_me(
     return {"user": user, "companies": companies, "roles": roles}
 
 
+# ==================================================================================================
+# FASE 13 — AJUSTES DE LA OFICINA (área `Firm / bookkeepers`). Lo que vale para TODOS los libros.
+# Los ajustes de UN libro siguen en `/api/companies/{id}`.
+# ==================================================================================================
+
+class FirmUpdate(BaseModel):
+    name: Optional[str] = None
+    # El SELLO que ven los clientes de esta oficina (y el encabezado del PDF de la FASE 12).
+    # "" → se borra y se cae al nombre de la oficina.
+    brand_name: Optional[str] = None
+    brand_color: Optional[str] = None
+
+
+def _firm_out(firm, role) -> dict:
+    return {"id": firm.id, "name": firm.name, "brand_name": firm.brand_name,
+            "brand_color": firm.brand_color, "brand_logo_url": firm.brand_logo_url,
+            "role": role.value if role else None}
+
+
+@app.get("/api/firm")
+def get_firm(user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """La oficina del usuario y su rol en ella. 404 si no pertenece a ninguna (un cliente)."""
+    firm, role = user_firm(user, session)
+    if firm is None:
+        raise HTTPException(status_code=404, detail="no firm")
+    return _firm_out(firm, role)
+
+
+@app.patch("/api/firm")
+def update_firm(payload: FirmUpdate, user: User = Depends(current_user),
+                session: Session = Depends(get_session)):
+    """Edita nombre y marca de la oficina. Solo el ADMINISTRADOR (FirmRole.OWNER)."""
+    firm, role = user_firm(user, session)
+    if firm is None:
+        raise HTTPException(status_code=404, detail="no firm")
+    if role is None or role.value != "OWNER":
+        raise HTTPException(status_code=403, detail="firm owner only")
+    if payload.name is not None:
+        if not payload.name.strip():
+            raise HTTPException(status_code=422, detail="name required")
+        firm.name = payload.name.strip()
+    if payload.brand_name is not None:
+        firm.brand_name = payload.brand_name.strip() or None
+    if payload.brand_color is not None:
+        color = payload.brand_color.strip()
+        if color and not re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+            raise HTTPException(status_code=422, detail="brand_color must be #RRGGBB")
+        firm.brand_color = color or None
+    session.add(firm)
+    session.commit()
+    session.refresh(firm)
+    return _firm_out(firm, role)
+
+
+# ==================================================================================================
+# FASE 13 — DÍAS DE ESPERA DEL LIBRO (área `Firm / bookkeepers`).
+# 🔄 1-oct, decisión de Jose: fuera los ajustes por monto (las tarjetas de supermercado, gasolinera y
+# propias). Lo que el motor no decida con una REGLA queda Pendiente, y el criterio del bookkeeper vive
+# en las NOTAS de la pestaña Auditoría (F11). Los días de espera NO son un monto y se quedan, como un
+# ajuste simple: `Company.settlement_buffer_days` (el motor lo lee con `criteria.settlement_days()`).
+# ==================================================================================================
+
+class SettlementIn(BaseModel):
+    wait_days: int
+
+
+@app.patch("/api/companies/{company_id}/settlement")
+def update_settlement(company_id: int, payload: SettlementIn, user: User = Depends(current_user),
+                      session: Session = Depends(get_session)):
+    """Cuántos días esperar antes de registrar lo reciente (por si el banco aún lo está procesando)."""
+    company = owned_company(company_id, user, session, write=True)
+    if not 0 <= payload.wait_days <= 30:
+        raise HTTPException(status_code=422, detail="wait_days_range")
+    company.settlement_buffer_days = payload.wait_days
+    session.add(company)
+    session.commit()
+    session.refresh(company)
+    return company
+
+
 @app.post("/api/companies")
 def create_company(
     payload: CompanyCreate,
@@ -237,7 +324,9 @@ async def upload_transactions(
     disparar la cuota gratis por accidente); el bulk asíncrono real queda para post-deploy
     (deuda técnica #8).
     """
-    company = owned_company(company_id, user, session, write=True)
+    # LISTA BLANCA DEL CLIENTE (FASE 13 Paso 3): subir el extracto es lo que el cliente APORTA,
+    # no una edición del libro → `client_writable_company` en vez de la puerta de la consola.
+    company = client_writable_company(company_id, user, session)
     content = await file.read()
     # chunk>0 → subida por LOTES (cada lote bajo el límite del navegador); si no, tope de seguridad.
     limit = chunk if chunk > 0 else 1000
@@ -267,7 +356,7 @@ def get_quota(
 ):
     """Cupo de IA vigente (used/limit/remaining/monthly). El frontend decide con esto qué ofrecer:
     con cupo → "categorizar ahora"; sin cupo → mandar a suscribirse (Billing)."""
-    company = owned_company(company_id, user, session)
+    company = console_company(company_id, user, session)
     return ai_quota_status(session, company)
 
 
@@ -301,7 +390,10 @@ async def upload_receipt(
     lo categoriza → crea UNA transacción de caja. Pensado sobre todo para compras en EFECTIVO, que
     el extracto bancario no ve. Si el recibo se pagó con TARJETA, se marca para revisión (probable
     duplicado con el extracto). Cada recibo gasta 1 llamada de IA → cuenta contra el cupo."""
-    company = owned_company(company_id, user, session, write=True)
+    # LISTA BLANCA DEL CLIENTE (FASE 13 Paso 3): es la pieza que captura el EFECTIVO que el banco no
+    # ve, y el único que está en la tienda es el dueño del negocio. Usa la IA que ya existía
+    # (`extract_receipt`) — esta fase no construye IA nueva, solo abre el acceso.
+    company = client_writable_company(company_id, user, session)
 
     content = await file.read()
     mime = file.content_type or "image/jpeg"
@@ -483,7 +575,7 @@ def list_members(
     session: Session = Depends(get_session),
 ):
     """Equipo de la empresa: el dueño (OWNER) + los miembros invitados. Cualquier miembro lo ve."""
-    company = owned_company(company_id, user, session)
+    company = console_company(company_id, user, session)
     owner = session.get(User, company.user_id) if company.user_id else None
     out = [{"id": None, "email": owner.email if owner else None,
             "role": Role.OWNER.value, "is_owner": True, "pending": False}]
@@ -617,7 +709,7 @@ def get_interview(
     IA: agrupa los pagos persona-a-persona (Zelle/Venmo/…) por contraparte — exactamente los que
     el proponedor tiene prohibido convertir en regla sin contexto — y pregunta el rol de cada
     persona aún sin confirmar. Los totales los suma Python (la IA no calcula)."""
-    company = owned_company(company_id, user, session)
+    company = console_company(company_id, user, session)
     txs = session.exec(
         select(Transaction).where(Transaction.company_id == company_id)
     ).all()
@@ -674,7 +766,9 @@ def get_categories(
 ):
     """Plan de cuentas EFECTIVO de la empresa: base del sector + categorías personalizadas.
     Lo usa el frontend para el selector de categoría (y derivar el account_type)."""
-    company = owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    company = console_company(company_id, user, session)
     return categories_for_company(session, company_id, company.sector)
 
 
@@ -685,7 +779,7 @@ def list_custom_categories(
     session: Session = Depends(get_session),
 ):
     """Categorías personalizadas que la empresa agregó a su plan de cuentas (con id, para borrarlas)."""
-    owned_company(company_id, user, session)
+    console_company(company_id, user, session)
     return session.exec(
         select(CompanyCategory).where(CompanyCategory.company_id == company_id)
     ).all()
@@ -760,7 +854,7 @@ def list_rules(
 ):
     """Reglas de EMPRESA (comercio → categoría) con cuántas transacciones afecta cada una.
     Es el 'reglamento' editable que el dueño/firma cura."""
-    owned_company(company_id, user, session)
+    console_company(company_id, user, session)
     rules = session.exec(
         select(CategoryRule)
         .where(CategoryRule.scope == RuleScope.COMPANY)
@@ -777,6 +871,7 @@ def list_rules(
             "id": r.id, "match_text": r.match_text,
             "account_type": r.account_type.value if r.account_type else None,
             "category": r.category, "subcategory": r.subcategory, "matches": matches,
+            "priority": r.priority,
             # `scope`/`sector`: si la regla es de ESTE libro o de todo un sector (la hoja de reglas
             # los muestra como una sola columna "Sector": "This book" o el nombre del sector).
             "scope": r.scope.value, "sector": r.sector,
@@ -813,14 +908,27 @@ def create_rule(
         scope=RuleScope.COMPANY, company_id=company_id, match_text=match_text,
         account_type=payload.account_type, category=payload.category,
         subcategory=(payload.subcategory or "").strip() or None,
+        priority=_valid_priority(payload.priority),
     )
     session.add(rule)
     applied = apply_rule_to_transactions(session, company_id, rule)
+    # Una regla nueva puede tomar transacciones que otra regla con más prioridad debe conservar.
+    reassigned = reapply_rule_precedence(session, company_id)
     session.commit()
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
             "account_type": rule.account_type.value, "category": rule.category,
-            "subcategory": rule.subcategory, "applied": applied}
+            "subcategory": rule.subcategory, "priority": rule.priority,
+            "applied": applied, "reassigned": reassigned}
+
+
+def _valid_priority(value: Optional[int]) -> Optional[int]:
+    """Prioridad manual: entero ≥ 1, o None (orden automático)."""
+    if value is None:
+        return None
+    if value < 1:
+        raise HTTPException(status_code=422, detail="la prioridad debe ser 1 o mayor")
+    return value
 
 
 @app.patch("/api/companies/{company_id}/rules/{rule_id}")
@@ -838,15 +946,22 @@ def update_rule(
     data = payload.model_dump(exclude_unset=True)
     if "subcategory" in data:  # "" desde la UI = limpiar (volver al match_text)
         data["subcategory"] = (data["subcategory"] or "").strip() or None
+    if "priority" in data:
+        data["priority"] = _valid_priority(data["priority"])
     for field, value in data.items():
         setattr(rule, field, value)
     session.add(rule)
-    applied = apply_rule_to_transactions(session, company_id, rule)
+    session.flush()
+    # Cambiar SOLO la prioridad no re-aplica la regla a todo lo que matchea (eso pisaría lo que
+    # otra regla o el bookkeeper decidieron): solo se re-decide qué regla gana.
+    applied = apply_rule_to_transactions(session, company_id, rule) if data.keys() - {"priority"} else 0
+    reassigned = reapply_rule_precedence(session, company_id)
     session.commit()
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
             "account_type": rule.account_type.value if rule.account_type else None,
-            "category": rule.category, "subcategory": rule.subcategory, "applied": applied}
+            "category": rule.category, "subcategory": rule.subcategory,
+            "priority": rule.priority, "applied": applied, "reassigned": reassigned}
 
 
 @app.delete("/api/companies/{company_id}/rules/{rule_id}")
@@ -974,7 +1089,7 @@ class LabelIn(BaseModel):
 def list_labels(company_id: int, user: User = Depends(current_user),
                 session: Session = Depends(get_session)):
     """Catálogo de etiquetas que el bookkeeper definió para esta empresa."""
-    owned_company(company_id, user, session)
+    console_company(company_id, user, session)
     return session.exec(
         select(SheetLabel).where(SheetLabel.company_id == company_id).order_by(SheetLabel.id)
     ).all()
@@ -983,7 +1098,8 @@ def list_labels(company_id: int, user: User = Depends(current_user),
 @app.post("/api/companies/{company_id}/labels")
 def create_label(company_id: int, payload: LabelIn, user: User = Depends(current_user),
                  session: Session = Depends(get_session)):
-    owned_company(company_id, user, session)
+    # write=True: crear una marca ES escribir. Sin esto pasaban VIEWER y CLIENT (bug previo).
+    owned_company(company_id, user, session, write=True)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=422, detail="la etiqueta necesita un nombre")
@@ -1053,7 +1169,8 @@ def apply_cell_format(company_id: int, payload: CellFormatIn,
                       user: User = Depends(current_user),
                       session: Session = Depends(get_session)):
     """Aplica (o limpia) formato sobre una o muchas celdas. UPSERT por (transacción, columna)."""
-    owned_company(company_id, user, session)
+    # write=True: pintar una celda ES escribir. Sin esto pasaban VIEWER y CLIENT (bug previo).
+    owned_company(company_id, user, session, write=True)
     owned = {t.id for t in session.exec(
         select(Transaction).where(Transaction.company_id == company_id,
                                   Transaction.id.in_(payload.transaction_ids))).all()}
@@ -1090,7 +1207,7 @@ def audit_company(
     """AGENTE AUDITOR: escanea las transacciones categorizadas y devuelve los **sospechosos**
     (desvío de regla, inconsistencia por comercio, contradicción de signo, sin categorizar).
     Determinista, sin IA. Corre a demanda Y automáticamente tras cada subida (badge)."""
-    owned_company(company_id, user, session)
+    console_company(company_id, user, session)
     return _company_audit(session, company_id)
 
 
@@ -1104,7 +1221,8 @@ def generate_rule_proposals(
     SIN regla (determinista) y pide a la IA reglas COMPANY propuestas (mergea marcas, no duplica las
     existentes, salta gas/super y persona-a-persona). Devuelve propuestas para que el dueño APRUEBE
     (no crea nada todavía)."""
-    company = owned_company(company_id, user, session)
+    # write=True: proponer reglas gasta IA y escribe el reglamento (bug previo).
+    company = owned_company(company_id, user, session, write=True)
     sector = company.sector if company else "general"
     rules = load_rules(session, company_id, sector)
     txs = session.exec(
@@ -1142,7 +1260,8 @@ def validate_rule_proposal(
 ):
     """Re-valida un keyword contra las transacciones reales (cobertura/colisión) — se usa cuando el
     dueño EDITA el keyword de una propuesta antes de aprobarla. Determinista, sin IA."""
-    owned_company(company_id, user, session)
+    # Herramienta del reglamento: la usa el bookkeeper al editar una propuesta.
+    owned_company(company_id, user, session, write=True)
     txs = session.exec(
         select(Transaction).where(Transaction.company_id == company_id)
     ).all()
@@ -1155,6 +1274,8 @@ class RuleProposalApply(BaseModel):
     keyword: str
     account_type: AccountType
     category: str
+    subcategory: Optional[str] = None  # la trae el import; el proponedor no
+    priority: Optional[int] = None     # ídem (columna "Priority" de la exportación)
 
 
 class RuleProposalsApply(BaseModel):
@@ -1176,15 +1297,34 @@ def apply_rule_proposals(
     created = 0
     applied = 0
     for p in payload.rules:
-        rule = create_company_rule(session, company_id, sector, p.keyword, p.account_type, p.category)
+        rule = create_company_rule(session, company_id, sector, p.keyword, p.account_type, p.category,
+                                   (p.subcategory or "").strip() or None,
+                                   p.priority if p.priority and p.priority >= 1 else None)
         if rule is not None:
             created += 1
             session.flush()  # asigna id para apply_rule_to_transactions
             applied += apply_rule_to_transactions(session, company_id, rule)
+    if created:
+        session.flush()
+        reapply_rule_precedence(session, company_id)  # varias reglas nuevas: que gane la que debe
     session.commit()
     # AUDITOR AUTOMÁTICO (FASE 9 Paso 4): tras cambiar el reglamento, el agente verifica los libros.
     return {"created": created, "applied": applied,
             "audit_findings": len(_company_audit(session, company_id))}
+
+
+# Encabezados que escribe "Exportar" de la hoja de Reglas (frontend/src/components/RulesSheet.tsx).
+_EXPORT_RULE_HEADERS = {"keyword": "keyword_column", "category": "category_column",
+                        "subcategory": "subcategory_column", "section": "account_type_column"}
+
+
+def _own_rule_columns(headers: list[str]) -> Optional[RuleColumnMapping]:
+    """Si el archivo trae los encabezados de nuestra propia exportación, el mapeo es determinista."""
+    found = {_EXPORT_RULE_HEADERS[h.strip().lower()]: h
+             for h in headers if h.strip().lower() in _EXPORT_RULE_HEADERS}
+    if "keyword_column" not in found or "category_column" not in found:
+        return None
+    return RuleColumnMapping(**found)
 
 
 @app.post("/api/companies/{company_id}/rules/import")
@@ -1197,17 +1337,22 @@ async def import_rules_preview(
     """Sube el archivo de REGLAS del usuario (CSV, columnas COMO SEA). La IA mapea las columnas y
     devuelve un PREVIEW (keyword, category, account_type, status) para que el usuario confirme. NO
     crea nada — las aprobadas se crean con `/rule-proposals/apply` (misma forma)."""
-    company = owned_company(company_id, user, session)
+    # Importar el banco de reglas es trabajo de consola (además gasta IA en el mapeo).
+    company = owned_company(company_id, user, session, write=True)
     sector = company.sector if company else "general"
     content = await file.read()
     headers, rows = parse_spreadsheet(content, file.filename)
     if not headers or not rows:
         raise HTTPException(status_code=422, detail="Archivo vacío o ilegible.")
-    mapping = map_rule_columns(headers, rows[:5])
+    # Un archivo que salió de "Exportar" en la hoja de Reglas trae nuestros encabezados: se mapea
+    # directo, sin gastar IA y sin riesgo de que la adivine mal. Cualquier otro formato → la IA.
+    mapping = _own_rule_columns(headers) or map_rule_columns(headers, rows[:5])
+    # "Priority" sale de nuestra exportación; se lee por nombre (la IA no la mapea).
+    priority_col = next((h for h in headers if h.strip().lower() == "priority"), "")
     existing = [r.match_text for r in load_rules(session, company_id, sector)]
     preview = build_import_rules(
         headers, rows, mapping.keyword_column, mapping.category_column,
-        mapping.account_type_column, sector, existing,
+        mapping.account_type_column, sector, existing, mapping.subcategory_column, priority_col,
     )
     return {
         "mapping": {
@@ -1287,7 +1432,9 @@ def list_pnl_reports(
     session: Session = Depends(get_session),
 ):
     """Lista los proyectos de P&L guardados (con su net income para mostrar en la lista)."""
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     reports = session.exec(
         select(PnlReport).where(PnlReport.company_id == company_id)
         .order_by(PnlReport.created_at.desc())
@@ -1323,7 +1470,9 @@ def get_pnl_report(
     session: Session = Depends(get_session),
 ):
     """Abre un proyecto: su metadata + el P&L (recalculado si es borrador; congelado si está cerrado)."""
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     r = _owned_report(company_id, report_id, session)
     return {**_report_meta(r), "pnl": _report_pnl(session, company_id, r)}
 
@@ -1394,7 +1543,9 @@ def list_transactions(
     hoja, FASE 10). Se calcula en memoria sobre los datos vivos — determinista y sin IA, así que no
     cuesta nada; por eso va en la misma llamada en vez de obligar al frontend a cruzar dos listas.
     """
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     txs = session.exec(
         select(Transaction)
         .where(Transaction.company_id == company_id)
@@ -1447,7 +1598,9 @@ def get_income_statement(
     session: Session = Depends(get_session),
 ):
     """Estado de resultados (P&L) calculado en SQL, opcional por rango `start`/`end` (YYYY-MM-DD)."""
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     return income_statement(session, company_id, start, end)
 
 
@@ -1461,7 +1614,9 @@ def get_pivot(
     session: Session = Depends(get_session),
 ):
     """EL PIVOTE (FASE 10 paso 7): categoría → subcategoría → mes. Totales agregados en SQL."""
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     return pivot(session, company_id, start, end, account)
 
 
@@ -1477,7 +1632,9 @@ def get_pivot_leaves(
 ):
     """El último `+` del pivote: las transacciones de ese mes, con día y descripción.
     Se piden aparte para no cargar el árbol entero al abrir."""
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     return pivot_leaves(session, company_id, section, category, subcategory, month)
 
 
@@ -1488,7 +1645,9 @@ def list_review(
     session: Session = Depends(get_session),
 ):
     """Transacciones que la IA marcó como dudosas (necesitan confirmación humana)."""
-    owned_company(company_id, user, session)
+    # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
+    # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
+    console_company(company_id, user, session)
     return session.exec(
         select(Transaction)
         .where(Transaction.company_id == company_id)

@@ -28,3 +28,10 @@ body {
   color: #0f172a; /* slate-900 */
   -webkit-font-smoothing: antialiased;
 }
+
+/* LA CÁSCARA UNIFORME (FASE 13): reservar SIEMPRE el carril de la barra de scroll. Sin esto, las
+   páginas más altas que la ventana (P&L, Ajustes) aparecían 15 px más angostas que las demás y el
+   contenido saltaba al cambiar de pestaña — justo lo que la barra lateral vino a eliminar. */
+html {
+  scrollbar-gutter: stable;
+}

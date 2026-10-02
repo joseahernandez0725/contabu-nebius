@@ -351,6 +351,7 @@ export interface Rule {
   account_type: string | null;
   category: string;
   subcategory: string | null; // comercio presentable que asigna la regla (null → el match_text)
+  priority: number | null;    // prioridad manual (1 = primero); null → orden automático
   matches: number; // cuántas transacciones afecta
   scope: "COMPANY" | "SECTOR";  // de ESTE libro, o compartida por todo un sector
   sector: string | null;        // el sector, cuando scope === "SECTOR"
@@ -378,8 +379,8 @@ export async function createRule(payload: {
 
 export async function updateRule(
   id: number,
-  payload: { account_type: string; category: string; subcategory?: string },
-): Promise<{ applied: number }> {
+  payload: { account_type?: string; category?: string; subcategory?: string; priority?: number | null },
+): Promise<{ applied: number; reassigned: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
     method: "PATCH",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },
@@ -536,6 +537,8 @@ export interface RuleImportRow {
   keyword: string;
   account_type: string;       // "" si no se pudo resolver la sección
   category: string;
+  subcategory: string;        // "" si el archivo no trae esa columna
+  priority: number | null;    // columna "Priority" de la exportación (null si no viene)
   status: string;             // ok | exists | duplicate | needs_section
 }
 
@@ -555,7 +558,8 @@ export async function importRules(
 
 // Crea las reglas APROBADAS por el dueño y las aplica a lo existente.
 export async function applyRuleProposals(
-  rules: { keyword: string; account_type: string; category: string }[],
+  rules: { keyword: string; account_type: string; category: string; subcategory?: string;
+           priority?: number | null }[],
 ): Promise<{ created: number; applied: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals/apply`, {
     method: "POST",
@@ -765,3 +769,21 @@ export async function setTransactionsAccount(
 // Formatea un número como dinero en USD.
 export const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+// ==================================================================================================
+// FASE 13 — DÍAS DE ESPERA DEL LIBRO (área Firm / bookkeepers). 🔄 1-oct, decisión de Jose: fuera los
+// ajustes por monto; los días de espera se quedan como un ajuste simple del libro.
+// Errores: llega un CÓDIGO (`wait_days_range`) que la pantalla traduce con `settings.recent.err.*`.
+// ==================================================================================================
+export async function updateSettlement(waitDays: number): Promise<Company> {
+  const res = await fetch(`${API}/api/companies/${cid()}/settlement`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ wait_days: waitDays }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j?.detail).catch(() => null);
+    throw new Error(typeof detail === "string" ? detail : "error");
+  }
+  return res.json();
+}

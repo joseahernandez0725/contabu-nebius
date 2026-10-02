@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { onAuthStateChanged, signOut, type User as FirebaseUser } from "firebase/auth";
+import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
 import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Sheet from "./components/Sheet";
@@ -8,63 +8,20 @@ import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
 import Interview from "./components/Interview";
-import Rules from "./components/Rules";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
 import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Login from "./components/Login";
-import LanguageSwitcher from "./components/LanguageSwitcher";
-import CompanySwitcher from "./components/CompanySwitcher";
+import Sidebar, { viewLabel, type View } from "./components/Sidebar";
 import { auth } from "./firebase";
 import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, getAudit, confirmCheckout } from "./api";
 import type { Company, Transaction } from "./types";
 
-type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "rules" | "settings";
-
-function Logo() {
-  // Logo de marca real (public/icon.svg): cuadro verde con el lettermark "ContaBu".
-  return <img src="/icon.svg" alt="ContaBu" className="size-9 rounded-xl shadow-sm" />;
-}
-
-const ICONS: Partial<Record<View, ReactNode>> = {
-  dashboard: (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" />
-      <rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" />
-    </svg>
-  ),
-  transactions: (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="8" y1="7" x2="20" y2="7" /><line x1="8" y1="12" x2="20" y2="12" /><line x1="8" y1="17" x2="20" y2="17" />
-      <circle cx="4" cy="7" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="17" r="1" />
-    </svg>
-  ),
-  audit: (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9z" /><path d="M9 13l2 2 4-4" />
-    </svg>
-  ),
-  upload: (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" />
-    </svg>
-  ),
-  rules: (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 6h11M9 12h11M9 18h11" /><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2" />
-    </svg>
-  ),
-  pnl: (
-    <svg viewBox="0 0 24 24" className="size-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 19V5M4 19h16" /><path d="M8 16v-5M12 16V8M16 16v-3" />
-    </svg>
-  ),
-};
-
 function App() {
   const { t } = useTranslation();
   const [view, setView] = useState<View>("dashboard");
+  const [menuOpen, setMenuOpen] = useState(false); // cajón de la barra lateral (solo celular)
   const [company, setCompany] = useState<Company | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [authError, setAuthError] = useState(false);
@@ -72,7 +29,6 @@ function App() {
   const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
-  const [autoPropose, setAutoPropose] = useState(false); // "Crear mis reglas" tras la subida → Reglas genera solo
   // LA HOJA (FASE 10): la consola del bookkeeper reemplaza la lista móvil simplificada.
   // Se deja un interruptor a la vista anterior mientras se termina de construir, para poder comparar.
   // Va aquí con los demás hooks a propósito: declararlo después de los `return` tempranos rompe
@@ -166,8 +122,6 @@ function App() {
     }
   }, [company, t]);
 
-  const views: View[] = ["dashboard", "transactions", "audit", "pnl", "rules"];
-
   // Verificando sesión de Firebase.
   if (fbUser === undefined) {
     return (
@@ -186,59 +140,44 @@ function App() {
     return <Onboarding company={company} onDone={onCompanyReady} />;
   }
 
-  // Vista de escritorio (§5.B): las herramientas de operador (movimientos, reglas) usan MÁS ancho en
-  // pantallas grandes; el resto del flujo del dueño queda angosto (mobile-first).
-  const wideView = view === "transactions" || view === "rules";
-  // LA CONSOLA DEL BOOKKEEPER (FASE 10): la hoja usa TODA la ventana. Un bookkeeper trabaja por
-  // volumen en un monitor grande — cada píxel de margen es una transacción menos que ve de un
-  // vistazo. El resto de vistas siguen centradas y angostas (son para el dueño, en el celular).
-  const fullBleed = view === "transactions" && useSheet;
-  const contentWidth = fullBleed ? "max-w-none" : wideView ? "max-w-2xl lg:max-w-5xl" : "max-w-2xl";
-  const contentPad = fullBleed ? "px-3 sm:px-4 py-3" : "px-4 py-5";
-
+  // LA CÁSCARA (FASE 13): barra lateral + UN solo ancho para todas las páginas — el de Activity.
+  // Antes había tres (Activity a ventana completa, Reglas a 1024 px, el resto a 672 px centrado), y
+  // como el header usaba el mismo ancho variable, hasta el logo cambiaba de lugar al cambiar de
+  // pestaña. Ahora todas las páginas empiezan en el mismo punto y usan el mismo espacio.
+  //
+  // ⚠️ La barra de arriba mide EXACTAMENTE h-14 (56 px), igual que el header de antes: la hoja
+  // (`Sheet.tsx`, del área Movimientos) calcula su alto como `100vh - 132px` contando con ella.
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900">
-      <header className="sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-200">
-        <div className={`${contentWidth} mx-auto px-4 h-14 flex items-center gap-3`}>
-          <Logo />
-          <div className="flex-1 leading-tight min-w-0">
-            <div className="font-bold tracking-tight">
-              <span className="text-brand-amber">Conta</span>
-              <span className="text-brand-green">Bu</span>
-            </div>
-            {company && companies.length > 0 ? (
-              <CompanySwitcher companies={companies} activeId={company.id} onSwitch={switchCompany} onAdd={addCompany} />
-            ) : (
-              <div className="text-xs text-slate-500 truncate">{company?.name ?? "…"}</div>
-            )}
-          </div>
-          <LanguageSwitcher />
-          <button
-            onClick={() => setView("settings")}
-            aria-label={t("settings.title")}
-            className={`p-1.5 rounded-lg transition-colors ${
-              view === "settings" ? "text-brand-green" : "text-slate-400 hover:text-slate-600"
-            }`}
-          >
-            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <button
-            onClick={() => signOut(auth)}
-            aria-label={t("login.logout")}
-            title={t("login.logout")}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 transition-colors"
-          >
-            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" />
-            </svg>
-          </button>
-        </div>
-      </header>
+    <div className="min-h-screen flex bg-slate-50 text-slate-900">
+      <Sidebar
+        view={view}
+        onNavigate={setView}
+        company={company}
+        companies={companies}
+        onSwitch={switchCompany}
+        onAdd={addCompany}
+        reviewCount={reviewTxs.length}
+        auditCount={auditCount}
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+      />
 
-      <main className={`flex-1 w-full ${contentWidth} mx-auto ${contentPad} pb-24`}>
+      <div className="flex-1 min-w-0 flex flex-col">
+        <header className="sticky top-0 z-10 h-14 shrink-0 bg-white/80 backdrop-blur-md border-b border-slate-200 flex items-center gap-3 px-3 sm:px-4">
+          <button
+            onClick={() => setMenuOpen(true)}
+            aria-label={t("shell.menu")}
+            className="md:hidden p-1.5 -ms-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+          >
+            <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+          <h1 className="font-semibold text-slate-900 truncate">{viewLabel(t, view)}</h1>
+          {company && <span className="text-sm text-slate-400 truncate">· {company.name}</span>}
+        </header>
+
+        <main className="flex-1 w-full px-3 sm:px-4 py-3">
         <VerifyEmailBanner />
         {!company ? (
           <div className="flex justify-center py-16">
@@ -295,56 +234,18 @@ function App() {
               </div>
             )}
             {view === "pnl" && <Pnl companyName={company.name} />}
-            {view === "rules" && (
-              <Rules autoPropose={autoPropose} onAutoProposeDone={() => setAutoPropose(false)} />
-            )}
             {view === "upload" && (
-              <Upload
-                onDone={() => { reloadReview(); setView("dashboard"); }}
-                onProposeRules={() => { reloadReview(); setAutoPropose(true); setView("rules"); }}
-              />
+              // Sin `onProposeRules`: ese botón (proponedor de reglas con IA) solo aparecía si la IA
+              // categorizaba algo, y desde el 27-sep no categoriza. El proponedor vuelve en Auditoría (F11).
+              <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
             )}
             {view === "settings" && (
               <Settings company={company} onSaved={onCompanyReady} onDeleted={onCompanyDeleted} canDelete={companies.length > 1} />
             )}
           </div>
         )}
-      </main>
-
-      <nav className="fixed bottom-0 inset-x-0 bg-white/90 backdrop-blur-md border-t border-slate-200">
-        <div className="max-w-2xl mx-auto grid grid-cols-5">
-          {views.map((id) => {
-            const active = view === id;
-            const count = id === "audit" ? reviewTxs.length : 0;
-            const audits = id === "audit" ? auditCount : 0; // hallazgos del auditor (ámbar)
-            return (
-              <button
-                key={id}
-                onClick={() => setView(id)}
-                className={`flex flex-col items-center gap-1 py-2.5 text-[11px] transition-colors ${
-                  active ? "text-brand-green font-semibold" : "text-slate-400 hover:text-slate-600"
-                }`}
-              >
-                <div className="relative">
-                  {ICONS[id]}
-                  {count > 0 && (
-                    <span className="absolute -top-1.5 -end-2 bg-rose-500 text-white text-[9px] leading-none rounded-full px-1 py-0.5 min-w-4 text-center">
-                      {count}
-                    </span>
-                  )}
-                  {/* Badge ÁMBAR del AUDITOR: hallazgos del agente (aparte de las revisiones rojas). */}
-                  {audits > 0 && (
-                    <span className="absolute -top-1.5 -start-2 bg-amber-500 text-white text-[9px] leading-none rounded-full px-1 py-0.5 min-w-4 text-center">
-                      {audits}
-                    </span>
-                  )}
-                </div>
-                {t(`nav.${id}`)}
-              </button>
-            );
-          })}
-        </div>
-      </nav>
+        </main>
+      </div>
     </div>
   );
 }

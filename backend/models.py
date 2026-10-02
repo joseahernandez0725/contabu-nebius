@@ -41,9 +41,27 @@ class Role(str, Enum):
     - OWNER: control total (gestiona el equipo, renombra, elimina). Es `Company.user_id` (implícito).
     - MEMBER: puede editar (subir, categorizar, reglas, P&L), pero NO gestionar equipo ni eliminar.
     - VIEWER: solo lectura (ver P&L/movimientos/reglas); el backend rechaza sus escrituras.
+    - CLIENT: el DUEÑO DEL NEGOCIO (FASE 13). No es un VIEWER con permisos extra ni un MEMBER con
+      menos: es otra superficie. Ve SUS números y APORTA datos crudos (extracto, foto de recibo,
+      respuesta a una pregunta), pero NO toca el criterio contable (reglas, plan de cuentas,
+      categorías). Solo nace de una INVITACIÓN: registrarse crea una firma, nunca un cliente.
     """
     OWNER = "OWNER"
     MEMBER = "MEMBER"
+    VIEWER = "VIEWER"
+    CLIENT = "CLIENT"
+
+
+class FirmRole(str, Enum):
+    """Rol de un usuario dentro de la OFICINA (`Firm`). Aplica a TODOS los libros de la firma — es la
+    diferencia con `Role`, que es por empresa: se invita UNA vez y se ven las 40, no 40 invitaciones.
+
+    - OWNER: dueño de la oficina (factura, agrega gente, crea y elimina libros).
+    - BOOKKEEPER: trabaja todos los libros (subir, categorizar, reglas); no elimina ni factura.
+    - VIEWER: lee todos los libros (un socio, un revisor); el backend rechaza sus escrituras.
+    """
+    OWNER = "OWNER"
+    BOOKKEEPER = "BOOKKEEPER"
     VIEWER = "VIEWER"
 
 
@@ -77,8 +95,12 @@ class User(SQLModel, table=True):
 class Company(SQLModel, table=True):
     """La empresa del usuario (un negocio inmigrante)."""
     id: Optional[int] = Field(default=None, primary_key=True)
+    # OFICINA a la que pertenece el libro (FASE 13). Es el camino de acceso normal: quien está en la
+    # firma entra a TODOS sus libros. Nullable solo por la migración; el backfill lo llena.
+    firm_id: Optional[int] = Field(default=None, foreign_key="firm.id", index=True)
     # Dueño de la empresa (multi-tenant). Nullable por compatibilidad con datos sembrados
     # antes de la auth; al primer login se crea el User y se enlaza su empresa.
+    # NO se borra al llegar `firm_id`: queda como el CREADOR del libro y como acceso de respaldo.
     user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     name: str
     sector: str  # construcción / limpieza / restaurante…
@@ -198,6 +220,9 @@ class CategoryRule(SQLModel, table=True):
     # match_text (comportamiento histórico). Permite keyword técnico + nombre limpio ("HD SUPPLY
     # CONST" → subcategoría "Home Depot Supply").
     subcategory: Optional[str] = Field(default=None)
+    # Prioridad MANUAL (1 = primero, como subir una fila en Excel). None → orden automático (la más
+    # larga gana; empate → alfabético). Las que tienen número van ANTES que todas las automáticas.
+    priority: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -309,3 +334,87 @@ class PnlReport(SQLModel, table=True):
     snapshot: Optional[str] = Field(default=None)    # JSON del P&L congelado (solo si closed)
     created_at: datetime = Field(default_factory=_utcnow)
     closed_at: Optional[datetime] = Field(default=None)
+
+
+# ==================================================================================================
+# FASE 13 — LA OFICINA (área `Firm / bookkeepers`). Ver docs/FASE 13.md.
+# El nivel que FALTABA: hasta aquí la jerarquía era User → Company, así que los sectores, las reglas
+# compartidas y las preferencias no tenían dónde separarse — o estaban pegados a una empresa, o eran
+# globales para todos.
+# ==================================================================================================
+
+
+class Firm(SQLModel, table=True):
+    """La oficina de bookkeeping: agrupa a los bookkeepers que trabajan y los libros que llevan.
+
+    **Registrarse crea una firma de UN usuario** (FASE 13 Paso 4): todo el que llega por la puerta es
+    bookkeeper de sí mismo, con todas las herramientas. El rol `CLIENT` no se puede alcanzar
+    registrándose — solo llega por invitación (`CompanyMember`). Así "cliente" es una RELACIÓN, no un
+    tipo de cuenta, y no existe un tercer estado que resolver.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    owner_user_id: int = Field(foreign_key="user.id", index=True)
+
+    # --- EL SELLO de la firma (decisión de Jose, 27-sep-2026) ---
+    # "si es cliente mío sí puede aparecer ContaBu; si no es cliente mío, va a aparecer la marca de la
+    # persona que gestiona esa cuenta". Se implementa como UNA regla sin casos especiales: lo que el
+    # cliente ve es la marca de SU firma. La firma de Jose se llama ContaBu, y por eso su cliente ve
+    # ContaBu — no hay ningún `if` que pregunte "¿es la firma de Jose?".
+    # None → se cae al `name` de la firma. Lo consume la plataforma del cliente (FASE 13 Paso 9) y el
+    # encabezado del PDF/Excel de la FASE 12: un solo sello, dos usos.
+    brand_name: Optional[str] = Field(default=None)
+    brand_logo_url: Optional[str] = Field(default=None)
+    brand_color: Optional[str] = Field(default=None)   # hex, acento de la UI del cliente
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class FirmMember(SQLModel, table=True):
+    """Quién trabaja en la oficina (y con qué rol sobre TODOS sus libros).
+
+    Mismo patrón que `CompanyMember`, un nivel más arriba: `user_id` es null mientras la invitación
+    está **pendiente** (solo se conoce el email) y se enlaza al hacer login con ese correo (ver
+    `auth.current_user`). Único por (firm_id, email).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    firm_id: int = Field(foreign_key="firm.id", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
+    email: str = Field(index=True)  # email del invitado (para enlazar al hacer login)
+    role: FirmRole = Field(default=FirmRole.BOOKKEEPER)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class BookCriterion(SQLModel, table=True):
+    """Un CRITERIO DEL LIBRO (FASE 13): cómo decide ContaBu un caso que se repite en ESTE libro.
+
+    Reemplaza a los umbrales fijos (`Company.supermarket_threshold`, `gas_station_threshold`,
+    `settlement_buffer_days` y los 50/30/5 escritos en el código). El problema de aquellos no era el
+    número: era que las CATEGORÍAS de cada lado estaban escritas en el programa. Aquí el bookkeeper
+    elige las dos, del plan de cuentas de ese libro, y puede crear tarjetas propias.
+
+    `kind`:
+      - "supermarket" / "gas_station" → aplica a los comercios de esas listas (base + aprendidos)
+      - "custom"      → aplica a los movimientos cuya descripción contiene alguna de `keywords`
+      - "settlement"  → no categoriza: cuántos días esperar antes de registrar lo reciente
+    `mode` ("supermarket", "gas_station", "custom"):
+      - "split"   → menos de `limit_amount` → `below_*` · desde `limit_amount` → `above_*`
+      - "always"  → todo a `below_*`
+      - "pending" → no decide: queda Pendiente para que lo revise el bookkeeper
+    Las categorías se guardan en INGLÉS (Regla de Oro); el frontend las traduce.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    kind: str
+    name: Optional[str] = Field(default=None)          # título de las tarjetas propias
+    description: Optional[str] = Field(default=None)   # texto libre del bookkeeper (cualquier tarjeta)
+    keywords: Optional[list] = Field(default=None, sa_column=Column(JSON))  # solo "custom"
+    mode: str = Field(default="split")
+    limit_amount: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
+    below_account_type: Optional[AccountType] = Field(default=None)
+    below_category: Optional[str] = Field(default=None)
+    above_account_type: Optional[AccountType] = Field(default=None)
+    above_category: Optional[str] = Field(default=None)
+    review_near: bool = Field(default=True)            # cerca del límite (±25 %) → para revisar
+    wait_days: Optional[int] = Field(default=None)     # solo "settlement"
+    position: int = Field(default=0)
+    created_at: datetime = Field(default_factory=_utcnow)
