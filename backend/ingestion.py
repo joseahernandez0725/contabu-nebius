@@ -67,7 +67,6 @@ def is_pending(status: str | None) -> bool:
         return False
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
-import criteria
 from rules import check_number, classify_transfer, is_check, load_rules, match_rule
 
 
@@ -364,9 +363,10 @@ def ingest_csv(
     # Ventana de asentamiento de la empresa (o el default del sistema). Se retienen los
     # movimientos recientes/pending hasta que liquidan; entran solos en una subida posterior.
     company = session.get(Company, company_id)
-    # Los días de espera los define el bookkeeper en los criterios del libro (FASE 13).
-    buffer_days = criteria.settlement_days(session, company) if company \
-        else DEFAULT_SETTLEMENT_BUFFER_DAYS
+    # Los días de espera son un ajuste simple del libro (`Company.settlement_buffer_days`, Ajustes del
+    # libro). Volvió aquí el 2-oct: `criteria.py`, que lo leía, se borró con los criterios por monto.
+    buffer_days = company.settlement_buffer_days \
+        if company and company.settlement_buffer_days is not None else DEFAULT_SETTLEMENT_BUFFER_DAYS
     today = datetime.now(timezone.utc).date()
 
     # Trozo a procesar: rows[offset : offset+limit]. Permite subir en LOTES (cada lote bajo el

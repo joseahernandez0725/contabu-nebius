@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Trans, useTranslation } from "react-i18next";
 import { Editor, type EditorType } from "@revolist/react-datagrid";
 import { addCustomCategory, type ChartOfAccounts } from "../api";
 
@@ -32,6 +33,11 @@ const SECTION_LABEL: Record<string, string> = {
 const SECTION_ORDER = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 
 function CategoryPicker({ save, close, value }: EditorType & { value?: unknown }) {
+  const { t } = useTranslation();
+  // Nombre de la sección en el idioma de la UI (el dato sigue en inglés). COGS lleva su aclaración.
+  const sectionName = (sec: string) => sec === "COGS"
+    ? t("sheet.sectionCogsDirect", { defaultValue: SECTION_LABEL.COGS })
+    : t(`sheet.section.${sec}`, { defaultValue: SECTION_LABEL[sec] ?? sec });
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [i, setI] = useState(0);
@@ -140,7 +146,7 @@ function CategoryPicker({ save, close, value }: EditorType & { value?: unknown }
         value={q}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={onKey}
-        placeholder={current || "Type to filter or create…"}
+        placeholder={current || t("sheet.editorPlaceholder", { defaultValue: "Type to filter or create…" })}
         style={{
           width: "100%", border: 0, borderBottom: "1px solid #e3ded2", padding: "8px 10px",
           font: "inherit", fontSize: 13.5, outline: "none",
@@ -154,7 +160,8 @@ function CategoryPicker({ save, close, value }: EditorType & { value?: unknown }
         {q.trim() && shown.length === 0 && (
           <div style={{ padding: "10px 12px" }}>
             <div style={{ fontSize: 12.5, color: "#5b6b62", marginBottom: 8 }}>
-              No account matches “<b>{q.trim()}</b>”. Create it under:
+              <Trans i18nKey="sheet.editorNoMatch" values={{ q: q.trim() }} components={{ b: <b /> }}
+                defaults="No account matches “<b>{{q}}</b>”. Create it under:" />
             </div>
             {SECTION_ORDER.map((sec) => (
               <button
@@ -178,14 +185,14 @@ function CategoryPicker({ save, close, value }: EditorType & { value?: unknown }
                   padding: "5px 6px", fontSize: 13, color: "#1A8754", fontWeight: 600,
                 }}
               >
-                + {SECTION_LABEL[sec] ?? sec}
+                + {sectionName(sec)}
               </button>
             ))}
           </div>
         )}
         {!q.trim() && shown.length === 0 && (
           <div style={{ padding: "10px 12px", fontSize: 12.5, color: "#5b6b62" }}>
-            Type to search your chart of accounts.
+            {t("sheet.editorEmpty", { defaultValue: "Type to search your chart of accounts." })}
           </div>
         )}
         {shown.map((o, n) => {
@@ -197,7 +204,7 @@ function CategoryPicker({ save, close, value }: EditorType & { value?: unknown }
                   padding: "6px 10px 3px", fontSize: 10.5, fontWeight: 700, letterSpacing: ".06em",
                   textTransform: "uppercase", color: "#5b6b62", background: "#FBF7EE",
                 }}>
-                  {SECTION_LABEL[o.section] ?? o.section}
+                  {sectionName(o.section)}
                 </div>
               )}
               <div

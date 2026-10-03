@@ -30,6 +30,9 @@ const SEV_BG: Record<string, string> = {
 };
 const SEV_FG: Record<string, string> = { high: "#991b1b", medium: "#7a5b00", low: "#475569" };
 
+// Va ANTES que `rowCss` en el DOM: con la misma especificidad, el resaltado de fila gana.
+const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}";
+
 export default function Sheet() {
   const { t } = useTranslation();
   const [rows, setRows] = useState<SheetRow[] | null>(null);
@@ -43,6 +46,9 @@ export default function Sheet() {
   const [labels, setLabels] = useState<SheetLabel[]>([]);
   // Filas seleccionadas: el formato y las etiquetas se aplican sobre la selección, como en Excel.
   const [selected, setSelected] = useState<number[]>([]);
+  // BARRA DE FÓRMULAS (2-oct, pedido de Jose): la celda enfocada — id de la fila, columna y número
+  // de fila visible — para mostrar su contenido COMPLETO arriba de la hoja, como en Excel.
+  const [focus, setFocus] = useState<{ id: number; prop: string; row: number } | null>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [tab, setTab] = useState<"sheet" | "pivot" | "rules">("sheet");
   // Puente hoja → reglas (idea de Jose): crear una regla PARTIENDO de la descripción de una
@@ -233,6 +239,10 @@ export default function Sheet() {
       prev.removeEventListener("selectionchanged", prev.__contabuRange);
       delete prev.__contabuRange;
     }
+    if (prev?.__contabuFocus) {
+      prev.removeEventListener("afterfocus", prev.__contabuFocus);
+      delete prev.__contabuFocus;
+    }
     gridRef.current = el;
     if (!el) return;
     const handler = (e: Event) => void onEditRef.current(e as CustomEvent);
@@ -248,6 +258,16 @@ export default function Sheet() {
       const [lo, hi] = [Math.min(a, b), Math.max(a, b)];
       setSelected(rows.slice(lo, hi + 1).map((r) => r.id));
     };
+    // La celda ENFOCADA (no el rango): de aquí sale la barra de fórmulas.
+    const onFocus = (e: Event) => {
+      const d = (e as CustomEvent).detail ?? {};
+      const id = d.model?.id;
+      const prop = d.column?.prop;
+      if (id == null || !prop) return;
+      setFocus({ id, prop: String(prop), row: (d.rowIndex ?? 0) + 1 });
+    };
+    (el as any).__contabuFocus = onFocus;
+    el.addEventListener("afterfocus", onFocus);
     (el as any).__contabuRange = onRange;
     el.addEventListener("afterfocus", onRange);
     el.addEventListener("selectionchanged", onRange);
@@ -336,6 +356,11 @@ export default function Sheet() {
   const backToRuleRef = useRef(backToRule);
   useEffect(() => { backToRuleRef.current = backToRule; }, [backToRule]);
 
+  // ESCRITO A MANO = AMARILLO TENUE (Jose, 3-oct-2026). Una fila `manual` está desconectada de las
+  // reglas (ninguna la toca), y eso tiene que verse sin pasar el mouse: se tiñen sus celdas de
+  // categoría y subcategoría. Un resaltado de fila que ponga el bookkeeper gana sobre este tinte.
+  const manualCell = (p: any) => (p?.model?.source === "manual" ? { class: { "cb-manual": true } } : {});
+
   const columns = useMemo(() => ([
     { prop: "date", name: t("sheet.date", { defaultValue: "Date" }), size: 116, sortable: true, readonly: true,
       // Fecha SIEMPRE en formato de EE.UU. (mes-día-año), sin importar el idioma de la UI: es dato
@@ -355,11 +380,13 @@ export default function Sheet() {
           h("span", { style: styleOf(p.model, "description") }, p.model.description ?? ""),
         ];
         if (p.model.description_extra) {
+          // " - " + el texto del bookkeeper, un poco TRANSLÚCIDO (Jose, 2-oct). Antes iba verde, en
+          // negrita y tras una raya vertical. Sigue distinguiéndose del texto del banco (más claro y
+          // tras el guion), que es el punto: nunca dudar de qué dijo el banco y qué escribiste tú.
           kids.push(h("span", {
             title: t("sheet.yourText", { defaultValue: "Text you added — rules match on it too" }),
-            style: { marginInlineStart: 6, color: "#1A8754", fontWeight: 600,
-                     borderInlineStart: "2px solid #1A8754", paddingInlineStart: 6 },
-          }, p.model.description_extra));
+            style: { ...styleOf(p.model, "description"), opacity: 0.55, whiteSpace: "pre" },
+          }, ` - ${p.model.description_extra}`));
         } else {
           kids.push(h("span", {
             style: { marginInlineStart: 6, color: "#c9c2b2", fontStyle: "italic", fontSize: "12px" },
@@ -387,6 +414,7 @@ export default function Sheet() {
       } },
     { prop: "category", name: t("sheet.category", { defaultValue: "Category" }), size: 190, sortable: true,
       editor: CATEGORY_EDITOR,  // plan de cuentas cerrado: se elige, no se inventa
+      cellProperties: manualCell,
       // PROCEDENCIA (modelo de hoja de cálculo, idea de Jose): `ƒ` = la decidió una regla —la celda
       // es una "fórmula"—; sin marca = escrita a mano. Igual que en Excel, un valor a mano anula la
       // fórmula, y con "volver a seguir la regla" se restaura.
@@ -423,6 +451,7 @@ export default function Sheet() {
         return h("span", { style: { display: "flex", alignItems: "center" } }, ...kids);
       } },
     { prop: "subcategory", name: t("sheet.subcategory", { defaultValue: "Subcategory" }), size: 165,
+      cellProperties: manualCell,
       cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "subcategory") }, p.model.subcategory ?? "") },
     { prop: "_obs", name: t("sheet.observation", { defaultValue: "Observation" }), size: 330, readonly: true,
       cellTemplate: (h: any, p: any) => {
@@ -460,6 +489,38 @@ export default function Sheet() {
       }, p.model.note || t("sheet.notePlaceholder", { defaultValue: "add a note…" })) },
   ]), [t]);
 
+  // BARRA DE FÓRMULAS: referencia (columna + fila) y el contenido COMPLETO de la celda enfocada.
+  // Solo muestra; editar sigue siendo en la celda. En Descripción: "banco - texto agregado".
+  const formula = useMemo(() => {
+    if (!focus) return null;
+    const r = visible.find((x) => x.id === focus.id);
+    const col = (columns as any[]).find((c) => c.prop === focus.prop);
+    if (!r || !col) return null;
+    let text = "";
+    switch (focus.prop) {
+      case "date":
+        text = r.date ? new Date(r.date + "T00:00:00").toLocaleDateString("en-US",
+          { month: "short", day: "2-digit", year: "numeric" }) : "";
+        break;
+      case "description_extra":
+        text = r.description_extra ? `${r.description ?? ""} - ${r.description_extra}` : (r.description ?? "");
+        break;
+      case "amount":
+        text = (r.is_inflow ? "" : "−") + "$" + Number(r.amount ?? 0)
+          .toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        break;
+      case "category":
+        text = r.category ?? t("sheet.pending", { defaultValue: "Pending" });
+        break;
+      case "_obs":
+        text = r._obs ?? "";
+        break;
+      default:
+        text = String((r as any)[focus.prop] ?? "");
+    }
+    return { ref: `${col.name} · ${focus.row}`, text };
+  }, [focus, visible, columns, t]);
+
   const TOOL: React.CSSProperties = {
     border: "1px solid #e3ded2", borderRadius: 5, background: "#fff", cursor: "pointer",
     fontSize: 12.5, padding: "2px 7px", lineHeight: 1.6, minWidth: 24,
@@ -474,6 +535,7 @@ export default function Sheet() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 132px)", minHeight: 420 }}>
+      <style>{MANUAL_CSS}</style>
       {rowCss && <style>{rowCss}</style>}
       {/* Barra de control: el filtro por cuenta que pidió Jose, arriba de la hoja. */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
@@ -647,6 +709,29 @@ export default function Sheet() {
           {saving ?? t("sheet.count", { defaultValue: "{{count}} transactions", count: visible.length })}
         </span>
       </div>
+
+      {/* La barra vive DENTRO de la columna flex: le quita alto a la grilla (flex: 1), no a la
+          página — así `calc(100vh - 132px)` no cambia y la página sigue sin scroll. */}
+      {tab === "sheet" && rows !== null && (
+        <div role="status" aria-label={t("sheet.formulaLabel", { defaultValue: "Cell content" })}
+          style={{ display: "flex", alignItems: "center", gap: 8, height: 30, marginBottom: 6,
+                   background: "#fff", border: "1px solid #e3ded2", borderRadius: 8,
+                   padding: "0 10px", fontSize: 13, minWidth: 0 }}>
+          <span style={{ flex: "none", fontWeight: 700, color: "#5b6b62", fontSize: 12,
+                         paddingInlineEnd: 8, borderInlineEnd: "1px solid #e3ded2",
+                         minWidth: 110, whiteSpace: "nowrap" }}>
+            {formula?.ref ?? "—"}
+          </span>
+          <span title={formula?.text || undefined}
+            // Sin "…": un texto más largo que la barra se recorre de lado (y se puede copiar).
+            style={{ flex: 1, minWidth: 0, overflowX: "auto", overflowY: "hidden",
+                     whiteSpace: "nowrap", color: formula ? "#0f172a" : "#b9b2a2",
+                     fontStyle: formula ? "normal" : "italic" }}>
+            {formula ? (formula.text || "\u00a0")
+              : t("sheet.formulaEmpty", { defaultValue: "Select a cell to see its full content" })}
+          </span>
+        </div>
+      )}
 
       <div style={{ flex: 1, minHeight: 0,
                     border: tab === "sheet" ? "1px solid #e3ded2" : "0",

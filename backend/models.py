@@ -379,3 +379,42 @@ class FirmMember(SQLModel, table=True):
     email: str = Field(index=True)  # email del invitado (para enlazar al hacer login)
     role: FirmRole = Field(default=FirmRole.BOOKKEEPER)
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+# ── Movimientos (FASE 10) — historial de correcciones ──────────────────────────────────────────
+
+class CategorizationChange(SQLModel, table=True):
+    """Una CORRECCIÓN de categorización: el par ANTES → DESPUÉS de una transacción ya registrada.
+
+    Por qué existe (2-oct-2026): Jose va a operar el libro real como primer bookkeeper y a construir
+    a mano la tabla de reglas; luego los agentes aprenden de lo que él corrigió. `source="manual"`
+    dice QUE lo tocó un humano, no QUÉ decía antes — y eso es lo único que no se puede reconstruir
+    después. (Los `ai_original_*` de la FASE 9 solo se llenan cuando categoriza la IA, que está
+    apagada.)
+
+    Se escribe una fila SOLO cuando cambia de verdad `account_type`, `category` o `subcategory`
+    (`corrections.record_change`). La categorización INICIAL del motor al subir no se registra: eso
+    ya lo dicen `source` y `matched_rule_id`.
+
+    Sin claves foráneas, a propósito (como `matched_rule_id`): es historia, no debe impedir borrar
+    una transacción o una regla. `account_type_*` se guarda como texto por la misma razón.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    transaction_id: int = Field(index=True)        # referencia SUAVE a transaction.id
+    company_id: int = Field(index=True)            # para medir por libro
+    changed_at: datetime = Field(default_factory=_utcnow, index=True)
+    changed_by_user_id: Optional[int] = Field(default=None, index=True)  # None = lo cambió el sistema
+    # Por dónde llegó el cambio (código estable, en inglés, para agrupar y medir):
+    # manual · follow_rule · rule_update · rule_applied · rule_precedence
+    via: str = Field(index=True)
+    source_before: Optional[str] = Field(default=None)   # rule | transfer | ai | manual | band | None
+    source_after: Optional[str] = Field(default=None)
+    account_type_before: Optional[str] = Field(default=None)
+    account_type_after: Optional[str] = Field(default=None)
+    category_before: Optional[str] = Field(default=None)
+    category_after: Optional[str] = Field(default=None)
+    subcategory_before: Optional[str] = Field(default=None)
+    subcategory_after: Optional[str] = Field(default=None)
+    matched_rule_id_before: Optional[int] = Field(default=None)  # qué regla había decidido: señal de regla mala
+    matched_rule_id_after: Optional[int] = Field(default=None)   # qué regla la tomó (si fue una)
+    reason: Optional[str] = Field(default=None)                  # texto libre, opcional

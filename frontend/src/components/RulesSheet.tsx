@@ -13,9 +13,11 @@ import {
  * LA HOJA DE REGLAS (FASE 10) — la tercera pestaña, al lado de la hoja y el pivote.
  *
  * Es la "tabla de búsqueda" del modelo de hoja de cálculo que planteó Jose: las celdas de categoría
- * y subcategoría de la hoja son una **fórmula** que busca aquí. Editar una regla NO recalcula hacia
- * atrás (decisión de Jose, opción B): el auditor detecta las filas que quedaron desalineadas y
- * ofrece el fix de un toque. Así no cambian solos los meses ya cerrados.
+ * y subcategoría de la hoja son una **fórmula** que busca aquí. Crear o editar una regla re-aplica
+ * la fórmula a las filas que decide una regla (o que están Pendientes). Lo **escrito a mano manda**
+ * (decisión de Jose, 3-oct-2026): una fila `manual` está desconectada de las reglas — ninguna la
+ * toca — y en la Hoja se ve en amarillo tenue. (Antes este comentario decía "editar una regla NO
+ * recalcula hacia atrás", y el código sí recalculaba: se corrigió al protegerse lo manual.)
  *
  * Columnas, las cinco que pidió Jose:
  *   palabra clave · categoría · subcategoría · sector (este libro / un sector) · parte del P&L
@@ -274,7 +276,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed }: {
       cellTemplate: (h: any, p: any) => h("span", {
         style: { color: SECTION_COLOR[p.model.account_type] ?? "#5b6b62", fontWeight: 600,
                  fontSize: "12.5px" },
-      }, SECTION_LABEL[p.model.account_type] ?? "—") },
+      }, p.model.account_type ? t(`sheet.section.${p.model.account_type}`, { defaultValue: SECTION_LABEL[p.model.account_type] }) : "—") },
     { prop: "matches", name: t("rules.matches", { defaultValue: "Rows" }), size: 90, sortable: true,
       readonly: true,
       cellTemplate: (h: any, p: any) => h("span",
@@ -442,7 +444,7 @@ function ImportPreview({ rows, chart, allCats, onRow, applicable, busy, onCancel
                              borderColor: r.account_type ? "#d5d0c4" : "#991b1b" }}>
                     {!r.account_type && <option value={r.category}>{r.category} — ?</option>}
                     {SECTION_ORDER.filter((s) => chart[s]?.length).map((s) => (
-                      <optgroup key={s} label={SECTION_LABEL[s]}>
+                      <optgroup key={s} label={t(`sheet.section.${s}`, { defaultValue: SECTION_LABEL[s] })}>
                         {allCats.filter((x) => x.sec === s).map((x) => (
                           <option key={x.c} value={x.c}>{x.c}</option>
                         ))}
@@ -455,7 +457,7 @@ function ImportPreview({ rows, chart, allCats, onRow, applicable, busy, onCancel
                 </td>
                 <td style={{ ...td, color: SECTION_COLOR[r.account_type] ?? "#991b1b", fontWeight: 600,
                              fontSize: 12.5 }}>
-                  {SECTION_LABEL[r.account_type] ?? "—"}
+                  {r.account_type ? t(`sheet.section.${r.account_type}`, { defaultValue: SECTION_LABEL[r.account_type] }) : "—"}
                 </td>
                 <td style={{ ...td, textAlign: "center", color: r.priority != null ? undefined : "#b9b2a2" }}>
                   {r.priority ?? t("rules.priorityAuto", { defaultValue: "auto" })}

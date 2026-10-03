@@ -13,14 +13,12 @@ from decimal import Decimal
 import re
 from typing import Optional
 
-from dateutil import parser as dateparser
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import func
 from sqlmodel import Session, delete, select
 
-from ai import RuleColumnMapping, extract_receipt, map_rule_columns, propose_rules, recategorize_with_answer
+from ai import RuleColumnMapping, map_rule_columns, propose_rules
 from audit import audit_categorization
 from billing import ai_quota_status, apply_session, create_checkout_session, handle_event
 # `effective_role` es la única fuente de verdad del acceso (FASE 13); los helpers dicen la
@@ -29,15 +27,18 @@ from auth import (current_user, effective_role, owned_company, owner_company, ow
                   client_writable_company, console_company, user_firm)
 from categories import categories_for, categories_for_company
 from company_profile import format_profile_facts
+from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_UPDATE, record_change,
+                         snapshot)
 from db import get_session
-from ingestion import categorize_pending, ingest_csv, make_fingerprint, mask_account, parse_spreadsheet
+from ingestion import categorize_pending, ingest_csv, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
     Firm, FirmMember, FirmRole,
     SheetLabel,
     TransactionLabel,
-    CellFormat,)
+    CellFormat,
+    CategorizationChange,)
 from reports import pivot, pivot_leaves, income_statement
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
@@ -65,11 +66,8 @@ class TransactionUpdate(BaseModel):
     # Texto que el bookkeeper AGREGA a la descripción del banco (no la reemplaza). Entra al matcheo.
     description_extra: Optional[str] = None
     rule_action: Optional[str] = None  # None | "only_this" | "update_rule"
-
-
-class ClarifyPayload(BaseModel):
-    """Respuesta del dueño en lenguaje simple ('¿qué fue / en qué consistió?')."""
-    answer: str
+    # Por qué se corrigió (opcional). No es campo de la transacción: va al historial de correcciones.
+    reason: Optional[str] = None
 
 
 class ClarifyGroupPayload(BaseModel):
@@ -288,7 +286,7 @@ def update_firm(payload: FirmUpdate, user: User = Depends(current_user),
 # 🔄 1-oct, decisión de Jose: fuera los ajustes por monto (las tarjetas de supermercado, gasolinera y
 # propias). Lo que el motor no decida con una REGLA queda Pendiente, y el criterio del bookkeeper vive
 # en las NOTAS de la pestaña Auditoría (F11). Los días de espera NO son un monto y se quedan, como un
-# ajuste simple: `Company.settlement_buffer_days` (el motor lo lee con `criteria.settlement_days()`).
+# ajuste simple: `Company.settlement_buffer_days` (el motor lo lee en `ingestion.ingest_csv`).
 # ==================================================================================================
 
 class SettlementIn(BaseModel):
@@ -402,114 +400,6 @@ def categorize_pending_endpoint(
     return result
 
 
-@app.post("/api/companies/{company_id}/transactions/receipt")
-async def upload_receipt(
-    company_id: int,
-    file: UploadFile,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Sube la FOTO de un recibo (compra en efectivo/tarjeta) → la IA lee comercio/fecha/total y
-    lo categoriza → crea UNA transacción de caja. Pensado sobre todo para compras en EFECTIVO, que
-    el extracto bancario no ve. Si el recibo se pagó con TARJETA, se marca para revisión (probable
-    duplicado con el extracto). Cada recibo gasta 1 llamada de IA → cuenta contra el cupo."""
-    # LISTA BLANCA DEL CLIENTE (FASE 13 Paso 3): es la pieza que captura el EFECTIVO que el banco no
-    # ve, y el único que está en la tienda es el dueño del negocio. Usa la IA que ya existía
-    # (`extract_receipt`) — esta fase no construye IA nueva, solo abre el acceso.
-    company = client_writable_company(company_id, user, session)
-
-    content = await file.read()
-    mime = file.content_type or "image/jpeg"
-    if not mime.startswith("image/"):
-        raise HTTPException(status_code=422, detail="el archivo debe ser una imagen (foto del recibo)")
-
-    # Cupo de IA: un recibo gasta una llamada → si no queda cupo, no se procesa (subir de plan).
-    quota = ai_quota_status(session, company)
-    if quota["remaining"] <= 0:
-        return {"created": 0, "quota_blocked": 1, "quota": quota}
-
-    extracted = extract_receipt(content, mime, company.sector)
-    if not extracted.is_receipt:
-        # La imagen no parece un recibo → no se crea nada (no se cobra cupo).
-        return {"created": 0, "not_a_receipt": True, "quota": quota}
-
-    # Fecha del recibo (si no se leyó, hoy). Total = magnitud; una compra es dinero que SALE.
-    try:
-        d = dateparser.parse(extracted.purchase_date).date() if extracted.purchase_date else date.today()
-    except (ValueError, OverflowError):
-        d = date.today()
-    amount = abs(Decimal(str(extracted.total or 0)))
-    description = f"{extracted.merchant} (receipt)".strip()
-    signed = -amount  # compra → salida (el signo lo refleja is_inflow=False)
-    fp = make_fingerprint(d, description, signed, None)
-
-    # Dedup: si ya se subió esta misma foto/recibo (misma huella), no duplicar.
-    exists = session.exec(
-        select(func.count()).select_from(Transaction)
-        .where(Transaction.company_id == company_id, Transaction.fingerprint == fp)
-    ).one()
-    if exists:
-        return {"created": 0, "duplicate": True, "quota": quota}
-
-    tx = Transaction(
-        company_id=company_id, date=d, description=description, amount=amount,
-        is_inflow=False, bank_account=None, fingerprint=fp,
-        account_type=extracted.account_type, subcategory=(extracted.merchant or "").upper() or None,
-        confidence=extracted.confidence, ai_categorized=True, source="ai",
-    )
-
-    # Consistencia: si el dueño YA tiene una regla para este comercio, mandar su categoría (la regla
-    # ganó antes para el extracto bancario → mismo comercio, misma categoría). Si no, la de la IA.
-    rule = match_rule(load_rules(session, company_id, company.sector), extracted.merchant)
-    if rule is not None:
-        tx.account_type = rule.account_type
-        tx.category = rule.category
-        tx.subcategory = rule.match_text.upper()
-        tx.confidence = 1.0
-        tx.needs_review = False
-        tx.source = "rule"
-        tx.matched_rule_id = rule.id  # procedencia: qué regla decidió
-    else:
-        tx.category = extracted.category
-        tx.needs_review = extracted.needs_review
-        tx.review_question = extracted.review_question or None
-        # Predicción ORIGINAL de la IA (FASE 9 Paso 6): congelada para la precisión online.
-        tx.ai_original_account_type = extracted.account_type.value if extracted.account_type else None
-        tx.ai_original_category = extracted.category
-
-    # No se pudo leer el total → no sirve para el P&L hasta que el dueño lo confirme.
-    if amount <= 0:
-        tx.needs_review = True
-        tx.review_question = "We couldn't read the total on this receipt — what was the amount?"
-
-    # Doble conteo: si el recibo se pagó con TARJETA, también caerá en el extracto bancario → avisar.
-    if extracted.payment_method == "card":
-        tx.needs_review = True
-        tx.review_question = (
-            "This receipt was paid by card, so it may also appear in your bank statement — "
-            "keep it only if it isn't already there (to avoid double-counting)."
-        )
-
-    session.add(tx)
-    session.commit()
-    session.refresh(tx)
-
-    quota = ai_quota_status(session, company)  # recalcular tras crear la tx
-    return {
-        "created": 1,
-        "transaction_id": tx.id,
-        "payment_method": extracted.payment_method,
-        "transaction": {
-            "date": str(d), "description": description, "amount": str(amount),
-            "account_type": tx.account_type.value if tx.account_type else None,
-            "category": tx.category, "subcategory": tx.subcategory,
-            "confidence": tx.confidence, "needs_review": tx.needs_review,
-            "review_question": tx.review_question, "source": tx.source,
-        },
-        "quota": quota,
-    }
-
-
 @app.post("/api/companies/{company_id}/transactions/set-account")
 def set_transactions_account(
     company_id: int,
@@ -589,7 +479,8 @@ def delete_company(
     if len(mine) <= 1:
         raise HTTPException(status_code=400, detail="No puedes eliminar tu única empresa.")
     # Borrar los datos hijos (reglas de SECTOR no se tocan: tienen company_id NULL).
-    for model in (Transaction, CategoryRule, CompanyCategory, PnlReport, CompanyMember):
+    for model in (Transaction, CategoryRule, CompanyCategory, PnlReport, CompanyMember,
+                  CategorizationChange):  # + el historial de correcciones del libro
         session.exec(delete(model).where(model.company_id == company_id))
     company = session.get(Company, company_id)
     session.delete(company)
@@ -800,8 +691,9 @@ def list_rules(
     ).all()
     out = []
     for r in rules:
-        matches = sum(1 for t in txs
-                      if match_rule([r], matchable_text(t.description, t.description_extra)) is not None)
+        # Lo escrito a mano NO cuenta: está desconectado de las reglas (Jose, 3-oct).
+        matches = sum(1 for t in txs if t.source != "manual"
+                      and match_rule([r], matchable_text(t.description, t.description_extra)) is not None)
         out.append({
             "id": r.id, "match_text": r.match_text,
             "account_type": r.account_type.value if r.account_type else None,
@@ -846,9 +738,9 @@ def create_rule(
         priority=_valid_priority(payload.priority),
     )
     session.add(rule)
-    applied = apply_rule_to_transactions(session, company_id, rule)
+    applied = apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
     # Una regla nueva puede tomar transacciones que otra regla con más prioridad debe conservar.
-    reassigned = reapply_rule_precedence(session, company_id)
+    reassigned = reapply_rule_precedence(session, company_id, user_id=user.id)
     session.commit()
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
@@ -889,8 +781,9 @@ def update_rule(
     session.flush()
     # Cambiar SOLO la prioridad no re-aplica la regla a todo lo que matchea (eso pisaría lo que
     # otra regla o el bookkeeper decidieron): solo se re-decide qué regla gana.
-    applied = apply_rule_to_transactions(session, company_id, rule) if data.keys() - {"priority"} else 0
-    reassigned = reapply_rule_precedence(session, company_id)
+    applied = (apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
+               if data.keys() - {"priority"} else 0)
+    reassigned = reapply_rule_precedence(session, company_id, user_id=user.id)
     session.commit()
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
@@ -1238,10 +1131,10 @@ def apply_rule_proposals(
         if rule is not None:
             created += 1
             session.flush()  # asigna id para apply_rule_to_transactions
-            applied += apply_rule_to_transactions(session, company_id, rule)
+            applied += apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
     if created:
         session.flush()
-        reapply_rule_precedence(session, company_id)  # varias reglas nuevas: que gane la que debe
+        reapply_rule_precedence(session, company_id, user_id=user.id)  # varias reglas nuevas: que gane la que debe
     session.commit()
     # AUDITOR AUTOMÁTICO (FASE 9 Paso 4): tras cambiar el reglamento, el agente verifica los libros.
     return {"created": created, "applied": applied,
@@ -1602,6 +1495,9 @@ def update_transaction(
     tx = owned_transaction(transaction_id, user, session, write=True)
     data = payload.model_dump(exclude_unset=True)
     rule_action = data.pop("rule_action", None)  # intención sobre el reglamento (no es campo de tx)
+    reason = data.pop("reason", None)            # motivo de la corrección (solo historial)
+    # HISTORIAL DE CORRECCIONES (2-oct): foto ANTES de tocar nada → al final, el par antes/después.
+    before = snapshot(tx)
 
     # VOLVER A SEGUIR LA REGLA (FASE 10) — el inverso de escribir a mano.
     #
@@ -1624,7 +1520,9 @@ def update_transaction(
         tx.source = "rule"
         tx.matched_rule_id = rule.id
         tx.confidence = 1.0
-        session.add(tx); session.commit(); session.refresh(tx)
+        session.add(tx)
+        record_change(session, tx, before, via=VIA_FOLLOW_RULE, user_id=user.id, reason=reason)
+        session.commit(); session.refresh(tx)
         return {"id": tx.id, "applied": 0, "rule_updated": False,
                 "followed_rule": {"id": rule.id, "match_text": rule.match_text,
                                   "category": rule.category}}
@@ -1680,7 +1578,8 @@ def update_transaction(
                 tx.source = "rule"
                 tx.matched_rule_id = rule.id
                 tx.confidence = 1.0
-                applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
+                applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id,
+                                                     user_id=user.id)
         # Un cheque no genera regla (cada cheque es distinto; ver rules.is_check).
         elif not is_check(tx.description):
             company = session.get(Company, tx.company_id)
@@ -1691,65 +1590,22 @@ def update_transaction(
             )
             # Corregir una → corregir todas: alinea las demás transacciones del mismo comercio.
             if rule is not None:
-                applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
+                applied = apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id,
+                                                     user_id=user.id)
             elif tx.account_type is not None and tx.category:
                 # El GUARDIÁN vetó la frase (genérica: cazaría otros comercios) → la corrección
                 # queda como excepción puntual y el frontend se lo explica al dueño.
                 rule_skipped_generic = True
     session.add(tx)
+    # Solo escribe si cambió de verdad account_type/category/subcategory (una nota o
+    # description_extra sueltos no son una corrección de categoría).
+    record_change(session, tx, before, via=VIA_RULE_UPDATE if rule_updated else VIA_MANUAL,
+                  user_id=user.id, reason=reason)
     session.commit()
     session.refresh(tx)
     # Devuelve la tx + cuántas OTRAS alineó la regla → el frontend lo muestra y re-pinta de verde.
     return {"id": tx.id, "applied": applied, "rule_updated": rule_updated,
             "rule_skipped_generic": rule_skipped_generic}
-
-
-@app.post("/api/transactions/{transaction_id}/clarify")
-def clarify_transaction(
-    transaction_id: int,
-    payload: ClarifyPayload,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """El dueño explica en lenguaje simple qué fue el movimiento → la IA re-categoriza
-    con esa info y se guarda una REGLA de empresa (memoria) para la próxima vez."""
-    tx = owned_transaction(transaction_id, user, session, write=True)
-
-    company = session.get(Company, tx.company_id)
-    sector = company.sector if company else "general"
-
-    # Reconstruir la dirección (entrada/salida) desde el account_type actual.
-    income = tx.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
-    signed = float(tx.amount) if income else -float(tx.amount)
-
-    cat = recategorize_with_answer(tx.description, signed, sector, payload.answer,
-                                   format_profile_facts(company.profile if company else None))
-
-    tx.account_type = cat.account_type
-    tx.category = cat.category
-    tx.subcategory = (cat.subcategory or "").upper() or None
-    tx.confidence = cat.confidence
-    tx.needs_review = cat.needs_review
-    tx.review_question = cat.review_question or None
-    tx.ai_categorized = True
-    tx.source = "ai"  # re-categorizada por la IA a partir de la explicación del dueño
-    tx.matched_rule_id = None  # ya no la decide una regla (procedencia)
-    session.add(tx)
-
-    # Memoria del cliente: crea/actualiza la regla de empresa (idempotente, frase específica).
-    # Excepto cheques: cada uno es distinto, una regla sería errónea.
-    if not is_check(tx.description):
-        rule = upsert_company_rule(
-            session, tx.company_id, sector, cat.subcategory, cat.account_type, cat.category,
-            description=tx.description,
-        )
-        # Corregir una → corregir todas: alinea las demás del mismo comercio.
-        if rule is not None:
-            apply_rule_to_transactions(session, tx.company_id, rule, exclude_id=tx.id)
-
-    session.commit()
-    session.refresh(tx)
-    return tx
 
 
 @app.post("/api/transactions/clarify-group")
@@ -1758,41 +1614,24 @@ def clarify_group(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """El dueño explica UNA vez y se categorizan TODAS las transacciones de la misma contraparte
-    (una sola llamada a la IA con un representante; el resultado se aplica al grupo). Evita repetir
-    la misma pregunta por cada movimiento (p. ej. la renta mensual)."""
+    """El dueño explica UNA vez qué fueron varios movimientos de la misma contraparte (p. ej. la
+    renta mensual). Su respuesta se guarda como NOTA de cada línea y la pregunta se cierra.
+
+    🔴 Ya NO llama a la IA (decisión de Jose, 1-oct-2026: *"la IA no toca la categorización por
+    NINGÚN camino"*). Antes `recategorize_with_answer` escribía la categoría con `source="ai"`.
+    Ahora la categoría NO se toca: queda como estaba (casi siempre Pendiente) y el bookkeeper la
+    resuelve en la Hoja — a mano o con una regla — leyendo la respuesta en la columna Nota."""
     if not payload.transaction_ids:
         raise HTTPException(status_code=422, detail="no transactions")
+    answer = (payload.answer or "").strip()
+    if not answer:
+        raise HTTPException(status_code=422, detail="empty answer")
     txs = [owned_transaction(tid, user, session, write=True) for tid in payload.transaction_ids]
-    rep = txs[0]  # representante: misma contraparte → misma categoría
-
-    company = session.get(Company, rep.company_id)
-    sector = company.sector if company else "general"
-    income = rep.account_type in (AccountType.REVENUE, AccountType.OTHER_INCOME)
-    signed = float(rep.amount) if income else -float(rep.amount)
-
-    cat = recategorize_with_answer(rep.description, signed, sector, payload.answer,
-                                   format_profile_facts(company.profile if company else None))
-    sub = (cat.subcategory or "").upper() or None
-
     for tx in txs:
-        tx.account_type = cat.account_type
-        tx.category = cat.category
-        tx.subcategory = sub
-        tx.confidence = cat.confidence
-        tx.needs_review = cat.needs_review
-        tx.review_question = cat.review_question or None
-        tx.ai_categorized = True
-        tx.source = "ai"
-        tx.matched_rule_id = None  # ya no la decide una regla (procedencia)
+        # Se AGREGA a la nota que ya hubiera (no se pisa lo que escribió el bookkeeper).
+        tx.note = f"{tx.note}\n{answer}" if tx.note else answer
+        tx.needs_review = False
+        tx.review_question = None
         session.add(tx)
-
-    # Una sola regla de empresa para la contraparte (memoria). Cheques no generan regla.
-    if not is_check(rep.description):
-        upsert_company_rule(
-            session, rep.company_id, sector, cat.subcategory, cat.account_type, cat.category,
-            description=rep.description,
-        )
-
     session.commit()
     return {"updated": len(txs)}

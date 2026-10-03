@@ -180,17 +180,6 @@
     "proposeHint": "La IA categorizó {{count}} transacciones. Convierte lo que aprendió en reglas que tú apruebas — la próxima vez no necesitarán IA.",
     "proposeCta": "Crear mis reglas"
   },
-  "receipt": {
-    "title": "Toma una foto de un recibo",
-    "subtitle": "Para compras en efectivo que tu extracto bancario no muestra.",
-    "choose": "Toma una foto o elige una",
-    "reading": "Leyendo el recibo…",
-    "captured": "Recibo capturado",
-    "notReceipt": "Esa foto no parece un recibo. Inténtalo de nuevo.",
-    "duplicate": "Ya habías agregado este recibo.",
-    "quotaBlocked": "Alcanzaste tu cupo de IA. Mejora tu plan para escanear recibos.",
-    "review": "Revisarlo"
-  },
   "prov": {
     "label": "Quién decidió",
     "rule": "Tu regla: “{{keyword}}” → {{category}}",
@@ -483,6 +472,21 @@
     "noRule": "Ninguna regla cubre esta transacción. Crea una en la pestaña Reglas.",
     "note": "Nota",
     "notePlaceholder": "agregar una nota…",
+    "formulaLabel": "Contenido de la celda",
+    "formulaEmpty": "Selecciona una celda para ver su contenido completo",
+    "section": {
+      "REVENUE": "Ingresos",
+      "COGS": "Costo de ventas",
+      "OPERATING_EXPENSE": "Gastos operativos",
+      "OTHER_INCOME": "Otros ingresos",
+      "OTHER_EXPENSE": "Otros gastos",
+      "NON_PL": "Fuera del P&L",
+      "UNCATEGORIZED": "Sin categorizar"
+    },
+    "sectionCogsDirect": "Costo de ventas · costos directos",
+    "editorPlaceholder": "Escribe para filtrar o crear…",
+    "editorNoMatch": "Ninguna cuenta coincide con “<b>{{q}}</b>”. Créala en:",
+    "editorEmpty": "Escribe para buscar en tu plan de cuentas.",
     "obs": {
       "in": "ENTRÓ",
       "merchantInconsistency": "El mismo comercio categorizado distinto ({{m}})",

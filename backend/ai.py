@@ -33,12 +33,6 @@ logger = logging.getLogger("contabu.ai")
 # flash-lite = más barato/rápido; flash = razona mejor en casos difíciles. Ver docs/FASE.
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-# Modelo para leer RECIBOS por foto (OCR multimodal). Se usa `pro` por defecto: los recibos son de
-# bajo volumen (1 llamada por foto) y la lectura de imágenes sucias (papel térmico borroso, ángulos,
-# manuscrito) + la categorización se benefician del modelo grande. La categorización MASIVA de
-# extractos bancarios sigue con `MODEL` (flash) para no encarecer el volumen. Ver docs/FASE 6.K.
-RECEIPT_MODEL = os.getenv("GEMINI_RECEIPT_MODEL", "gemini-2.5-pro")
-
 # Backend de Gemini, configurable por entorno (sin tocar código):
 # - VERTEX AI (GEMINI_USE_VERTEX=true): factura como servicio de GCP → lo cubre el crédito de $300.
 #   Autentica con Application Default Credentials (NO API key): en local `gcloud auth
@@ -68,27 +62,6 @@ class Categorization(BaseModel):
     account_type: AccountType  # sección del P&L
     category: str              # cuenta contable, p. ej. "Materials"
     subcategory: str           # nombre del comercio/empresa, p. ej. "Home Depot"
-    confidence: float          # 0.0 - 1.0
-    needs_review: bool         # true si es ambiguo y necesita confirmación humana
-    review_question: str       # pregunta para el usuario si needs_review (si no, "")
-
-
-class ReceiptExtraction(BaseModel):
-    """Lo que la IA lee de la FOTO de un recibo + su categorización, en UNA sola llamada multimodal.
-
-    Un recibo = UNA transacción de caja (el total). Pensado sobre todo para compras en EFECTIVO
-    (lo que el extracto bancario NO ve). Si la IA detecta que se pagó con TARJETA, el endpoint marca
-    la transacción para revisión (probable duplicado con el extracto). `reasoning` va primero
-    (chain-of-thought, igual que Categorization)."""
-    reasoning: str             # evidencia breve antes de decidir (1 frase, en inglés)
-    is_receipt: bool           # ¿la imagen es realmente un recibo/factura? (guarda contra fotos random)
-    merchant: str              # comercio del recibo, p. ej. "Home Depot"
-    purchase_date: str         # fecha del recibo en ISO (YYYY-MM-DD); "" si no se lee
-    total: float               # TOTAL pagado (magnitud positiva); 0 si no se lee
-    payment_method: str        # "cash" | "card" | "unknown" (leído del recibo)
-    account_type: AccountType  # sección del P&L
-    category: str              # cuenta contable, p. ej. "Materials"
-    subcategory: str           # = merchant (comercio específico)
     confidence: float          # 0.0 - 1.0
     needs_review: bool         # true si es ambiguo y necesita confirmación humana
     review_question: str       # pregunta para el usuario si needs_review (si no, "")
@@ -141,7 +114,7 @@ class ProposedRule(BaseModel):
 def _generate(contents, schema, *, model: str = MODEL, max_retries: int = 4):
     """Llama a Gemini con structured output (schema puede ser un modelo o una lista de modelos).
     `contents` puede ser un prompt de texto o una lista multimodal (p. ej. [imagen, texto]).
-    `model` permite sobre-escribir el modelo por llamada (p. ej. `pro` para recibos).
+    `model` permite sobre-escribir el modelo por llamada.
     Reintenta ante errores transitorios (backoff)."""
     delay = 2.0
     for attempt in range(1, max_retries + 1):
@@ -252,54 +225,6 @@ review_question="" unless the explanation is still genuinely unclear."""
     logger.info(
         "recategorize | desc=%r answer=%r -> type=%s category=%r confidence=%s",
         description, answer, result.account_type.value, result.category, result.confidence,
-    )
-    return result
-
-
-def extract_receipt(image: bytes, mime_type: str, sector: str) -> ReceiptExtraction:
-    """Lee la FOTO de un recibo (efectivo/tarjeta) y, en UNA llamada multimodal, extrae el comercio,
-    la fecha, el total y el método de pago, y lo categoriza con el plan de cuentas del sector.
-
-    Un recibo es casi siempre una COMPRA (dinero que sale → gasto), por eso el monto se trata como
-    salida. La capa de ingestión decide el signo real con `is_inflow`; aquí solo se clasifica."""
-    prompt = f"""You read a photo of a PURCHASE RECEIPT for a "{sector}" small business and turn it into
-ONE cash-basis bookkeeping transaction (the receipt TOTAL). Return everything in English.
-
-- reasoning: FIRST, in ONE short sentence, state what you see — the merchant, the total, the payment
-  method — and which P&L section it implies. Decide every field below FROM this reasoning.
-- is_receipt: true only if the image really is a purchase receipt or invoice. If it is a random photo
-  (not a receipt), set is_receipt=false and leave the other fields empty/zero.
-- merchant: the store/vendor name on the receipt (e.g. "Home Depot").
-- purchase_date: the date printed on the receipt in ISO format YYYY-MM-DD. "" if you cannot read it.
-- total: the FINAL TOTAL actually paid (a positive number, taxes included). 0 if you cannot read it.
-- payment_method: "card" if the receipt shows a card was used (VISA/MASTERCARD/DEBIT/CREDIT/a masked
-  card number/"CHANGE DUE 0.00" with a card line), "cash" if it shows CASH/CASH TENDERED/change given,
-  otherwise "unknown".
-- account_type: one of REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
-  A purchase receipt is normally an expense (COGS = direct cost of the product/service sold;
-  OPERATING_EXPENSE = overhead). Treat the amount as money OUT.
-- category: the BEST-FITTING category from the closed chart of accounts below; it MUST belong to the
-  account_type. If nothing truly fits, use "Other". Do NOT invent names.
-- subcategory: the same specific merchant name.
-- confidence: 0.0 to 1.0.
-- needs_review: true if the receipt is blurry/unclear, the total is uncertain, or the category is
-  genuinely ambiguous. Prefer needs_review over a wrong confident guess.
-- review_question: if needs_review is true, a short friendly question for the owner; else "".
-
-Chart of accounts for the "{sector}" sector:
-{format_for_prompt(sector)}"""
-
-    contents = [
-        types.Part.from_bytes(data=image, mime_type=mime_type),
-        prompt,
-    ]
-    response = _generate(contents, ReceiptExtraction, model=RECEIPT_MODEL)  # pro: OCR + categoría
-    result = response.parsed
-    logger.info(
-        "extract_receipt | model=%s sector=%s mime=%s -> is_receipt=%s merchant=%r total=%s "
-        "payment=%s type=%s category=%r confidence=%s",
-        RECEIPT_MODEL, sector, mime_type, result.is_receipt, result.merchant, result.total,
-        result.payment_method, result.account_type.value, result.category, result.confidence,
     )
     return result
 

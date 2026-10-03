@@ -620,17 +620,8 @@ export async function updateTransaction(
   return res.json(); // { id, applied, rule_updated } — applied = otras tx que alineó la regla
 }
 
-export async function clarifyTransaction(id: number, answer: string): Promise<Transaction> {
-  const res = await fetch(`${API}/api/transactions/${id}/clarify`, {
-    method: "POST",
-    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-    body: JSON.stringify({ answer }),
-  });
-  if (!res.ok) throw new Error("No se pudo procesar la respuesta");
-  return res.json();
-}
-
 // Una explicación que aplica a VARIAS transacciones de la misma contraparte (renta mensual, etc.).
+// Ya no categoriza con IA (1-oct): la respuesta queda como NOTA de cada línea y la pregunta se cierra.
 export async function clarifyGroup(transactionIds: number[], answer: string): Promise<{ updated: number }> {
   const res = await fetch(`${API}/api/transactions/clarify-group`, {
     method: "POST",
@@ -668,40 +659,6 @@ export async function uploadCsv(file: File, offset = 0, chunk = 0): Promise<Uplo
     { method: "POST", headers: await authHeaders(), body: form },
   );
   if (!res.ok) throw new Error("Falló la subida del archivo");
-  return res.json();
-}
-
-// Resultado de subir la FOTO de un recibo → 1 transacción de caja (o un motivo de no creación).
-export interface ReceiptResult {
-  created: number; // 1 si se creó la transacción; 0 si no
-  transaction_id?: number;
-  payment_method?: "cash" | "card" | "unknown";
-  not_a_receipt?: boolean; // la imagen no parece un recibo
-  duplicate?: boolean; // ya se había subido este mismo recibo
-  quota_blocked?: number; // no quedaba cupo de IA (subir de plan)
-  transaction?: {
-    date: string;
-    description: string;
-    amount: string;
-    account_type: string | null;
-    category: string | null;
-    subcategory: string | null;
-    confidence: number | null;
-    needs_review: boolean;
-    review_question: string | null;
-    source: string | null;
-  };
-}
-
-// Sube la foto de un recibo: la IA lee comercio/fecha/total y crea una transacción de caja.
-export async function uploadReceipt(file: File): Promise<ReceiptResult> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch(
-    `${API}/api/companies/${cid()}/transactions/receipt`,
-    { method: "POST", headers: await authHeaders(), body: form },
-  );
-  if (!res.ok) throw new Error("Falló la lectura del recibo");
   return res.json();
 }
 

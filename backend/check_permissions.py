@@ -29,7 +29,8 @@ from sqlmodel import Session, delete, select  # noqa: E402
 import auth  # noqa: E402
 from db import engine  # noqa: E402
 from main import app  # noqa: E402
-from models import (CategoryRule, CellFormat, Company, CompanyCategory, CompanyMember,  # noqa: E402
+from models import (CategorizationChange, CategoryRule, CellFormat, Company,  # noqa: E402
+                    CompanyCategory, CompanyMember,
                     Firm, FirmMember, FirmRole, LearnedMerchant, MonthlyInsight, PnlReport,
                     Role, SheetLabel, Transaction, TransactionLabel, User)
 
@@ -50,7 +51,6 @@ CLIENT_ALLOWED: set[tuple[str, str]] = {
     ("GET", "/api/me"),                                            # quién soy y cuál es mi libro
     ("GET", "/api/companies/{company_id}"),                        # nombre de mi negocio
     ("POST", "/api/companies/{company_id}/transactions/upload"),   # "subir un extracto"
-    ("POST", "/api/companies/{company_id}/transactions/receipt"),  # "foto a un recibo"
     ("GET", "/api/hello"),                                         # público, sin identidad
 }
 
@@ -80,7 +80,6 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/pnl-reports"): {"name": "mío"},
     ("POST", "/api/companies/{company_id}/transactions/set-account"): {
         "transaction_ids": [], "bank_account": "X"},
-    ("POST", "/api/transactions/{transaction_id}/clarify"): {"answer": "un trabajador"},
     ("POST", "/api/transactions/clarify-group"): {"transaction_ids": [], "answer": "x"},
     ("POST", "/api/companies/{company_id}/checkout"): {"quota": 100},
     ("PATCH", "/api/firm"): {"brand_name": "PERMCHECK"},
@@ -108,8 +107,6 @@ FILES: dict[tuple[str, str], dict] = {
         {"file": ("reglas.csv", b"match,category\nX,Materials\n", "text/csv")},
     ("POST", "/api/companies/{company_id}/transactions/upload"):
         {"file": ("extracto.csv", b"date,description,amount\n2026-06-01,X,10\n", "text/csv")},
-    ("POST", "/api/companies/{company_id}/transactions/receipt"):
-        {"file": ("recibo.jpg", b"\xff\xd8\xff\xdb-no-es-una-foto-real", "image/jpeg")},
 }
 
 
@@ -144,7 +141,8 @@ def build_fixtures(s: Session) -> tuple[int, int]:
 # llama endpoints de escritura: si alguno se escapa, deja filas (así se descubrió la fuga de
 # `POST /labels`, que creó una `SheetLabel` y reventó el DELETE de la empresa).
 _COMPANY_CHILDREN = (CategoryRule, CompanyCategory, CompanyMember, LearnedMerchant,
-                     MonthlyInsight, PnlReport, SheetLabel)
+                     MonthlyInsight, PnlReport, SheetLabel,
+                     CategorizationChange)  # historial de correcciones (Movimientos, 2-oct)
 
 
 def drop_fixtures(s: Session) -> None:

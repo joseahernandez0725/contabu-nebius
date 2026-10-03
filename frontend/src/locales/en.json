@@ -164,17 +164,6 @@
     "proposeHint": "The AI categorized {{count}} transactions. Turn what it learned into rules you approve — next time they won't need AI.",
     "proposeCta": "Create my rules"
   },
-  "receipt": {
-    "title": "Snap a receipt",
-    "subtitle": "For cash purchases your bank statement doesn't show.",
-    "choose": "Take a photo or pick one",
-    "reading": "Reading the receipt…",
-    "captured": "Receipt captured",
-    "notReceipt": "That photo doesn't look like a receipt. Please try again.",
-    "duplicate": "You already added this receipt.",
-    "quotaBlocked": "You've reached your AI quota. Upgrade your plan to scan receipts.",
-    "review": "Review it"
-  },
   "prov": {
     "label": "Who decided",
     "rule": "Your rule: “{{keyword}}” → {{category}}",
@@ -400,6 +389,21 @@
     "fix": "Fix",
     "note": "Note",
     "notePlaceholder": "add a note…",
+    "formulaLabel": "Cell content",
+    "formulaEmpty": "Select a cell to see its full content",
+    "section": {
+      "REVENUE": "Revenue",
+      "COGS": "COGS",
+      "OPERATING_EXPENSE": "Operating expenses",
+      "OTHER_INCOME": "Other income",
+      "OTHER_EXPENSE": "Other expenses",
+      "NON_PL": "Not in the P&L",
+      "UNCATEGORIZED": "Uncategorized"
+    },
+    "sectionCogsDirect": "COGS · direct costs",
+    "editorPlaceholder": "Type to filter or create…",
+    "editorNoMatch": "No account matches “<b>{{q}}</b>”. Create it under:",
+    "editorEmpty": "Type to search your chart of accounts.",
     "tabSheet": "Sheet",
     "tabPivot": "Pivot",
     "tabRules": "Rules",

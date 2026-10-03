@@ -77,7 +77,7 @@ function Row({ node, depth, path, open, leaves, onToggle, t, section }: {
             <span style={{ marginInlineStart: 8, fontSize: 10.5, fontWeight: 700,
                            letterSpacing: ".05em", textTransform: "uppercase",
                            color: SECTION_COLOR[node.section] ?? "#5b6b62" }}>
-              {SECTION_LABEL[node.section] ?? node.section}
+              {t(`sheet.section.${node.section}`, { defaultValue: SECTION_LABEL[node.section] ?? node.section })}
             </span>
           )}
         </span>

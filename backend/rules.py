@@ -13,28 +13,20 @@ a igualdad, gana la de `match_text` más específico (más largo).
 
 import re
 from collections import Counter, defaultdict
-from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from merchants import GAS_STATIONS, SUPERMARKETS
-from models import AccountType, CategoryRule, LearnedMerchant, RuleScope, Transaction
+from corrections import VIA_RULE_APPLIED, VIA_RULE_PRECEDENCE, record_change, snapshot
+from models import AccountType, CategoryRule, RuleScope, Transaction
 
 # 1-oct-2026 (Jose): el motor YA NO categoriza por monto — se fue `amount_band_category()` con sus
 # umbrales por defecto (supermercado $50, gasolinera $30). Lo que no cubre una regla queda Pendiente.
-# ⚠️ `GRAY_ZONE_RATIO`, `_MEMBERSHIP_RE`, `classify_merchant` y `load_learned_merchants` siguen SOLO
-# porque `criteria.py` (área Firm) todavía los importa; se van cuando Firm borre sus criterios.
-GRAY_ZONE_RATIO = Decimal("0.25")
 
 # Un CHEQUE es un método de pago, no una contraparte: cada cheque puede ser para algo distinto
 # (no se puede agrupar) y su descripción ("CHECK #1234") es única → NO sirve crear una regla.
 _CHECK_RE = re.compile(r"\b(check|chk|cheque|e-?check)\b", re.IGNORECASE)
-
-# Cargos que NO son una compra en el comercio sino una cuota/membresía/renovación (ej.
-# "COSTCO *ANNUAL RENEWAL"): no es ni comida ni combustible ni un retiro personal. Lo usa `criteria.py`.
-_MEMBERSHIP_RE = re.compile(r"\b(membership|annual|renewal|renew|subscription|dues|fee)\b", re.IGNORECASE)
 
 
 def is_check(description: Optional[str]) -> bool:
@@ -304,10 +296,12 @@ def parse_priority(raw) -> Optional[int]:
     return n if n >= 1 else None
 
 
-def reapply_rule_precedence(session: Session, company_id: int) -> int:
+def reapply_rule_precedence(session: Session, company_id: int, *,
+                            user_id: Optional[int] = None) -> int:
     """Re-decide QUÉ regla gana en lo ya registrado tras cambiar el reglamento (p. ej. una
-    prioridad). Solo toca transacciones que decidió una regla (`source="rule"`): lo corregido a mano,
-    los criterios del libro y la IA no se mueven. Devuelve cuántas cambiaron de regla.
+    prioridad). Solo toca transacciones que decidió una regla (`source="rule"`): lo corregido a mano
+    y la IA no se mueven. Devuelve cuántas cambiaron de regla. Cada cambio real queda en el
+    historial de correcciones (`via="rule_precedence"`, `user_id` = quien cambió el reglamento).
 
     Hace falta porque `apply_rule_to_transactions` aplica UNA regla a todo lo que matchea, sin mirar
     si otra debería ganarle."""
@@ -323,6 +317,7 @@ def reapply_rule_precedence(session: Session, company_id: int) -> int:
         winner = match_rule(rules, matchable_text(t.description, t.description_extra))
         if winner is None or winner.id == t.matched_rule_id:
             continue
+        before = snapshot(t)
         t.account_type = winner.account_type
         t.category = winner.category
         if winner.subcategory:
@@ -331,19 +326,28 @@ def reapply_rule_precedence(session: Session, company_id: int) -> int:
         t.needs_review = False
         t.review_question = None
         session.add(t)
+        record_change(session, t, before, via=VIA_RULE_PRECEDENCE, user_id=user_id)
         moved += 1
     return moved
 
 
 def apply_rule_to_transactions(
-    session: Session, company_id: int, rule: CategoryRule, exclude_id: int | None = None
+    session: Session, company_id: int, rule: CategoryRule, exclude_id: int | None = None, *,
+    user_id: Optional[int] = None,
 ) -> int:
     """Aplica una regla a las transacciones YA EXISTENTES del mismo comercio (corregir una → corregir
     todas). Actualiza account_type/category de las que matchean la regla y aún no coinciden. Deja la
     `subcategory` (el comercio específico) de cada una. Devuelve cuántas actualizó.
 
     Se llama tras una corrección manual: el dueño arregla un movimiento y todas las demás del mismo
-    comercio se alinean de una vez (consistencia retroactiva)."""
+    comercio se alinean de una vez (consistencia retroactiva). Cada transacción que cambia de
+    categoría queda en el historial de correcciones (`via="rule_applied"`, `user_id` = quien tocó
+    el reglamento).
+
+    🔴 LO ESCRITO A MANO MANDA (decisión de Jose, 3-oct-2026): una fila con `source="manual"` está
+    DESCONECTADA del reglamento — ninguna regla la toca, ni al crearse ni al editarse. Es el valor
+    escrito sobre la fórmula en Excel. Se reconecta solo si el bookkeeper lo pide ("volver a seguir
+    la regla", `rule_action="follow_rule"`)."""
     if rule is None or rule.account_type is None:
         return 0
     if rule.id is None:
@@ -355,6 +359,8 @@ def apply_rule_to_transactions(
     for t in txs:
         if exclude_id is not None and t.id == exclude_id:
             continue
+        if t.source == "manual":
+            continue  # escrita a mano → desconectada de las reglas (Jose, 3-oct)
         # Un cheque SIN texto del bookkeeper sigue excluido (no hay nada a qué engancharse). Con
         # texto ("JOE'S PLUMBING") entra al juego normal: el plomero mensual ya puede tener regla.
         if is_check(t.description) and not getattr(t, "description_extra", None):
@@ -370,6 +376,7 @@ def apply_rule_to_transactions(
                 t.source = "rule"
                 session.add(t)
             continue
+        before = snapshot(t)
         t.account_type = rule.account_type
         t.category = rule.category
         if rule.subcategory:  # la regla trae comercio presentable → unifica; si no, se respeta el de cada tx
@@ -379,6 +386,7 @@ def apply_rule_to_transactions(
         t.needs_review = False
         t.review_question = None
         session.add(t)
+        record_change(session, t, before, via=VIA_RULE_APPLIED, user_id=user_id)
         updated += 1
     return updated
 
@@ -409,27 +417,6 @@ def classify_merchant(
     if any(f" {_phrase(m)} " in phrase for m in sup):
         return "supermarket"
     return None
-
-
-def load_learned_merchants(
-    session: Session, company_id: int, sector: str
-) -> tuple[list[str], list[str]]:
-    """Comercios APRENDIDOS aplicables: los de la empresa (COMPANY) + los compartidos del sector
-    (SECTOR). Devuelve `(gasolineras, supermercados)` como listas de `match_text`, listas para
-    pasarlas a `classify_merchant` como `extra_gas`/`extra_super`. Solo la usa `criteria.py`."""
-    rows = session.exec(
-        select(LearnedMerchant).where(
-            or_(
-                (LearnedMerchant.scope == RuleScope.COMPANY)
-                & (LearnedMerchant.company_id == company_id),
-                (LearnedMerchant.scope == RuleScope.SECTOR)
-                & (LearnedMerchant.sector == sector),
-            )
-        )
-    ).all()
-    gas = [r.match_text for r in rows if r.kind == "gas_station"]
-    sup = [r.match_text for r in rows if r.kind == "supermarket"]
-    return gas, sup
 
 
 # Palabras genéricas que no aportan especificidad (no deben quedar como regla por sí solas).
