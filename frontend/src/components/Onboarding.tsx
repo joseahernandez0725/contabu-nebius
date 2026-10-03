@@ -1,16 +1,15 @@
 import { useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import type { TFunction } from "i18next";
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import LanguageSwitcher from "./LanguageSwitcher";
 import VerifyEmailBanner from "./VerifyEmailBanner";
-import { updateCompany, updateProfile } from "../api";
-import type { Company, CompanyProfile } from "../types";
+import { updateCompany } from "../api";
+import type { Company } from "../types";
 
 // Idioma + con qué cuenta estás + salir. El onboarding se muestra a pantalla completa (sin el
 // header de la app, donde viven el selector de idioma y el logout): sin esto, quien entra con la
-// cuenta equivocada queda atrapado, y no puede cambiar el idioma de la entrevista.
+// cuenta equivocada queda atrapado, y no puede cambiar el idioma del alta.
 function AccountStrip() {
   const { t } = useTranslation();
   const email = auth.currentUser?.email;
@@ -45,25 +44,10 @@ const SECTORS: { id: string; icon: ReactNode }[] = [
   { id: "other", icon: <path d="M12 2a10 10 0 100 20 10 10 0 000-20zM9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01" /> },
 ];
 
-// La ENTREVISTA del bookkeeper — RONDA 1 (FASE 9 Paso 5). Preguntas ESTRUCTURADAS: la UI se
-// traduce, pero los VALORES que viajan al backend son ingleses fijos (Regla de Oro). `multi` =
-// se pueden elegir varias. Saltable pregunta a pregunta y completa (la fricción mata activación).
-const QUESTIONS: { key: keyof CompanyProfile; options: string[]; multi?: boolean }[] = [
-  { key: "uses_subcontractors", options: ["yes", "no"] },
-  { key: "client_payment_methods", options: ["checks", "zelle", "cash", "card", "bank_transfer"], multi: true },
-  { key: "payroll", options: ["none", "w2", "1099", "both"] },
-  { key: "work_vehicles", options: ["yes", "no"] },
-  { key: "personal_expenses_mixed", options: ["yes", "sometimes", "no"] },
-];
-
-// Etiqueta i18n de una opción: las de payroll llevan prefijo (sus valores chocarían con yes/no…).
-function optionLabel(t: TFunction, key: string, value: string): string {
-  const i18nKey = key === "payroll" ? `interview.opt.payroll_${value}` : `interview.opt.${value}`;
-  return t(i18nKey, { defaultValue: value });
-}
-
-// Onboarding: se muestra cuando la empresa aún no tiene sector elegido. Paso 1: nombre + sector
-// (deciden reglas de sector y plan de cuentas). Paso 2: la entrevista del bookkeeper (perfil).
+// Onboarding: se muestra cuando el libro aún no tiene sector elegido. Nombre + sector (deciden el plan
+// de cuentas) y, si el sector es "other", a qué se dedica el negocio (hecho para la IA).
+// 🔄 2-oct-2026 (FASE 13 Paso 5): se eliminó la ENTREVISTA que venía después (5 preguntas al dueño).
+// Quien se registra es un bookkeeper; el criterio entra por las notas de Auditoría (F11).
 export default function Onboarding({ company, onDone }: {
   company: Company; onDone: (c: Company) => void;
 }) {
@@ -73,164 +57,24 @@ export default function Onboarding({ company, onDone }: {
   const [otherTrade, setOtherTrade] = useState(company.profile?.trade ?? ""); // "other": oficio libre
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Paso 2 — entrevista: empresa ya guardada, índice de pregunta y respuestas acumuladas.
-  // Si la empresa YA tiene sector (refresh a media entrevista), se reanuda directo en el paso 2
-  // con lo que alcanzó a guardarse (cada respuesta se persiste al momento).
-  const [ready, setReady] = useState<Company | null>(company.sector ? company : null);
-  const [qIndex, setQIndex] = useState(0);
-  const [answers, setAnswers] = useState<Partial<CompanyProfile>>(() => {
-    const { people: _people, round1_done: _r1, ...round1 } = company.profile ?? {};
-    return round1;
-  });
-  const [multiPick, setMultiPick] = useState<string[]>([]);
 
   async function save() {
     if (!sector) return;
     setSaving(true);
     setError(null);
     try {
-      const updated = await updateCompany({ name: name.trim() || "My Business", sector });
-      // "other" + oficio escrito → primer hecho del perfil (la IA lo recibe como contexto).
-      if (sector === "other" && otherTrade.trim()) setAnswers({ trade: otherTrade.trim() });
-      setReady(updated); // la empresa quedó lista → arranca la entrevista (no salir todavía)
-      setSaving(false);
+      // El oficio solo se manda con "other"; con otro sector se limpia (deja de describir el negocio).
+      const updated = await updateCompany({
+        name: name.trim() || "My Business", sector,
+        trade: sector === "other" ? otherTrade.trim() : "",
+      });
+      onDone(updated); // libro listo → entra a la app
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
       setSaving(false);
     }
   }
 
-  // Termina la entrevista (respondida o saltada): marca `round1_done` — el gate del onboarding —
-  // y entra a la app. Un fallo del perfil NO bloquea la entrada (se reintentaría al refrescar).
-  async function finishInterview(finalAnswers: Partial<CompanyProfile>) {
-    if (!ready) return;
-    setSaving(true);
-    let profile: CompanyProfile = { ...(ready.profile ?? {}), ...finalAnswers, round1_done: true };
-    try {
-      profile = await updateProfile({ ...finalAnswers, round1_done: true });
-    } catch {
-      /* el perfil es opcional: no bloquear la entrada a la app */
-    }
-    onDone({ ...ready, profile });
-  }
-
-  // Al moverse a una pregunta, restaurar lo ya respondido (si es multi) para poder re-editarla.
-  function restoreMultiPick(index: number, from: Partial<CompanyProfile>) {
-    const q = QUESTIONS[index];
-    setMultiPick(q.multi ? ((from[q.key] as string[] | undefined) ?? []) : []);
-  }
-
-  function advance(nextAnswers: Partial<CompanyProfile>) {
-    setAnswers(nextAnswers);
-    if (qIndex + 1 >= QUESTIONS.length) {
-      setMultiPick([]);
-      void finishInterview(nextAnswers);
-    } else {
-      // Guardar al momento (fire-and-forget): un refresh a media entrevista ya no pierde nada.
-      void updateProfile(nextAnswers).catch(() => {});
-      restoreMultiPick(qIndex + 1, nextAnswers);
-      setQIndex(qIndex + 1);
-    }
-  }
-
-  // Regresar: a la pregunta anterior, o desde la primera al paso 1 (nombre + sector, re-editable —
-  // la empresa ya quedó guardada, pero volver a "Continuar" la re-guarda con lo nuevo).
-  function goBack() {
-    if (qIndex === 0) {
-      setReady(null);
-      return;
-    }
-    restoreMultiPick(qIndex - 1, answers);
-    setQIndex(qIndex - 1);
-  }
-
-  // ---- Paso 2: la entrevista ----
-  if (ready) {
-    const q = QUESTIONS[qIndex];
-    return (
-      <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
-        <AccountStrip />
-        <div className="w-full max-w-md space-y-6">
-          <VerifyEmailBanner />
-          <div className="text-center">
-            <div className="size-14 rounded-2xl mx-auto flex items-center justify-center text-white shadow-sm"
-              style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
-              <svg viewBox="0 0 24 24" className="size-7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 10h8M8 14h5M21 12a9 9 0 11-4.5-7.8L21 3l-.7 4.5A9 9 0 0121 12z" />
-              </svg>
-            </div>
-            <h1 className="text-2xl font-bold text-slate-900 mt-4">
-              {t("interview.title", { defaultValue: "A few quick questions" })}
-            </h1>
-            <p className="text-slate-500 mt-1">
-              {t("interview.subtitle", { defaultValue: "Your bookkeeper would ask the same — your answers make the rules smarter from day one." })}
-            </p>
-          </div>
-
-          {/* Progreso: puntos, una pregunta a la vez (una entrevista, no un formulario) */}
-          <div className="flex justify-center gap-1.5">
-            {QUESTIONS.map((_, i) => (
-              <span key={i} className={`size-2 rounded-full ${i === qIndex ? "bg-brand-green" : i < qIndex ? "bg-brand-green/40" : "bg-slate-200"}`} />
-            ))}
-          </div>
-
-          <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-            <p className="font-medium text-slate-900 mb-3">
-              {t(`interview.q.${q.key}`, { defaultValue: q.key })}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {q.options.map((opt) => {
-                // Marcar lo ya elegido (al regresar a una pregunta respondida se ve la respuesta).
-                const active = q.multi ? multiPick.includes(opt) : answers[q.key] === opt;
-                return (
-                  <button
-                    key={opt}
-                    onClick={() => {
-                      if (q.multi) {
-                        setMultiPick((prev) => prev.includes(opt) ? prev.filter((p) => p !== opt) : [...prev, opt]);
-                      } else {
-                        advance({ ...answers, [q.key]: opt });
-                      }
-                    }}
-                    className={`px-3.5 py-2 rounded-xl border text-sm font-medium transition-colors ${
-                      active ? "border-brand-green bg-brand-green/10 text-brand-green"
-                             : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                    }`}
-                  >
-                    {optionLabel(t, q.key, opt)}
-                  </button>
-                );
-              })}
-            </div>
-            {q.multi && (
-              <button
-                onClick={() => advance(multiPick.length > 0 ? { ...answers, [q.key]: multiPick } : answers)}
-                className="mt-4 w-full py-2.5 rounded-xl font-semibold text-white bg-brand-green disabled:opacity-50"
-                disabled={saving}
-              >
-                {t("interview.next", { defaultValue: "Next" })}
-              </button>
-            )}
-          </div>
-
-          <div className="flex justify-center gap-6 text-sm">
-            <button onClick={goBack} className="text-slate-500 hover:underline" disabled={saving}>
-              ←{" "}
-              {t("interview.back", { defaultValue: "Back" })}
-            </button>
-            <button onClick={() => advance(answers)} className="text-slate-500 hover:underline" disabled={saving}>
-              {t("interview.skip", { defaultValue: "Skip this question" })}
-            </button>
-            <button onClick={() => void finishInterview(answers)} className="text-slate-500 hover:underline" disabled={saving}>
-              {saving ? t("interview.saving", { defaultValue: "Saving…" }) : t("interview.skipAll", { defaultValue: "Skip for now" })}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // ---- Paso 1: nombre + sector ----
   return (
     <div className="relative min-h-screen flex items-center justify-center bg-slate-50 px-4 py-10">
       <AccountStrip />

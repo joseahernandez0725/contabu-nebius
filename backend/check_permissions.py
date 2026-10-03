@@ -29,7 +29,7 @@ from sqlmodel import Session, delete, select  # noqa: E402
 import auth  # noqa: E402
 from db import engine  # noqa: E402
 from main import app  # noqa: E402
-from models import (BookCriterion, CategoryRule, CellFormat, Company, CompanyCategory, CompanyMember,  # noqa: E402
+from models import (CategoryRule, CellFormat, Company, CompanyCategory, CompanyMember,  # noqa: E402
                     Firm, FirmMember, FirmRole, LearnedMerchant, MonthlyInsight, PnlReport,
                     Role, SheetLabel, Transaction, TransactionLabel, User)
 
@@ -66,8 +66,6 @@ SKIP: set[tuple[str, str]] = {
 BODIES: dict[tuple[str, str], dict] = {
     ("PATCH", "/api/transactions/{transaction_id}"): {"category": "Materials"},
     ("PATCH", "/api/companies/{company_id}"): {"name": "hackeada"},
-    ("PATCH", "/api/companies/{company_id}/thresholds"): {"supermarket_threshold": 1},
-    ("PATCH", "/api/companies/{company_id}/profile"): {"payroll": "yes"},
     ("POST", "/api/companies/{company_id}/rules"): {
         "match_text": "X", "account_type": "OPERATING_EXPENSE", "category": "Materials"},
     ("PATCH", "/api/companies/{company_id}/rules/{rule_id}"): {"category": "Materials"},
@@ -90,7 +88,6 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/checkout/confirm"): {"session_id": "cs_x"},
     ("POST", "/api/companies/{company_id}/transactions/set-account"): {
         "transaction_ids": ["__TX__"], "account": "Chase Checking"},
-    ("POST", "/api/companies/{company_id}/interview/answers"): {"answers": []},
     ("POST", "/api/companies/{company_id}/rule-proposals/validate"): {"keyword": "X", "covers": []},
     ("POST", "/api/companies/{company_id}/rule-proposals/apply"): {"rules": []},
     # "__TX__" se reemplaza por el id de la transacción REAL de prueba: con una lista vacía el
@@ -146,7 +143,7 @@ def build_fixtures(s: Session) -> tuple[int, int]:
 # Todo lo que cuelga de una empresa, en orden de dependencias. Se borra ENTERO porque la prueba
 # llama endpoints de escritura: si alguno se escapa, deja filas (así se descubrió la fuga de
 # `POST /labels`, que creó una `SheetLabel` y reventó el DELETE de la empresa).
-_COMPANY_CHILDREN = (BookCriterion, CategoryRule, CompanyCategory, CompanyMember, LearnedMerchant,
+_COMPANY_CHILDREN = (CategoryRule, CompanyCategory, CompanyMember, LearnedMerchant,
                      MonthlyInsight, PnlReport, SheetLabel)
 
 

@@ -75,21 +75,16 @@ export interface Company {
   name: string;
   sector: string;
   plan: string;
-  supermarket_threshold: string | null; // Decimal → string; null = usar default del sistema
-  gas_station_threshold: string | null;
   settlement_buffer_days: number | null; // días de retención; null = default del sistema
   subscription_status?: string | null; // "active" · "canceled" · null = plan gratis
   tx_quota?: number | null; // cupo mensual del tier pagado (100/200/400/1000); null = gratis
   created_at: string;
   role?: "OWNER" | "MEMBER" | "VIEWER" | "CLIENT"; // rol del usuario actual sobre esta empresa (CLIENT = dueño del negocio, FASE 13)
-  profile?: CompanyProfile | null; // la ENTREVISTA del bookkeeper (FASE 9 Paso 5)
+  profile?: CompanyProfile | null; // hechos ya guardados del negocio (la entrevista se eliminó el 2-oct; queda `trade`)
 }
 
 // Perfil de la empresa — hechos de la entrevista (valores SIEMPRE en inglés; la UI solo traduce).
 export interface CompanyProfile {
-  // La ronda 1 terminó (respondida o saltada). ESTE flag decide si el onboarding vuelve a salir;
-  // sin él, un refresh a media entrevista la perdía (el sector se guarda antes de las preguntas).
-  round1_done?: boolean;
   // Oficio en texto libre (sector "other"). Única excepción de idioma: va tal cual al prompt.
   trade?: string;
   uses_subcontractors?: "yes" | "no";
@@ -99,15 +94,6 @@ export interface CompanyProfile {
   personal_expenses_mixed?: "yes" | "sometimes" | "no";
   // Ronda 2: personas con rol confirmado por el dueño, por firma en mayúsculas.
   people?: Record<string, { name: string; role: string }>;
-}
-
-// Pregunta de la RONDA 2 (anclada en los datos): una persona de pagos Zelle/Venmo sin rol confirmado.
-export interface InterviewQuestion {
-  key: string; // firma (mayúsculas) — se manda de vuelta como `name`
-  name: string; // presentable ("Watson Yu")
-  count: number;
-  total_in: number;
-  total_out: number;
 }
 
 export interface CategoryAmount {

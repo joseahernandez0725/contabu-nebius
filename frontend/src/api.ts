@@ -1,6 +1,6 @@
 // Capa de acceso al backend. Centraliza las llamadas HTTP en un solo lugar.
 import { auth } from "./firebase";
-import type { Company, CompanyProfile, IncomeStatement, InterviewQuestion, Transaction, SheetRow, SheetLabel } from "./types";
+import type { Company, IncomeStatement, Transaction, SheetRow, SheetLabel } from "./types";
 
 // URL del backend según entorno: en dev, localhost; en prod, el Cloud Run (VITE_API_URL).
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -120,44 +120,14 @@ export async function getCompany(): Promise<Company> {
 }
 
 // Edita el perfil de la empresa (nombre/sector). Lo usa el onboarding y el renombrar.
-export async function updateCompany(payload: { name?: string; sector?: string }): Promise<Company> {
+// `trade`: a qué se dedica el negocio cuando el sector es "other" (texto libre; "" lo borra).
+export async function updateCompany(payload: { name?: string; sector?: string; trade?: string }): Promise<Company> {
   const res = await fetch(`${API}/api/companies/${cid()}`, {
     method: "PATCH",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error("No se pudo actualizar la empresa");
-  return res.json();
-}
-
-// ENTREVISTA ronda 1: guarda las respuestas estructuradas del dueño (valores en inglés).
-export async function updateProfile(answers: Partial<CompanyProfile>): Promise<CompanyProfile> {
-  const res = await fetch(`${API}/api/companies/${cid()}/profile`, {
-    method: "PATCH",
-    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-    body: JSON.stringify(answers),
-  });
-  if (!res.ok) throw new Error("No se pudo guardar el perfil");
-  return (await res.json()).profile;
-}
-
-// ENTREVISTA ronda 2: preguntas ancladas en los datos (personas de pagos Zelle/Venmo sin rol).
-export async function getInterview(): Promise<{ profile: CompanyProfile; questions: InterviewQuestion[] }> {
-  const res = await fetch(`${API}/api/companies/${cid()}/interview`, { headers: await authHeaders() });
-  if (!res.ok) throw new Error("No se pudo cargar la entrevista");
-  return res.json();
-}
-
-// Respuestas de la ronda 2: rol por persona → corrige sus transacciones + guarda el hecho.
-export async function answerInterview(
-  answers: { name: string; role: string }[],
-): Promise<{ updated: number; profile: CompanyProfile }> {
-  const res = await fetch(`${API}/api/companies/${cid()}/interview/answers`, {
-    method: "POST",
-    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-    body: JSON.stringify({ answers }),
-  });
-  if (!res.ok) throw new Error("No se pudo guardar la respuesta");
   return res.json();
 }
 
@@ -171,22 +141,6 @@ export async function deleteCompany(id: number): Promise<void> {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || "No se pudo eliminar la empresa");
   }
-}
-
-export async function updateThresholds(
-  payload: Partial<{
-    supermarket_threshold: number;
-    gas_station_threshold: number;
-    settlement_buffer_days: number;
-  }>,
-): Promise<Company> {
-  const res = await fetch(`${API}/api/companies/${cid()}/thresholds`, {
-    method: "PATCH",
-    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error("No se pudieron actualizar los umbrales");
-  return res.json();
 }
 
 export async function getTransactions(): Promise<Transaction[]> {

@@ -28,14 +28,13 @@ from billing import ai_quota_status, apply_session, create_checkout_session, han
 from auth import (current_user, effective_role, owned_company, owner_company, owned_transaction,
                   client_writable_company, console_company, user_firm)
 from categories import categories_for, categories_for_company
-from company_profile import (
-    apply_person_answer, format_profile_facts, interview_questions, sanitize_round1,
-)
+from company_profile import format_profile_facts
 from db import get_session
 from ingestion import categorize_pending, ingest_csv, make_fingerprint, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
+    Firm, FirmMember, FirmRole,
     SheetLabel,
     TransactionLabel,
     CellFormat,)
@@ -87,17 +86,14 @@ class SetAccountPayload(BaseModel):
     account: str
 
 
-class CompanyThresholds(BaseModel):
-    """Ajustes editables por empresa: umbrales de monto (super/gasolinera) y ventana de
-    asentamiento (días que se retienen los movimientos recientes/pending)."""
-    supermarket_threshold: Optional[Decimal] = None
-    gas_station_threshold: Optional[Decimal] = None
-
-
 class CompanyProfile(BaseModel):
     """Perfil de la empresa que se edita en el onboarding / ajustes (nombre y sector)."""
     name: Optional[str] = None
     sector: Optional[str] = None
+    # Sector "other": a qué se dedica el negocio, en texto libre. Antes viajaba por la entrevista
+    # (`PATCH /profile`, eliminado el 2-oct); es un dato del ALTA y la IA lo recibe como hecho
+    # (`format_profile_facts` → "The owner describes the business as …").
+    trade: Optional[str] = None
 
 
 class CompanyCreate(BaseModel):
@@ -175,41 +171,62 @@ def hello():
     return {"message": "¡Hola desde el backend de ContaBu! 🚀"}
 
 
+def _create_own_firm(user: User, session: Session) -> tuple[Firm, FirmRole]:
+    """Oficina de UN usuario (FASE 13 Paso 4). Jose: quien se registra *"queda como un bookkeeper así
+    sea un solo usuario, con todas las herramientas"*. El rol CLIENT nunca nace aquí: solo por invitación."""
+    firm = Firm(name=(user.email or "").strip() or "My Firm", owner_user_id=user.id)
+    session.add(firm)
+    session.flush()
+    session.add(FirmMember(firm_id=firm.id, user_id=user.id, email=user.email or "", role=FirmRole.OWNER))
+    return firm, FirmRole.OWNER
+
+
 @app.get("/api/me")
 def get_me(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Devuelve el usuario autenticado y SUS empresas. En el primer login (sin empresa) crea una
-    empresa por defecto para que el flujo funcione de inmediato. El frontend usa esto en vez de
-    un `company_id` fijo."""
-    owned = session.exec(select(Company).where(Company.user_id == user.id)).all()
-    roles: dict[int, str] = {c.id: Role.OWNER.value for c in owned}
+    """El usuario, su OFICINA y los libros que ve. Respuesta: `{user, firm, firm_role, companies, roles}`.
 
-    # Empresas donde el usuario es MIEMBRO invitado (roles por empresa).
-    member_rows = session.exec(
-        select(CompanyMember).where(CompanyMember.user_id == user.id)
-    ).all()
-    member_companies: list[Company] = []
-    if member_rows:
-        ids = [m.company_id for m in member_rows]
-        member_companies = session.exec(select(Company).where(Company.id.in_(ids))).all()
-        for m in member_rows:
-            roles.setdefault(m.company_id, m.role.value)
+    - Ve los libros de su oficina (todos), los que creó y los que le compartieron por invitación.
+    - **Cuenta nueva sin nada** (ni oficina, ni libros, ni invitación) → nace una **oficina de un usuario**
+      con su primer libro (FASE 13 Paso 4). Antes se creaba solo una empresa suelta, sin oficina.
+    - **Un cliente** (invitado como CLIENT, sin oficina) → `firm = null`. El frontend usa eso para elegir
+      cáscara: consola del bookkeeper o plataforma del cliente.
+    Las invitaciones pendientes ya se enlazaron en `current_user`, ANTES de llegar aquí: por eso un
+    invitado nunca recibe una oficina que no pidió.
+    """
+    firm, firm_role = user_firm(user, session)
 
-    owned_ids = {c.id for c in owned}
-    companies = owned + [c for c in member_companies if c.id not in owned_ids]
+    ids: set[int] = set()
+    if firm is not None:
+        ids |= set(session.exec(select(Company.id).where(Company.firm_id == firm.id)).all())
+    ids |= set(session.exec(select(Company.id).where(Company.user_id == user.id)).all())
+    ids |= set(session.exec(select(CompanyMember.company_id).where(CompanyMember.user_id == user.id)).all())
 
-    if not companies:
-        # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector)
-        # antes de dejar usar la app. El sector decide reglas de sector + plan de cuentas.
-        company = Company(name="My Business", sector="", user_id=user.id)
+    if not ids and (firm is None or firm_role == FirmRole.OWNER):
+        # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector).
+        if firm is None:
+            firm, firm_role = _create_own_firm(user, session)
+        company = Company(name="My Business", sector="", user_id=user.id, firm_id=firm.id)
         session.add(company)
         session.commit()
         session.refresh(company)
-        companies = [company]
-        roles[company.id] = Role.OWNER.value
-    return {"user": user, "companies": companies, "roles": roles}
+        ids = {company.id}
+
+    companies = session.exec(select(Company).where(Company.id.in_(ids)).order_by(Company.id)).all() if ids else []
+    roles: dict[int, str] = {}
+    for c in companies:
+        r = effective_role(c, user, session)
+        if r is not None:
+            roles[c.id] = r.value
+    return {
+        "user": user,
+        "firm": _firm_out(firm, firm_role) if firm is not None else None,
+        "firm_role": firm_role.value if firm_role is not None else None,
+        "companies": [c for c in companies if c.id in roles],
+        "roles": roles,
+    }
 
 
 # ==================================================================================================
@@ -298,10 +315,16 @@ def create_company(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Crea una empresa NUEVA bajo la cuenta del usuario (gestionar varias desde una sola cuenta).
-    Se crea con `sector=""` → el frontend la lleva al onboarding para elegir su sector."""
+    """Crea un libro NUEVO dentro de la OFICINA del usuario (antes nacía suelto, sin `firm_id`, y los
+    demás bookkeepers de la oficina no lo veían). Sin oficina → nace la suya (FASE 13 Paso 4). Un
+    VIEWER de la oficina no crea libros. Se crea con `sector=""` → el frontend lo lleva al onboarding."""
+    firm, firm_role = user_firm(user, session)
+    if firm is None:
+        firm, firm_role = _create_own_firm(user, session)
+    if firm_role == FirmRole.VIEWER:
+        raise HTTPException(status_code=403, detail="read-only (viewer)")
     name = (payload.name or "").strip() or "New Business"
-    company = Company(name=name, sector="", user_id=user.id)
+    company = Company(name=name, sector="", user_id=user.id, firm_id=firm.id)
     session.add(company)
     session.commit()
     session.refresh(company)
@@ -539,6 +562,14 @@ def update_company(
         company.name = data["name"].strip()
     if data.get("sector"):
         company.sector = data["sector"].strip().lower()
+    if "trade" in data:
+        profile = dict(company.profile or {})   # copia: un JSON mutado en sitio no se guarda
+        trade = (data["trade"] or "").strip()[:120]
+        if trade:
+            profile["trade"] = trade
+        else:
+            profile.pop("trade", None)
+        company.profile = profile
     session.add(company)
     session.commit()
     session.refresh(company)
@@ -660,102 +691,6 @@ def remove_member(
     session.delete(m)
     session.commit()
     return {"deleted": member_id}
-
-
-@app.patch("/api/companies/{company_id}/thresholds")
-def update_thresholds(
-    company_id: int,
-    payload: CompanyThresholds,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Edita los umbrales de monto (super/gasolinera) que usa la desambiguación por banda."""
-    company = owned_company(company_id, user, session, write=True)
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(company, field, value)
-    session.add(company)
-    session.commit()
-    session.refresh(company)
-    return company
-
-
-@app.patch("/api/companies/{company_id}/profile")
-def update_profile(
-    company_id: int,
-    payload: dict,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """ENTREVISTA del bookkeeper — RONDA 1 (FASE 9 Paso 5): guarda las respuestas estructuradas
-    del dueño (valores SIEMPRE en inglés — la UI traduce, el dato no). Merge: se puede responder
-    por partes o volver a editar; las claves no reconocidas se descartan."""
-    company = owned_company(company_id, user, session, write=True)
-    answers = sanitize_round1(payload)
-    profile = dict(company.profile or {})
-    profile.update(answers)
-    company.profile = profile
-    session.add(company)
-    session.commit()
-    return {"profile": profile}
-
-
-@app.get("/api/companies/{company_id}/interview")
-def get_interview(
-    company_id: int,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """ENTREVISTA — RONDA 2 (FASE 9 Paso 5): preguntas ANCLADAS EN LOS DATOS. Determinista y sin
-    IA: agrupa los pagos persona-a-persona (Zelle/Venmo/…) por contraparte — exactamente los que
-    el proponedor tiene prohibido convertir en regla sin contexto — y pregunta el rol de cada
-    persona aún sin confirmar. Los totales los suma Python (la IA no calcula)."""
-    company = console_company(company_id, user, session)
-    txs = session.exec(
-        select(Transaction).where(Transaction.company_id == company_id)
-    ).all()
-    return {"profile": company.profile or {},
-            "questions": interview_questions(txs, company.profile)}
-
-
-class InterviewAnswer(BaseModel):
-    """El rol de UNA persona, confirmado por el dueño (ronda 2)."""
-    name: str
-    role: str  # "subcontractor" | "customer" | "owner" | "skip" (no volver a preguntar)
-
-
-class InterviewAnswers(BaseModel):
-    answers: list[InterviewAnswer]
-
-
-@app.post("/api/companies/{company_id}/interview/answers")
-def answer_interview(
-    company_id: int,
-    payload: InterviewAnswers,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Aplica las respuestas de la RONDA 2: (a) el hecho queda en el perfil (`people`) — el
-    proponedor ya puede proponer la regla de esa persona y la IA lo recibe como hecho—, y (b) las
-    transacciones persona-a-persona de esa contraparte se corrigen al instante (decisión del
-    dueño → source="manual"). "skip" solo silencia la pregunta."""
-    company = owned_company(company_id, user, session, write=True)
-    profile = dict(company.profile or {})
-    people = dict(profile.get("people") or {})
-    updated = 0
-    for a in payload.answers:
-        key = a.name.strip().upper()
-        if not key:
-            continue
-        role = a.role if a.role in ("subcontractor", "customer", "owner") else "skip"
-        people[key] = {"name": a.name.strip().title(), "role": role}
-        if role != "skip":
-            updated += apply_person_answer(session, company_id, company.sector or "general",
-                                           key, role)
-    profile["people"] = people
-    company.profile = profile
-    session.add(company)
-    session.commit()
-    return {"updated": updated, "profile": profile}
 
 
 @app.get("/api/companies/{company_id}/categories")

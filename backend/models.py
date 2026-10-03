@@ -105,9 +105,6 @@ class Company(SQLModel, table=True):
     name: str
     sector: str  # construcción / limpieza / restaurante…
     plan: Plan = Field(default=Plan.FREE)
-    # Umbrales editables para desambiguar por monto (idea #14). None = usar el default del sistema.
-    supermarket_threshold: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
-    gas_station_threshold: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
     # Ventana de asentamiento (días): se retienen las transacciones recientes/pending hasta que
     # liquidan (base caja). None = usar el default del sistema. Ver docs/NOTAS IMPORTANTES.md.
     settlement_buffer_days: Optional[int] = Field(default=None)
@@ -381,40 +378,4 @@ class FirmMember(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     email: str = Field(index=True)  # email del invitado (para enlazar al hacer login)
     role: FirmRole = Field(default=FirmRole.BOOKKEEPER)
-    created_at: datetime = Field(default_factory=_utcnow)
-
-
-class BookCriterion(SQLModel, table=True):
-    """Un CRITERIO DEL LIBRO (FASE 13): cómo decide ContaBu un caso que se repite en ESTE libro.
-
-    Reemplaza a los umbrales fijos (`Company.supermarket_threshold`, `gas_station_threshold`,
-    `settlement_buffer_days` y los 50/30/5 escritos en el código). El problema de aquellos no era el
-    número: era que las CATEGORÍAS de cada lado estaban escritas en el programa. Aquí el bookkeeper
-    elige las dos, del plan de cuentas de ese libro, y puede crear tarjetas propias.
-
-    `kind`:
-      - "supermarket" / "gas_station" → aplica a los comercios de esas listas (base + aprendidos)
-      - "custom"      → aplica a los movimientos cuya descripción contiene alguna de `keywords`
-      - "settlement"  → no categoriza: cuántos días esperar antes de registrar lo reciente
-    `mode` ("supermarket", "gas_station", "custom"):
-      - "split"   → menos de `limit_amount` → `below_*` · desde `limit_amount` → `above_*`
-      - "always"  → todo a `below_*`
-      - "pending" → no decide: queda Pendiente para que lo revise el bookkeeper
-    Las categorías se guardan en INGLÉS (Regla de Oro); el frontend las traduce.
-    """
-    id: Optional[int] = Field(default=None, primary_key=True)
-    company_id: int = Field(foreign_key="company.id", index=True)
-    kind: str
-    name: Optional[str] = Field(default=None)          # título de las tarjetas propias
-    description: Optional[str] = Field(default=None)   # texto libre del bookkeeper (cualquier tarjeta)
-    keywords: Optional[list] = Field(default=None, sa_column=Column(JSON))  # solo "custom"
-    mode: str = Field(default="split")
-    limit_amount: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
-    below_account_type: Optional[AccountType] = Field(default=None)
-    below_category: Optional[str] = Field(default=None)
-    above_account_type: Optional[AccountType] = Field(default=None)
-    above_category: Optional[str] = Field(default=None)
-    review_near: bool = Field(default=True)            # cerca del límite (±25 %) → para revisar
-    wait_days: Optional[int] = Field(default=None)     # solo "settlement"
-    position: int = Field(default=0)
     created_at: datetime = Field(default_factory=_utcnow)

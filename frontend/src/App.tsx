@@ -7,7 +7,6 @@ import Sheet from "./components/Sheet";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
-import Interview from "./components/Interview";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
@@ -133,10 +132,10 @@ function App() {
   // Sin sesión → pantalla de acceso.
   if (fbUser === null) return <Login />;
 
-  // Empresa SIN sector o con la entrevista a medias → onboarding. El gate es `round1_done` (no
-  // solo el sector): el sector se guarda ANTES de las preguntas, y un refresh a media entrevista
-  // la saltaba en silencio. Con el flag, el onboarding reanuda donde iba.
-  if (company && (!company.sector || !company.profile?.round1_done)) {
+  // Libro SIN sector → onboarding (el sector decide el plan de cuentas). 🔄 2-oct (FASE 13 Paso 5):
+  // fuera la entrevista y su flag `round1_done`. Y el sector lo elige el BOOKKEEPER: un cliente
+  // (rol CLIENT) nunca aterriza eligiendo la industria de su negocio.
+  if (company && !company.sector && company.role !== "CLIENT") {
     return <Onboarding company={company} onDone={onCompanyReady} />;
   }
 
@@ -223,8 +222,6 @@ function App() {
             )}
             {view === "audit" && (
               <div className="space-y-4">
-                {/* ENTREVISTA ronda 2 (FASE 9): preguntas del agente ancladas en los datos. */}
-                <Interview onApplied={reloadReview} />
                 <Audit
                   onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
                   onCount={setAuditCount}
