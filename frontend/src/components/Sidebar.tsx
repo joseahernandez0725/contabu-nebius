@@ -8,11 +8,12 @@ import type { Company } from "../types";
 
 // Las vistas de UN libro (la empresa abierta). Es la fuente del tipo `View` que usa App.tsx.
 // Las reglas NO tienen pestaña propia: viven dentro de Activity (Hoja · Pivote · Reglas). Jose, 30-sep.
-export type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "settings";
+// "bank" (Vincular un banco) no está en la barra: se llega desde el Resumen y Archivo → Vincular un banco.
+export type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "settings" | "bank";
 
 // BARRA LATERAL (FASE 13). Dos niveles, que es como trabaja un bookkeeper — y como está el modelo:
 //   · ESTE LIBRO → la empresa que está abierta ahora (la capa `Company`)
-//   · OFICINA    → herramientas que sirven para TODOS los clientes (la capa `Firm`)
+//   · OFICINA    → herramientas para TODOS los clientes (la capa `Firm`) — escondida hasta que exista
 //
 // En escritorio vive COMPRIMIDA (solo íconos, 64 px) y se EXPANDE al acercar el mouse (pedido de
 // Jose, 30-sep). Se abre ENCIMA del contenido, no lo empuja: si lo empujara, la hoja se redibujaría
@@ -30,18 +31,13 @@ const BOOK_ICONS: Record<View, ReactNode> = {
   audit: ic(<><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9z" /><path d="M9 13l2 2 4-4" /></>),
   pnl: ic(<><path d="M4 19V5M4 19h16" /><path d="M8 16v-5M12 16V8M16 16v-3" /></>),
   upload: ic(<><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" /></>),
+  bank: ic(<><path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" /></>),
   settings: ic(<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></>),
 };
 
-// Herramientas de la OFICINA. Aún no existen: se muestran marcadas "Pronto" para que la barra
-// enseñe desde ya dónde va a vivir cada una. Se activan una por una a medida que se construyen.
-const OFFICE: { key: string; icon: ReactNode }[] = [
-  { key: "clients", icon: ic(<><path d="M3 21h18M5 21V7l7-4 7 4v14" /><path d="M9 21v-6h6v6" /></>) },
-  { key: "users", icon: ic(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0113 0" /><path d="M16 4.5a3.5 3.5 0 010 7M21.5 20a6.5 6.5 0 00-4-6" /></>) },
-  { key: "calendar", icon: ic(<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></>) },
-  { key: "requests", icon: ic(<><path d="M4 13l2.5-7.5A2 2 0 018.4 4h7.2a2 2 0 011.9 1.5L20 13" /><path d="M4 13v5a2 2 0 002 2h12a2 2 0 002-2v-5h-5a3 3 0 01-6 0z" /></>) },
-  { key: "payroll", icon: ic(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>) },
-];
+// La sección OFICINA (Clientes, Usuarios, Calendario, Solicitudes, Nómina) se ESCONDIÓ el 3-oct: eran
+// marcadores "Pronto" y el demo del concurso no puede llevar a páginas vacías (docs/DEMO Y ENTREGA.md).
+// No se construyen antes del 30-oct. Cuando exista la primera, vuelve aquí con su sección.
 
 const BOOK_ORDER: View[] = ["dashboard", "transactions", "audit", "pnl", "upload", "settings"];
 
@@ -153,23 +149,6 @@ export default function Sidebar({
           })}
         </Section>
 
-        <Section label={t("shell.office")} expanded={expanded}>
-          {OFFICE.map((o) => (
-            <div
-              key={o.key}
-              aria-label={t(`shell.${o.key}`)}
-              className="h-9 flex items-center gap-2.5 ps-[15px] pe-2.5 rounded-lg text-sm text-slate-400 cursor-default"
-            >
-              {o.icon}
-              {expanded && <span className="flex-1 truncate whitespace-nowrap">{t(`shell.${o.key}`)}</span>}
-              {expanded && (
-                <span className="text-[9.5px] uppercase tracking-wide bg-slate-100 text-slate-400 rounded px-1.5 py-0.5">
-                  {t("shell.soon")}
-                </span>
-              )}
-            </div>
-          ))}
-        </Section>
       </nav>
 
       <div className="shrink-0 h-12 border-t border-slate-200 px-3 flex items-center gap-2 overflow-hidden">

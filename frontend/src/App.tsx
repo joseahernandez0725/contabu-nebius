@@ -5,6 +5,7 @@ import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Sheet from "./components/Sheet";
 import Upload from "./components/Upload";
+import BankConnections from "./components/BankConnections";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
 import Pnl from "./components/Pnl";
@@ -13,6 +14,8 @@ import Onboarding from "./components/Onboarding";
 import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Login from "./components/Login";
 import Sidebar, { viewLabel, type View } from "./components/Sidebar";
+import DemoTour from "./components/DemoTour";
+import { DEMO_MODE } from "./demo";
 import { auth } from "./firebase";
 import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, getAudit, confirmCheckout } from "./api";
 import type { Company, Transaction } from "./types";
@@ -199,18 +202,26 @@ function App() {
             )}
             {view === "transactions" && (
               <>
-                <div className="flex justify-end mb-2">
-                  <button
-                    onClick={() => setUseSheet((v) => !v)}
-                    className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
-                  >
-                    {useSheet
-                      ? t("sheet.useClassic", { defaultValue: "Use the previous view" })
-                      : t("sheet.useSheet", { defaultValue: "Use the sheet" })}
-                  </button>
-                </div>
+                {/* En la Hoja, el enlace va a la derecha de la barra de menús (sin fila propia). */}
+                {!useSheet && (
+                  <div className="flex justify-end mb-2">
+                    <button
+                      onClick={() => setUseSheet(true)}
+                      className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
+                    >
+                      {t("sheet.useSheet", { defaultValue: "Use the sheet" })}
+                    </button>
+                  </div>
+                )}
                 {useSheet ? (
-                  <Sheet />
+                  <Sheet onNavigate={setView} menuRight={
+                    <button
+                      onClick={() => setUseSheet(false)}
+                      className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
+                    >
+                      {t("sheet.useClassic", { defaultValue: "Use the previous view" })}
+                    </button>
+                  } />
                 ) : (
                   <Transactions
                     onAddCategory={() => setView("settings")}
@@ -236,6 +247,8 @@ function App() {
               // categorizaba algo, y desde el 27-sep no categoriza. El proponedor vuelve en Auditoría (F11).
               <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
             )}
+            {/* Solo vincular el banco (Resumen vacío · Archivo → Vincular un banco). Movimientos, 4-oct. */}
+            {view === "bank" && <div className="max-w-2xl"><BankConnections /></div>}
             {view === "settings" && (
               <Settings company={company} onSaved={onCompanyReady} onDeleted={onCompanyDeleted} canDelete={companies.length > 1} />
             )}
@@ -243,6 +256,9 @@ function App() {
         )}
         </main>
       </div>
+
+      {/* El recorrido guiado: SOLO en el despliegue de demo (docs/DEMO Y ENTREGA.md, FASE 13). */}
+      {DEMO_MODE && <DemoTour />}
     </div>
   );
 }

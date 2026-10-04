@@ -111,22 +111,25 @@ export default function Onboarding({ company, onDone }: {
           <label className="block text-sm font-medium text-slate-800 mb-2">
             {t("onboarding.sectorLabel", { defaultValue: "What's your business sector?" })}
           </label>
-          <div className="grid grid-cols-2 gap-3">
+          {/* Lista compacta (Jose, 4-oct): 2 columnas de filas bajas con el ícono a la izquierda. */}
+          <div role="radiogroup" className="grid grid-cols-2 gap-1.5">
             {SECTORS.map((s) => {
               const active = sector === s.id;
               return (
                 <button
                   key={s.id}
+                  role="radio"
+                  aria-checked={active}
                   onClick={() => setSector(s.id)}
-                  className={`flex flex-col items-center gap-2 py-5 rounded-2xl border-2 transition-colors ${
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-start transition-colors ${
                     active ? "border-brand-green bg-brand-green/5" : "border-slate-200 hover:bg-slate-50"
                   }`}
                 >
-                  <svg viewBox="0 0 24 24" className={`size-7 ${active ? "text-brand-green" : "text-slate-400"}`}
-                    fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                  <svg viewBox="0 0 24 24" className={`size-4 shrink-0 ${active ? "text-brand-green" : "text-slate-400"}`}
+                    fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     {s.icon}
                   </svg>
-                  <span className={`text-sm font-medium ${active ? "text-brand-green" : "text-slate-600"}`}>
+                  <span className={`text-sm truncate ${active ? "text-brand-green font-medium" : "text-slate-700"}`}>
                     {t(`sectors.${s.id}`, { defaultValue: s.id })}
                   </span>
                 </button>

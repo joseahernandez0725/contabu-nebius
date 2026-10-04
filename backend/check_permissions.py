@@ -20,6 +20,41 @@ import sys
 
 os.environ.setdefault("AUTH_DEV_MODE", "true")
 
+# ── La prueba de permisos NUNCA sale a internet (3-oct). ──────────────────────────────────────────
+# La pasada del bookkeeper SÍ atraviesa el permiso, y algunas rutas llaman servicios externos (Teller
+# al vincular un banco, la IA al importar o proponer reglas). Con las claves del `.env` cargadas, eso
+# era gastar crédito y mandar datos de prueba afuera en cada corrida. Se bloquea TODA conexión salvo
+# la base de datos; las rutas que intenten salir fallan en local (y eso no es un 403: la prueba sigue
+# midiendo solo permisos). Cubre también los servicios que se agreguen después, sin tocar esta lista.
+import socket  # noqa: E402
+from urllib.parse import urlparse  # noqa: E402
+
+def _allowed_hosts() -> set:
+    hosts = {"127.0.0.1", "::1", "localhost"}
+    from dotenv import load_dotenv  # el mismo .env que lee db.py
+    load_dotenv()
+    db_host = urlparse(os.getenv("DATABASE_URL", "")).hostname
+    if db_host:
+        hosts.add(db_host)
+        try:
+            hosts |= {ai[4][0] for ai in socket.getaddrinfo(db_host, None)}
+        except OSError:
+            pass
+    return hosts
+
+_ALLOWED = _allowed_hosts()
+BLOCKED: set = set()
+_real_connect = socket.socket.connect
+
+def _local_only(self, address):
+    host = address[0] if isinstance(address, tuple) else None   # None = socket UNIX (local)
+    if host is not None and host not in _ALLOWED:
+        BLOCKED.add(host)
+        raise ConnectionRefusedError(f"check_permissions no sale a internet ({host})")
+    return _real_connect(self, address)
+
+socket.socket.connect = _local_only
+
 from datetime import date, datetime, timezone  # noqa: E402
 from decimal import Decimal  # noqa: E402
 
@@ -84,6 +119,10 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/checkout"): {"quota": 100},
     ("PATCH", "/api/firm"): {"brand_name": "PERMCHECK"},
     ("PATCH", "/api/companies/{company_id}/settlement"): {"wait_days": 5},
+    ("POST", "/api/companies/{company_id}/bank-connections"): {"public_token": "public-permcheck"},
+    ("POST", "/api/companies/{company_id}/rules/preview"): {"keyword": "HOME DEPOT"},
+    ("POST", "/api/companies/{company_id}/transactions/{transaction_id}/bank-removed"): {"action": "keep"},
+    ("POST", "/api/companies/{company_id}/bank-connections/link-token"): {"language": "es"},
     ("POST", "/api/companies/{company_id}/checkout/confirm"): {"session_id": "cs_x"},
     ("POST", "/api/companies/{company_id}/transactions/set-account"): {
         "transaction_ids": ["__TX__"], "account": "Chase Checking"},
@@ -137,47 +176,26 @@ def build_fixtures(s: Session) -> tuple[int, int]:
     return co.id, tx.id
 
 
-# Todo lo que cuelga de una empresa, en orden de dependencias. Se borra ENTERO porque la prueba
-# llama endpoints de escritura: si alguno se escapa, deja filas (así se descubrió la fuga de
-# `POST /labels`, que creó una `SheetLabel` y reventó el DELETE de la empresa).
-_COMPANY_CHILDREN = (CategoryRule, CompanyCategory, CompanyMember, LearnedMerchant,
-                     MonthlyInsight, PnlReport, SheetLabel,
-                     CategorizationChange)  # historial de correcciones (Movimientos, 2-oct)
-
-
 def drop_fixtures(s: Session) -> None:
-    """Borra TODO lo creado, en orden de dependencias. Si esto no corre, la base queda sucia."""
+    """Borra TODO lo creado por la prueba. Usa el borrado en cascada del demo (`demo._delete`), que
+    DESCUBRE en la base qué cuelga de cada fila — por clave foránea y por referencia suave. Antes había
+    una lista de tablas escrita a mano y se rompió dos veces con tablas nuevas de otras áreas
+    (`sheetlabel` el 27-sep, `bankconnection` de Teller el 3-oct)."""
+    import demo  # noqa: E402 (aquí, para no cargarlo si nadie limpia)
     users = s.exec(select(User).where(User.firebase_uid.in_([BOOK_UID, CLIENT_UID]))).all()
     uids = [u.id for u in users]
-    firms = s.exec(select(Firm).where(Firm.name == "PERMCHECK FIRM")).all()
-    fids = [f.id for f in firms]
-    # Por FIRMA y por DUEÑO, nunca por nombre: la prueba llama `PATCH /companies` con
-    # {"name": "hackeada"} y el bookkeeper SÍ puede renombrar, así que el libro cambia de nombre a
-    # media corrida. Buscarlo por "PERMCHECK BOOK" dejaba una empresa colgando de la firma.
-    cids: list[int] = []
+    fids = [f.id for f in s.exec(select(Firm).where(Firm.name == "PERMCHECK FIRM")).all()]
+    # Por FIRMA y por DUEÑO, nunca por nombre: la prueba renombra el libro (`PATCH /companies`).
+    cids: set[int] = set()
     if fids:
-        cids += s.exec(select(Company.id).where(Company.firm_id.in_(fids))).all()
+        cids |= set(s.exec(select(Company.id).where(Company.firm_id.in_(fids))).all())
     if uids:
-        cids += s.exec(select(Company.id).where(Company.user_id.in_(uids))).all()
-    cids = list(set(cids))
-
-    if cids:
-        txs = s.exec(select(Transaction.id).where(Transaction.company_id.in_(cids))).all()
-        if txs:
-            s.exec(delete(CellFormat).where(CellFormat.transaction_id.in_(txs)))
-            s.exec(delete(TransactionLabel).where(TransactionLabel.transaction_id.in_(txs)))
-        for model in _COMPANY_CHILDREN:
-            s.exec(delete(model).where(model.company_id.in_(cids)))
-        s.exec(delete(Transaction).where(Transaction.company_id.in_(cids)))
-    if fids:
-        s.exec(delete(FirmMember).where(FirmMember.firm_id.in_(fids)))
-    if cids:
-        s.exec(delete(Company).where(Company.id.in_(cids)))
-    if fids:
-        s.exec(delete(Firm).where(Firm.id.in_(fids)))
-    if uids:
-        s.exec(delete(CompanyMember).where(CompanyMember.user_id.in_(uids)))
-        s.exec(delete(User).where(User.id.in_(uids)))
+        cids |= set(s.exec(select(Company.id).where(Company.user_id.in_(uids))).all())
+    counts: dict[str, int] = {}
+    conn = s.connection()
+    demo._delete(conn, "company", sorted(cids), counts)
+    demo._delete(conn, "firm", fids, counts)
+    demo._delete(conn, "user", uids, counts)
     s.commit()
 
 
@@ -297,6 +315,8 @@ def main() -> int:
     leaks.extend(blocked)
 
     print(f"\n  Rutas comprobadas: {checked}  ·  permitidas al cliente: {len(CLIENT_ALLOWED)}")
+    if BLOCKED:
+        print(f"  🔒 Conexiones a internet BLOQUEADAS durante la prueba: {sorted(BLOCKED)}")
     if unproven:
         print(f"  ⚠️  Sin probar ({len(unproven)}): {', '.join(unproven)}")
     if leaks:

@@ -3,13 +3,22 @@ import { useTranslation } from "react-i18next";
 import i18n from "../i18n";
 import { RevoGrid } from "@revolist/react-datagrid";
 import {
-  getSheetRows, getCategories, updateTransaction, getLabels, createLabel, followRule,
+  getSheetRows, getCategories, updateTransaction, undoTransactionChange, getLabels, createLabel, followRule, deleteRule,
+  decideBankRemoved,
   setTransactionLabels, applyCellFormat, type ChartOfAccounts,
 } from "../api";
 import type { CellFormat, Observation, SheetLabel, SheetRow } from "../types";
 import { CATEGORY_EDITOR, categoryEditors, setEditorChart } from "./CategoryEditor";
+import RuleDialog from "./RuleDialog";
+import {
+  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useCaseStyle, applyCase, CellMenu, CellViewer,
+  cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem,
+} from "./gridKit";
+import type { View } from "./Sidebar";
+
+const SHEET_EDITORS = { ...categoryEditors, ...textEditors };
 import Pivot from "./Pivot";
-import RulesSheet from "./RulesSheet";
+import RulesSheet, { type RulesCommands } from "./RulesSheet";
 
 /**
  * LA HOJA (FASE 10, paso 6) — la consola del bookkeeper.
@@ -33,15 +42,66 @@ const SEV_FG: Record<string, string> = { high: "#991b1b", medium: "#7a5b00", low
 // Va ANTES que `rowCss` en el DOM: con la misma especificidad, el resaltado de fila gana.
 const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}";
 
-export default function Sheet() {
+/** Preferencia de vista recordada en este navegador (si no hay almacenamiento, solo esta sesión). */
+function usePref(key: string, initial: boolean): [boolean, (v: boolean) => void] {
+  const [v, setV] = useState<boolean>(() => {
+    try { const x = localStorage.getItem(key); return x == null ? initial : x === "1"; } catch { return initial; }
+  });
+  const set = useCallback((next: boolean) => {
+    setV(next);
+    try { localStorage.setItem(key, next ? "1" : "0"); } catch { /* modo privado */ }
+  }, [key]);
+  return [v, set];
+}
+
+/** La hoja como CSV que Excel abre directo (BOM + CRLF). Lo que se ve: con el filtro aplicado. */
+function downloadSheetCsv(rows: SheetRow[]) {
+  const cell = (v: unknown) => { const x = String(v ?? ""); return /[",\r\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+  const head = ["Date", "Description", "Added text", "Amount", "Section", "Category", "Subcategory", "Account", "Note"];
+  const lines = rows.map((r) => [
+    r.date, r.description, r.description_extra ?? "", (r.is_inflow ? "" : "-") + Number(r.amount ?? 0).toFixed(2),
+    r.account_type ?? "", r.category ?? "", r.subcategory ?? "", r.bank_account ?? "", r.note ?? "",
+  ]);
+  const csv = "\uFEFF" + [head, ...lines].map((l) => l.map(cell).join(",")).join("\r\n") + "\r\n";
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `bookkeeping-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export default function Sheet({ onNavigate, menuRight }: {
+  onNavigate?: (v: View) => void;
+  menuRight?: React.ReactNode;   // lo que va a la derecha de la barra de menús (p. ej. "vista anterior")
+} = {}) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<SheetRow[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
+  // Ventana "Crear regla" (4-oct): `seed` = la fila de la que parte, o null para una regla en blanco.
+  const [ruleDialog, setRuleDialog] = useState<{ seed: SheetRow | null } | null>(null);
   const [account, setAccount] = useState("");     // "" = todas
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [onlyPending, setOnlyPending] = useState(false);
   const [search, setSearch] = useState("");
+  const searchRef = useRef<HTMLInputElement | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
+  // MENÚ VER (Jose, 4-oct): la barra de botones, la barra de fórmulas y fijar Fecha + Descripción
+  // a la izquierda se pueden ver / ocultar. Todo lo de los botones también está en los menús.
+  const [toolbar, setToolbar] = usePref("contabu.toolbar", true);
+  const [showFormula, setShowFormula] = usePref("contabu.formulaBar", true);
+  const [pinDesc, setPinDesc] = usePref("contabu.pinDescription", false);
+  // Lo que la hoja de Reglas expone a los menús (cuando esa pestaña está abierta).
+  // (Llega en cada render de Reglas: se guarda en un ref y solo se re-pinta si cambió lo que se ve
+  // en los menús — con un estado de objeto sería un bucle de renders.)
+  const rulesCmdsRef = useRef<RulesCommands | null>(null);
+  const [, setRulesSig] = useState("");
+  const pendingRulesCmd = useRef<((c: RulesCommands) => void) | null>(null);
+  const onRulesCommands = useCallback((c: RulesCommands | null) => {
+    rulesCmdsRef.current = c;
+    setRulesSig(c ? `${c.canUndo}|${c.lastUndo}|${c.selectedCount}|${c.canExport}` : "");
+    if (c && pendingRulesCmd.current) { const run = pendingRulesCmd.current; pendingRulesCmd.current = null; run(c); }
+  }, []);
   // DENSIDAD: cuántas transacciones ve el bookkeeper de un vistazo. Se recuerda por navegador.
   const [labels, setLabels] = useState<SheetLabel[]>([]);
   // Filas seleccionadas: el formato y las etiquetas se aplican sobre la selección, como en Excel.
@@ -72,6 +132,16 @@ export default function Sheet() {
     getCategories().then((c) => { setChart(c); setEditorChart(c); }).catch(() => {});
     getLabels().then(setLabels).catch(() => {});
   }, [load]);
+  // Al VOLVER a la hoja desde Reglas o el Pivote, se recarga: un cambio en el reglamento re-alinea
+  // movimientos (Jose, 4-oct: "modifiqué la subcategoría en Reglas y no veo el cambio en el libro").
+  const prevTab = useRef(tab);
+  useEffect(() => {
+    if (tab === "sheet" && prevTab.current !== "sheet") {
+      load();
+      getCategories().then((c) => { setChart(c); setEditorChart(c); }).catch(() => {});
+    }
+    prevTab.current = tab;
+  }, [tab, load]);
 
   // `t` de i18next cambia de identidad en cada render. Si el texto de la observación se calculara
   // dentro del useMemo de las filas, `source` sería un array NUEVO en cada render y RevoGrid
@@ -103,6 +173,8 @@ export default function Sheet() {
         });
       case "uncategorized":
         return t("sheet.obs.uncategorized", { defaultValue: "Not categorized yet" });
+      case "bank_removed":
+        return t("sheet.obs.bankRemoved", { defaultValue: "The bank withdrew this transaction — keep it or delete it (right-click)" });
       default:
         return o.text ?? "";
     }
@@ -181,35 +253,77 @@ export default function Sheet() {
   const pending = (rows ?? []).filter((r) => !r.category).length;
 
   /** Una edición: se manda a la base y se recarga. Si falla, se revierte recargando. */
-  const onEdit = useCallback(async (e: any) => {
-    const { prop, val, model } = e.detail ?? {};
-    if (!model?.id || !["category", "subcategory", "note", "description_extra"].includes(prop)) return;
-    const value = String(val ?? "").trim();
+  const { push: pushUndo, undo, canUndo, last: lastUndo } = useUndo((m) => setError(
+    m === "changed_since"
+      ? t("sheet.undoChanged", { defaultValue: "That row changed after this edit, so it wasn't undone." })
+      : m));
+  const [caseStyle, setCaseStyle] = useCaseStyle();
+  /** Deshacer una corrección de categoría = el historial del servidor (vuelve EXACTA, con su ƒ). */
+  const undoCategorization = useCallback((id: number, label: string) => pushUndo({
+    label, run: async () => { await undoTransactionChange(id); load(); },
+  }), [pushUndo, load]);
+
+  /** Guarda UNA celda (edición, pegado, borrado o "Pegar" del menú) y deja cómo deshacerla. */
+  const saveCell = useCallback(async (model: any, prop: string, raw: unknown, reload = true): Promise<boolean> => {
+    if (!model?.id || !["category", "subcategory", "note", "description_extra"].includes(prop)) return false;
+    const value = String(raw ?? "").trim();
     // OJO: RevoGrid ya aplicó el valor nuevo a `model` ANTES de disparar `afteredit`, así que
     // comparar contra `model[prop]` siempre da igual y descartaría toda edición (bug 27-sep).
     // El valor ANTERIOR real está en el estado de React, que es la copia de lo que hay en la base.
-    const before = rowsRef.current?.find((r) => r.id === model.id)?.[prop as "category" | "subcategory" | "note" | "description_extra"];
-    if (value === (before ?? "")) return;
+    const row = rowsRef.current?.find((r) => r.id === model.id);
+    const before = row?.[prop as "category" | "subcategory" | "note" | "description_extra"];
+    if (value === (before ?? "")) return false;
+    // Supr sobre un rango no "borra" categorías: quedarían en "" (no es Pendiente de verdad).
+    if (prop === "category" && !value) { load(); return false; }
+    const payload: Record<string, unknown> = { [prop]: value, rule_action: "only_this" };
+    if (prop === "category") {
+      const section = Object.entries(chartRef.current).find(([, cats]) => cats.includes(value))?.[0];
+      if (!section && value) {
+        // Pegar un texto que no es una cuenta del plan: no se inventan cuentas (candado del plan).
+        setError(t("sheet.notInChart", { defaultValue: "“{{v}}” isn't an account in this book's chart.", v: value }));
+        load();
+        return false;
+      }
+      if (section) payload.account_type = section;
+    }
     setSaving(t("sheet.saving", { defaultValue: "Saving…" }));
     try {
       // "only_this" = excepción puntual: editar una celda NO reescribe el reglamento.
       // Cambiar la regla es una acción explícita, no un efecto secundario de escribir en la hoja.
-      // La categoría PERTENECE a una sección del P&L. Se manda junto para que la fila no quede
-      // con la cuenta en una sección y el monto sumando en otra (el backend también lo deduce).
-      const payload: Record<string, unknown> = { [prop]: value, rule_action: "only_this" };
-      if (prop === "category") {
-        const section = Object.entries(chartRef.current).find(([, cats]) => cats.includes(value))?.[0];
-        if (section) payload.account_type = section;
-      }
       await updateTransaction(model.id, payload as any);
-      load();
+      const what = (row?.description ?? "").slice(0, 28);
+      if (prop === "category" || prop === "subcategory") {
+        undoCategorization(model.id, t("sheet.undoCell", { defaultValue: "{{col}} of {{what}}", col: t(`sheet.${prop}`), what }));
+      } else {
+        const prev = before ?? "";
+        pushUndo({ label: t("sheet.undoCell", { defaultValue: "{{col}} of {{what}}", col: t(prop === "note" ? "sheet.note" : "sheet.description"), what }),
+                   run: async () => { await updateTransaction(model.id, { [prop]: prev } as any); load(); } });
+      }
+      if (reload) load();
       setSaving(null);
+      return true;
     } catch (err) {
       setError(String((err as Error)?.message ?? err));
       setSaving(null);
       load(); // revierte: la base manda
+      return false;
     }
-  }, [load, t]);
+  }, [load, t, pushUndo, undoCategorization]);
+
+  /** Una celda ({prop, val, model}) o un RANGO ({data, models}: Ctrl+V sobre varias, Supr). Antes
+   *  el rango cambiaba la pantalla pero NO se guardaba. */
+  const onEdit = useCallback(async (e: any) => {
+    const d = e.detail ?? {};
+    if (d.data && d.models) {
+      for (const [rowIndex, changes] of Object.entries(d.data as Record<string, Record<string, unknown>>)) {
+        const model = (d.models as Record<string, any>)[rowIndex];
+        for (const [prop, val] of Object.entries(changes ?? {})) await saveCell(model, prop, val, false);
+      }
+      load();
+      return;
+    }
+    await saveCell(d.model, d.prop, d.val);
+  }, [saveCell, load]);
 
   // El wrapper de React NO mapea los eventos del web component (verificado: el elemento no expone
   // ningún prop `on*edit`), así que se escucha el evento NATIVO `afteredit`.
@@ -286,13 +400,14 @@ export default function Sheet() {
         category: o.suggested_category,
         rule_action: "only_this",
       } as any);
+      undoCategorization(id, t("sheet.undoFix", { defaultValue: "fix → {{c}}", c: o.suggested_category }));
       load();
     } catch (err) {
       setError(String((err as Error)?.message ?? err));
     } finally {
       setSaving(null);
     }
-  }, [load, t]);
+  }, [load, t, undoCategorization]);
   const applyFixRef = useRef(applyFix);
   useEffect(() => { applyFixRef.current = applyFix; }, [applyFix]);
 
@@ -300,13 +415,24 @@ export default function Sheet() {
    *  espera al resaltar: se marca el movimiento, no una casilla suelta). */
   const format = useCallback(async (patch: Omit<Parameters<typeof applyCellFormat>[0], "transaction_ids">) => {
     if (!selected.length) return;
+    // Para DESHACER: el formato de fila que tenía cada una antes (Jose, 4-oct: todo deja su deshacer).
+    const before = (rowsRef.current ?? []).filter((r) => selected.includes(r.id))
+      .map((r) => ({ id: r.id, fmt: { ...(r.formats?._row ?? {}) } as CellFormat }));
     setSaving(t("sheet.saving", { defaultValue: "Saving…" }));
     try {
       await applyCellFormat({ transaction_ids: selected, column: null, ...patch });
+      pushUndo({ label: t("sheet.undoFormat", { defaultValue: "format {{count}} rows", count: before.length }),
+                 run: async () => {
+                   for (const b of before) {
+                     await applyCellFormat({ transaction_ids: [b.id], column: null, clear: true });
+                     if (Object.keys(b.fmt).length) await applyCellFormat({ transaction_ids: [b.id], column: null, ...b.fmt });
+                   }
+                   load();
+                 } });
       load();
     } catch (err) { setError(String((err as Error)?.message ?? err)); }
     finally { setSaving(null); }
-  }, [selected, load, t]);
+  }, [selected, load, t, pushUndo]);
 
   /** Alternar una etiqueta en todas las filas seleccionadas. */
   const toggleLabel = useCallback(async (labelId: number) => {
@@ -346,13 +472,14 @@ export default function Sheet() {
     setSaving(t("sheet.following", { defaultValue: "Looking up the rule…" }));
     try {
       await followRule(id);
+      undoCategorization(id, t("sheet.undoFollow", { defaultValue: "follow the rule" }));
       load();
     } catch (err) {
       setError((err as Error).message === "no-rule"
         ? t("sheet.noRule", { defaultValue: "No rule covers this transaction. Create one in the Rules tab." })
         : String((err as Error).message));
     } finally { setSaving(null); }
-  }, [load, t]);
+  }, [load, t, undoCategorization]);
   const backToRuleRef = useRef(backToRule);
   useEffect(() => { backToRuleRef.current = backToRule; }, [backToRule]);
 
@@ -374,7 +501,7 @@ export default function Sheet() {
     // ACH críptica — y que ENTRA AL MATCHEO DE REGLAS. Se pinta distinto para que nunca haya duda
     // de qué dijo el banco y qué escribiste tú.
     { prop: "description_extra", name: t("sheet.description", { defaultValue: "Description" }),
-      size: 360, sortable: true,
+      size: 360, sortable: true, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => {
         const kids: any[] = [
           h("span", { style: styleOf(p.model, "description") }, p.model.description ?? ""),
@@ -447,12 +574,12 @@ export default function Sheet() {
             },
           }, t("sheet.pending", { defaultValue: "Pending" }));
         }
-        kids.push(h("span", { style: styleOf(p.model, "category") }, p.model.category ?? ""));
+        kids.push(h("span", { style: styleOf(p.model, "category") }, applyCase(p.model.category, caseStyle)));
         return h("span", { style: { display: "flex", alignItems: "center" } }, ...kids);
       } },
     { prop: "subcategory", name: t("sheet.subcategory", { defaultValue: "Subcategory" }), size: 165,
-      cellProperties: manualCell,
-      cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "subcategory") }, p.model.subcategory ?? "") },
+      cellProperties: manualCell, editor: TEXT_EDITOR,
+      cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "subcategory") }, applyCase(p.model.subcategory, caseStyle)) },
     { prop: "_obs", name: t("sheet.observation", { defaultValue: "Observation" }), size: 330, readonly: true,
       cellTemplate: (h: any, p: any) => {
         const txt = p.model._obs, sev = p.model._sev;
@@ -480,14 +607,14 @@ export default function Sheet() {
       } },
     // NOTA: texto libre del bookkeeper sobre ESA línea. Va antes de la observación a propósito —
     // lo suyo primero, lo del agente después.
-    { prop: "note", name: t("sheet.note", { defaultValue: "Note" }), size: 220,
+    { prop: "note", name: t("sheet.note", { defaultValue: "Note" }), size: 220, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => h("span", {
         title: p.model.note || "",
         style: { ...styleOf(p.model, "note"), whiteSpace: "normal", lineHeight: 1.35,
                  display: "block", color: p.model.note ? "#0f172a" : "#b9b2a2",
                  fontStyle: p.model.note ? "normal" : "italic", fontSize: "12.5px" },
       }, p.model.note || t("sheet.notePlaceholder", { defaultValue: "add a note…" })) },
-  ]), [t]);
+  ]), [t, caseStyle]);
 
   // BARRA DE FÓRMULAS: referencia (columna + fila) y el contenido COMPLETO de la celda enfocada.
   // Solo muestra; editar sigue siendo en la celda. En Descripción: "banco - texto agregado".
@@ -521,6 +648,66 @@ export default function Sheet() {
     return { ref: `${col.name} · ${focus.row}`, text };
   }, [focus, visible, columns, t]);
 
+  // MENÚ DE CLIC DERECHO (Jose, 4-oct): ver, editar, copiar, pegar, deshacer, seguir la regla,
+  // crear una regla desde la fila y cómo se ve el texto.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  useUndoShortcut(hostRef, () => void undo());
+  const [menu, setMenu] = useState<{ at: { x: number; y: number }; model: any; prop: string; row: number } | null>(null);
+  const [viewer, setViewer] = useState<{ title: string; text: string } | null>(null);
+  const onContextMenu = useCallback(async (e: React.MouseEvent) => {
+    if (tab !== "sheet") return;
+    e.preventDefault();
+    const at = { x: e.clientX, y: e.clientY };
+    const c = await cellFromEvent(e.nativeEvent);
+    if (c) setMenu({ at, model: c.model, prop: c.prop, row: c.y });
+  }, [tab]);
+  const EDITABLE = ["category", "subcategory", "note", "description_extra"];
+  const sheetCellText = (m: any, prop: string) => prop === "description_extra"
+    ? [m.description, m.description_extra].filter(Boolean).join(" - ")
+    : prop === "_obs" ? String(m._obs ?? "") : String(m[prop] ?? "");
+  const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
+    const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
+    const can = EDITABLE.includes(prop);
+    const items: MenuItem[] = [
+      { label: t("sheet.menu.view", { defaultValue: "View full content" }),
+        onClick: () => setViewer({ title: `${colName} · ${row + 1}`, text: sheetCellText(m, prop) }) },
+      { label: t("sheet.menu.edit", { defaultValue: "Edit" }), hint: "Enter", disabled: !can,
+        onClick: () => void (gridRef.current as any)?.setCellEdit?.(row, prop) },
+      { label: t("sheet.menu.copy", { defaultValue: "Copy" }), hint: "Ctrl+C",
+        onClick: () => void navigator.clipboard?.writeText(sheetCellText(m, prop)) },
+      { label: t("sheet.menu.paste", { defaultValue: "Paste" }), hint: "Ctrl+V", disabled: !can,
+        onClick: async () => {
+          try { const txt = await navigator.clipboard.readText(); await saveCell(m, prop, txt.split(/\r?\n/)[0]); }
+          catch { setError(t("sheet.menu.pasteBlocked", { defaultValue: "The browser didn't allow reading the clipboard. Use Ctrl+V." })); }
+        } },
+      "sep",
+    ];
+    if (m.source === "manual") items.push({ label: t("sheet.menu.followRule", { defaultValue: "Follow the rule again" }),
+      onClick: () => void backToRule(m.id) });
+    // El banco vinculado lo retiró: el bookkeeper decide (Movimientos, 4-oct).
+    if (m.bank_removed_at) items.push(
+      { label: t("sheet.menu.bankKeep", { defaultValue: "Keep it (clear the bank's mark)" }),
+        onClick: async () => { try { await decideBankRemoved(m.id, "keep"); } catch (e) { setError(String((e as Error).message)); } load(); } },
+      { label: t("sheet.menu.bankDelete", { defaultValue: "Delete it from the book" }),
+        onClick: async () => {
+          if (!window.confirm(t("sheet.menu.bankDeleteConfirm", { defaultValue: "Delete this transaction? The bank withdrew it. This can't be undone." }))) return;
+          try { await decideBankRemoved(m.id, "delete"); } catch (e) { setError(String((e as Error).message)); }
+          load();
+        } },
+    );
+    items.push({ label: t("sheet.menu.newRule", { defaultValue: "Create a rule from this row" }),
+      onClick: () => setRuleDialog({ seed: m as SheetRow }) });
+    items.push("sep",
+      { label: lastUndo ? t("sheet.undoWhat", { defaultValue: "Undo: {{what}}", what: lastUndo }) : t("sheet.undo", { defaultValue: "Undo" }),
+        hint: "Ctrl+Z", disabled: !canUndo, onClick: () => void undo() },
+      "sep",
+      { label: t("sheet.case.asis", { defaultValue: "Text as written" }), checked: caseStyle === "asis", onClick: () => setCaseStyle("asis") },
+      { label: t("sheet.case.upper", { defaultValue: "ALL CAPS" }), checked: caseStyle === "upper", onClick: () => setCaseStyle("upper") },
+      { label: t("sheet.case.title", { defaultValue: "First Letter Capitalized" }), checked: caseStyle === "title", onClick: () => setCaseStyle("title") },
+    );
+    return items;
+  };
+
   const TOOL: React.CSSProperties = {
     border: "1px solid #e3ded2", borderRadius: 5, background: "#fff", cursor: "pointer",
     fontSize: 12.5, padding: "2px 7px", lineHeight: 1.6, minWidth: 24,
@@ -531,25 +718,123 @@ export default function Sheet() {
     fontSize: 13.5, background: "#fff",
   };
 
+  // Fijar Fecha + Descripción a la izquierda (menú Ver): no se van al desplazarse de lado.
+  const gridColumns = useMemo(() => pinDesc
+    ? (columns as any[]).map((c) => (c.prop === "date" || c.prop === "description_extra") ? { ...c, pin: "colPinStart" } : c)
+    : columns, [columns, pinDesc]);
+
+  // BARRA DE MENÚS (Jose, 4-oct): Archivo · Edición · Ver · Formato · Opciones, arriba de las pestañas.
+  // Las acciones son las MISMAS de los botones y del clic derecho; en Reglas, las de esa hoja.
+  const onRules = tab === "rules";
+  const withRules = (run: (c: RulesCommands) => void) => {
+    if (rulesCmdsRef.current && onRules) { run(rulesCmdsRef.current); return; }
+    pendingRulesCmd.current = run;   // se abre Reglas y se ejecuta al montarse
+    setTab("rules");
+  };
+  const rc = onRules ? rulesCmdsRef.current : null;
+  const selRow = selected.length === 1 ? (rowsRef.current ?? []).find((r) => r.id === selected[0]) ?? null : null;
+  const nSel = onRules ? (rc?.selectedCount ?? 0) : (tab === "sheet" ? selected.length : 0);
+  const doFormat = (p: { bold?: boolean; italic?: boolean; bg?: string; clear?: boolean }) => {
+    if (onRules) { rc?.restyle(p.clear ? "clear" : p); return; }
+    void format(p);
+  };
+  const COLORS = [
+    ["#f6c343", t("sheet.color.yellow", { defaultValue: "Yellow — check this" })],
+    ["#5cc98f", t("sheet.color.green", { defaultValue: "Green — done / OK" })],
+    ["#ef6f6f", t("sheet.color.red", { defaultValue: "Red — problem" })],
+    ["#6aa9f0", t("sheet.color.blue", { defaultValue: "Blue — ask the client" })],
+  ] as const;
+  const undoLabel = (l: string | null) => l ? t("sheet.undoWhat", { defaultValue: "Undo: {{what}}", what: l }) : t("sheet.undo", { defaultValue: "Undo" });
+  const lang2 = (i18n.language || "en").slice(0, 2);
+  const menus: Menu[] = [
+    { id: "file", label: t("sheet.mb.file"), items: [
+      { label: t("sheet.mb.upload"), onClick: () => onNavigate?.("upload"), disabled: !onNavigate },
+      { label: t("sheet.mb.linkBank"), onClick: () => onNavigate?.("bank"), disabled: !onNavigate },
+      "sep",
+      { label: t("sheet.mb.importRules"), onClick: () => withRules((c) => c.importRules()) },
+      { label: t("sheet.mb.exportRules"), onClick: () => withRules((c) => c.exportRules()) },
+      "sep",
+      { label: t("sheet.mb.exportSheet"), onClick: () => downloadSheetCsv(visible), disabled: tab !== "sheet" || !visible.length },
+      { label: t("sheet.mb.openPnl"), onClick: () => onNavigate?.("pnl"), disabled: !onNavigate },
+    ] },
+    { id: "edit", label: t("sheet.mb.edit"), items: [
+      onRules
+        ? { label: undoLabel(rc?.lastUndo ?? null), hint: "Ctrl+Z", disabled: !rc?.canUndo, onClick: () => rc?.undo() }
+        : { label: undoLabel(lastUndo), hint: "Ctrl+Z", disabled: !canUndo || tab !== "sheet", onClick: () => void undo() },
+      { label: t("sheet.menu.copy", { defaultValue: "Copy" }), hint: "Ctrl+C", disabled: tab !== "sheet" || !formula,
+        onClick: () => void navigator.clipboard?.writeText(formula?.text ?? "") },
+      "sep",
+      onRules
+        ? { label: t("rules.add", { defaultValue: "New rule" }), onClick: () => rc?.newRule() }
+        : { label: selRow ? t("sheet.createRuleFromRow", { defaultValue: "Create rule from this row" })
+                          : t("sheet.createRule", { defaultValue: "Create rule" }),
+            onClick: () => { if (tab !== "sheet") setTab("sheet"); setRuleDialog({ seed: selRow }); } },
+      { label: t("sheet.menu.followRule", { defaultValue: "Follow the rule again" }),
+        disabled: tab !== "sheet" || selRow?.source !== "manual", onClick: () => selRow && void backToRule(selRow.id) },
+      "sep",
+      { label: t("sheet.mb.find"), disabled: tab !== "sheet",
+        onClick: () => setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 0) },
+    ] },
+    { id: "view", label: t("sheet.mb.view"), items: [
+      { label: t("sheet.tabSheet", { defaultValue: "Bookkeeping" }), checked: tab === "sheet", onClick: () => setTab("sheet") },
+      { label: t("sheet.tabRules", { defaultValue: "Rules" }), checked: tab === "rules", onClick: () => setTab("rules") },
+      { label: t("sheet.tabPivot", { defaultValue: "Pivot" }), checked: tab === "pivot", onClick: () => setTab("pivot") },
+      "sep",
+      { label: t("sheet.onlyPending", { defaultValue: "Pending ({{n}})", n: pending }), checked: onlyPending,
+        disabled: tab !== "sheet", onClick: () => setOnlyPending((v) => !v) },
+      { label: t("sheet.onlyFlagged", { defaultValue: "Needs a look ({{n}})", n: flagged }), checked: onlyFlagged,
+        disabled: tab !== "sheet", onClick: () => setOnlyFlagged((v) => !v) },
+      "sep",
+      { label: t("sheet.mb.toolbar"), checked: toolbar, onClick: () => setToolbar(!toolbar) },
+      { label: t("sheet.mb.formulaBar"), checked: showFormula, onClick: () => setShowFormula(!showFormula) },
+      { label: t("sheet.mb.pinDescription"), checked: pinDesc, disabled: tab !== "sheet", onClick: () => setPinDesc(!pinDesc) },
+      { heading: t("sheet.mb.density") },
+      ...(["compact", "normal", "roomy"] as const).map((d) => ({
+        label: t(`sheet.density.${d}`, { defaultValue: d }), checked: density === d, onClick: () => setDensity(d) })),
+      { heading: t("sheet.mb.textCase") },
+      { label: t("sheet.case.asis", { defaultValue: "Text as written" }), checked: caseStyle === "asis", onClick: () => setCaseStyle("asis") },
+      { label: t("sheet.case.upper", { defaultValue: "ALL CAPS" }), checked: caseStyle === "upper", onClick: () => setCaseStyle("upper") },
+      { label: t("sheet.case.title", { defaultValue: "First Letter Capitalized" }), checked: caseStyle === "title", onClick: () => setCaseStyle("title") },
+    ] },
+    { id: "format", label: t("sheet.mb.format"), items: [
+      { heading: nSel ? t("sheet.nSelected", { defaultValue: "{{count}} selected", count: nSel }) : t("sheet.mb.selectFirst") },
+      { label: t("sheet.fmt.bold"), hint: "B", disabled: !nSel, onClick: () => doFormat({ bold: true }) },
+      { label: t("sheet.fmt.italic"), hint: "I", disabled: !nSel, onClick: () => doFormat({ italic: true }) },
+      "sep",
+      ...COLORS.map(([c, label]) => ({ label, swatch: c, disabled: !nSel, onClick: () => doFormat({ bg: c }) })),
+      "sep",
+      { label: t("sheet.fmt.clear"), disabled: !nSel, onClick: () => doFormat({ clear: true }) },
+    ] },
+    { id: "options", label: t("sheet.mb.options"), items: [
+      { label: t("sheet.mb.chart"), onClick: () => onNavigate?.("settings"), disabled: !onNavigate },
+      { heading: t("sheet.mb.language") },
+      { label: "English", checked: lang2 === "en", onClick: () => void i18n.changeLanguage("en") },
+      { label: "Español", checked: lang2 === "es", onClick: () => void i18n.changeLanguage("es") },
+      "sep",
+      { label: t("sheet.mb.shortcuts"), onClick: () => setViewer({ title: t("sheet.mb.shortcuts"), text: t("sheet.mb.shortcutsText") }) },
+    ] },
+  ];
+
   if (error && !rows) return <p style={{ color: "#991b1b", padding: 16 }}>{error}</p>;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 132px)", minHeight: 420 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 104px)", minHeight: 420 }}>
       <style>{MANUAL_CSS}</style>
       {rowCss && <style>{rowCss}</style>}
+      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={menuRight} />
       {/* Barra de control: el filtro por cuenta que pidió Jose, arriba de la hoja. */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         {/* Hoja / Pivote: el pivote es la MISMA verdad, agrupada — por eso vive aquí al lado
             y comparte el filtro de cuenta, no en otra sección del menú. */}
         <div style={{ display: "flex", gap: 2, background: "#fff", border: "1px solid #d5d0c4",
                       borderRadius: 8, padding: 2 }}>
-          {(["sheet", "pivot", "rules"] as const).map((k) => (
+          {(["sheet", "rules", "pivot"] as const).map((k) => (  /* Reglas 2ª (Jose, 4-oct) */
             <button key={k} onClick={() => setTab(k)}
               style={{ border: 0, borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13,
                        padding: "5px 13px",
                        background: tab === k ? "#1A8754" : "transparent",
                        color: tab === k ? "#fff" : "#5b6b62" }}>
-              {k === "sheet" ? t("sheet.tabSheet", { defaultValue: "Sheet" })
+              {k === "sheet" ? t("sheet.tabSheet", { defaultValue: "Bookkeeping" })
                : k === "pivot" ? t("sheet.tabPivot", { defaultValue: "Pivot" })
                : t("sheet.tabRules", { defaultValue: "Rules" })}
             </button>
@@ -561,10 +846,33 @@ export default function Sheet() {
           {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
         </select>
 
-        <input value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, minWidth: 210 }}
+        <input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, minWidth: 210 }}
                placeholder={t("sheet.search", { defaultValue: "Search…" })} />
 
-        {tab === "sheet" && pending > 0 && (
+        {/* CREAR REGLA — protagonista (Jose, 4-oct): siempre a la vista. Con UNA fila seleccionada
+            parte de su descripción (el texto COMBINADO: si escribiste a quién fue el cheque, esa es
+            la palabra clave que quieres, no "CHECK 1234"); sin selección, abre una regla en blanco. */}
+        {toolbar && tab === "sheet" && (
+          <button
+            onClick={() => {
+              const row = selected.length === 1 ? (rowsRef.current ?? []).find((r) => r.id === selected[0]) : null;
+              setRuleDialog({ seed: row ?? null });
+            }}
+            title={selected.length === 1
+              ? t("sheet.ruleFromRow", { defaultValue: "Create a rule from this description" })
+              : t("sheet.ruleBlank", { defaultValue: "Create a new rule (select a row first to start from its description)" })}
+            style={{ border: "1px solid #1A8754", background: "#1A8754", color: "#fff", borderRadius: 8,
+                     padding: "6px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                     whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6,
+                     boxShadow: "0 1px 2px rgba(26,135,84,.35)" }}>
+            <span style={{ fontStyle: "italic", fontWeight: 800 }}>ƒ+</span>
+            {selected.length === 1
+              ? t("sheet.createRuleFromRow", { defaultValue: "Create rule from this row" })
+              : t("sheet.createRule", { defaultValue: "Create rule" })}
+          </button>
+        )}
+
+        {toolbar && tab === "sheet" && pending > 0 && (
           <button onClick={() => setOnlyPending((v) => !v)}
             style={{ ...input, cursor: "pointer", fontWeight: 600,
                      border: "1px solid " + (onlyPending ? "#dc2626" : "#d5d0c4"),
@@ -574,7 +882,7 @@ export default function Sheet() {
           </button>
         )}
 
-        {tab === "sheet" && flagged > 0 && (
+        {toolbar && tab === "sheet" && flagged > 0 && (
           <button onClick={() => setOnlyFlagged((v) => !v)}
             style={{ ...input, cursor: "pointer", fontWeight: 600,
                      border: "1px solid " + (onlyFlagged ? "#f4b400" : "#d5d0c4"),
@@ -586,7 +894,7 @@ export default function Sheet() {
 
         {/* BARRA DE FORMATO — actúa sobre la SELECCIÓN. Deshabilitada si no hay nada marcado,
             para que nunca se aplique "a lo que sea" sin que el bookkeeper lo haya elegido. */}
-        {tab === "sheet" && selected.length > 0 && (
+        {toolbar && tab === "sheet" && selected.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#fff",
                         border: "1px solid #d5d0c4", borderRadius: 8, padding: "3px 6px" }}>
             <span style={{ fontSize: 11.5, color: "#5b6b62", fontWeight: 600, marginInlineEnd: 2 }}>
@@ -633,22 +941,6 @@ export default function Sheet() {
               <option value="Arial, sans-serif">Arial</option>
             </select>
 
-            {selected.length === 1 && (
-              <button
-                onClick={() => {
-                  const row = (rowsRef.current ?? []).find((r) => r.id === selected[0]);
-                  if (!row?.description) return;
-                  // Se propone el texto COMBINADO: si escribiste a quién fue el cheque, eso es
-                  // justamente lo que quieres como palabra clave, no "CHECK 1234".
-                  setRuleSeed([row.description, row.description_extra].filter(Boolean).join(" "));
-                  setTab("rules");
-                }}
-                title={t("sheet.ruleFromRow", {
-                  defaultValue: "Create a rule from this description" })}
-                style={{ ...TOOL, fontWeight: 700, color: "#1A8754", borderColor: "#1A8754" }}>
-                ƒ+ {t("sheet.newRule", { defaultValue: "Rule" })}
-              </button>
-            )}
 
             <button onClick={() => format({ clear: true })} title="Clear formatting"
               style={{ ...TOOL, color: "#991b1b" }}>✕</button>
@@ -689,9 +981,19 @@ export default function Sheet() {
           </div>
         )}
 
+        {toolbar && tab === "sheet" && (
+          <button onClick={() => void undo()} disabled={!canUndo}
+            title={lastUndo ? t("sheet.undoWhat", { defaultValue: "Undo: {{what}}", what: lastUndo }) + " (Ctrl+Z)" : "Ctrl+Z"}
+            style={{ border: "1px solid #d5d0c4", background: "#fff", borderRadius: 8, padding: "5px 12px",
+                     fontWeight: 600, fontSize: 13, cursor: canUndo ? "pointer" : "default",
+                     opacity: canUndo ? 1 : 0.45, whiteSpace: "nowrap" }}>
+            ↶ {t("sheet.undo", { defaultValue: "Undo" })}
+          </button>
+        )}
+
         {/* Densidad: tamaño de letra y alto de fila. Un bookkeeper revisando 300 movimientos
             quiere ver el máximo posible; uno mostrándole los números al cliente, lo contrario. */}
-        <div style={{ display: "flex", gap: 2, background: "#fff", border: "1px solid #d5d0c4",
+        {toolbar && <div style={{ display: "flex", gap: 2, background: "#fff", border: "1px solid #d5d0c4",
                       borderRadius: 8, padding: 2 }}>
           {([["compact", "A"], ["normal", "A"], ["roomy", "A"]] as const).map(([d, label], i) => (
             <button key={d} onClick={() => setDensity(d)}
@@ -703,7 +1005,7 @@ export default function Sheet() {
                 color: density === d ? "#fff" : "#5b6b62",
               }}>{label}</button>
           ))}
-        </div>
+        </div>}
 
         <span style={{ marginLeft: "auto", fontSize: 12.5, color: "#5b6b62" }}>
           {saving ?? t("sheet.count", { defaultValue: "{{count}} transactions", count: visible.length })}
@@ -712,32 +1014,19 @@ export default function Sheet() {
 
       {/* La barra vive DENTRO de la columna flex: le quita alto a la grilla (flex: 1), no a la
           página — así `calc(100vh - 132px)` no cambia y la página sigue sin scroll. */}
-      {tab === "sheet" && rows !== null && (
-        <div role="status" aria-label={t("sheet.formulaLabel", { defaultValue: "Cell content" })}
-          style={{ display: "flex", alignItems: "center", gap: 8, height: 30, marginBottom: 6,
-                   background: "#fff", border: "1px solid #e3ded2", borderRadius: 8,
-                   padding: "0 10px", fontSize: 13, minWidth: 0 }}>
-          <span style={{ flex: "none", fontWeight: 700, color: "#5b6b62", fontSize: 12,
-                         paddingInlineEnd: 8, borderInlineEnd: "1px solid #e3ded2",
-                         minWidth: 110, whiteSpace: "nowrap" }}>
-            {formula?.ref ?? "—"}
-          </span>
-          <span title={formula?.text || undefined}
-            // Sin "…": un texto más largo que la barra se recorre de lado (y se puede copiar).
-            style={{ flex: 1, minWidth: 0, overflowX: "auto", overflowY: "hidden",
-                     whiteSpace: "nowrap", color: formula ? "#0f172a" : "#b9b2a2",
-                     fontStyle: formula ? "normal" : "italic" }}>
-            {formula ? (formula.text || "\u00a0")
-              : t("sheet.formulaEmpty", { defaultValue: "Select a cell to see its full content" })}
-          </span>
-        </div>
+      {showFormula && tab === "sheet" && rows !== null && (
+        <FormulaBar cellRef={formula?.ref ?? null} text={formula?.text ?? null}
+          emptyLabel={t("sheet.formulaEmpty", { defaultValue: "Select a cell to see its full content" })}
+          ariaLabel={t("sheet.formulaLabel", { defaultValue: "Cell content" })} />
       )}
 
-      <div style={{ flex: 1, minHeight: 0,
+      <div ref={hostRef} onContextMenu={(e) => void onContextMenu(e)}
+        style={{ flex: 1, minHeight: 0,
                     border: tab === "sheet" ? "1px solid #e3ded2" : "0",
                     borderRadius: 10, overflow: "hidden" }}>
         {tab === "rules"
-          ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)} />
+          ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)}
+              toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands} />
           : tab === "pivot"
           ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot account={account || undefined} /></div>
           : rows === null
@@ -746,7 +1035,7 @@ export default function Sheet() {
               ref={attachGrid as any}
               style={{ height: "100%", fontSize: `${DENSITY.font}px` }}
               theme="compact"
-              columns={columns as any}
+              columns={gridColumns as any}
               source={visible as any}
               resize
               range
@@ -754,9 +1043,26 @@ export default function Sheet() {
               rowSize={DENSITY.row}
               rowHeaders={true}   /* números de fila: para poder decir "la fila 47" al reportar */
               rowClass="_rowClass"
-              editors={categoryEditors as any}
+              editors={SHEET_EDITORS as any}
             />}
       </div>
+      {menu && <CellMenu at={menu.at} items={menuItems(menu.model, menu.prop, menu.row)} onClose={() => setMenu(null)} />}
+      {ruleDialog && (
+        <RuleDialog seed={ruleDialog.seed} chart={chart}
+          onClose={() => setRuleDialog(null)}
+          onChartChanged={(c) => setChart(c)}
+          onOpenRules={(k) => { setRuleDialog(null); setRuleSeed(k); setTab("rules"); }}
+          onCreated={({ id, keyword, applied }) => {
+            setRuleDialog(null);
+            pushUndo({ label: t("rules.undoCreate", { defaultValue: "create rule {{k}}", k: keyword }),
+                       run: async () => { await deleteRule(id, true); load(); } });
+            setSaving(t("rules.dialog.created", { k: keyword, count: applied }));
+            setTimeout(() => setSaving(null), 4000);
+            load();
+          }} />
+      )}
+      {viewer && <CellViewer title={viewer.title} text={viewer.text} onClose={() => setViewer(null)}
+                    closeLabel={t("sheet.menu.close", { defaultValue: "Close" })} />}
 
       <p style={{ fontSize: 12, color: "#5b6b62", marginTop: 8 }}>
         {t("sheet.hint", {

@@ -5,7 +5,8 @@
     "upload": "Upload",
     "audit": "Audit",
     "pnl": "P&L",
-    "rules": "Rules"
+    "rules": "Rules",
+    "bank": "Link a bank"
   },
   "sectors": {
     "construction": "Construction",
@@ -39,7 +40,10 @@
     "forgot": "Forgot your password?",
     "resetNeedsEmail": "Type your email above first.",
     "resetSent": "If that email has an account, we sent a link to reset your password.",
-    "resetError": "Couldn't send the reset email."
+    "resetError": "Couldn't send the reset email.",
+    "tryDemo": "Try the demo",
+    "demoHint": "One click, no account. You get your own office with 3 client books.",
+    "demoNotEnabled": "The demo access isn't turned on yet. Sign in with Google instead."
   },
   "review": {
     "count": "{{count}} transactions",
@@ -75,8 +79,9 @@
   },
   "empty": {
     "welcome": "Welcome to ContaBu!",
-    "subtitle": "Upload your first bank statement and AI will organize your business in seconds.",
-    "cta": "Upload my statement"
+    "subtitle": "Upload a bank statement or link the bank: your rules sort every transaction, and what no rule covers stays Pending.",
+    "cta": "Upload my statement",
+    "linkBank": "Link my bank"
   },
   "sections": {
     "REVENUE": "Income",
@@ -140,7 +145,7 @@
   },
   "upload": {
     "title": "Upload your bank statement",
-    "subtitle": "Upload a CSV from your bank. AI categorizes each transaction for you.",
+    "subtitle": "Upload a CSV or Excel file from your bank. Your rules categorize each transaction; anything no rule covers stays Pending.",
     "choose": "Tap to choose your CSV file",
     "submit": "Upload and categorize",
     "done": "Done!",
@@ -163,6 +168,34 @@
     "audit": "The auditor checked your books and found {{count}} things to look at — see the Audit tab.",
     "proposeHint": "The AI categorized {{count}} transactions. Turn what it learned into rules you approve — next time they won't need AI.",
     "proposeCta": "Create my rules"
+  },
+  "bank": {
+    "title": "Link a bank",
+    "subtitle": "Transactions come in on their own and go through your rules, just like an uploaded statement.",
+    "notConfigured": "Bank linking isn't set up on this server yet (Plaid keys missing).",
+    "link": "Link bank",
+    "sandboxHint": "Test mode (Plaid Sandbox): sign in with user_good / pass_good.",
+    "unnamed": "Bank",
+    "lastSync": "Last updated {{date}}",
+    "neverSynced": "Not updated yet",
+    "repair": "Reconnect",
+    "refresh": "Refresh",
+    "remove": "Unlink",
+    "confirmRemove": "Unlink {{name}}? Transactions already imported stay in the book.",
+    "notReady": "The bank is still preparing its history. Press Refresh in a few minutes.",
+    "synced": "{{inserted}} new · {{skipped}} already in the book · {{held}} still pending at the bank · {{pending}} with no rule yet",
+    "err": {
+      "bank_not_configured": "Bank linking isn't set up on this server yet.",
+      "bank_disconnected": "The bank cut the connection. Reconnect to keep importing.",
+      "bank_error": "The bank didn't respond. Try again in a moment.",
+      "bank_script": "Couldn't load Plaid. Check your connection and try again."
+    },
+    "beforeCsv_one": "{{count}} skipped: that day was already in the book from a CSV upload",
+    "beforeCsv_other": "{{count}} skipped: those days were already in the book from a CSV upload",
+    "modified_one": "The bank changed {{count}} transaction (date, amount or description) · {{recat}} re-categorized by your rules",
+    "modified_other": "The bank changed {{count}} transactions (date, amount or description) · {{recat}} re-categorized by your rules",
+    "removed_one": "The bank withdrew {{count}} transaction already in the book. It's marked in Bookkeeping: you decide whether to keep it.",
+    "removed_other": "The bank withdrew {{count}} transactions already in the book. They're marked in Bookkeeping: you decide whether to keep them."
   },
   "prov": {
     "label": "Who decided",
@@ -336,7 +369,7 @@
     "section": "P&L section",
     "matches": "Rows",
     "add": "New rule",
-    "hint": "The sheet looks up these rules. Editing a rule does not rewrite past months — the auditor flags what fell out of line.",
+    "hint": "The sheet looks up these rules. Editing a rule re-applies it to what it decides; what you wrote by hand is never touched. Right-click a cell for more options.",
     "keywordHint": "e.g. HOME DEPOT",
     "subcatHint": "optional — defaults to the keyword",
     "import": "Import",
@@ -356,7 +389,48 @@
       "exists": "already exists",
       "duplicate": "repeated in file",
       "needs_section": "pick a category"
-    }
+    },
+    "undoCreate": "create rule {{k}}",
+    "undoPriority": "priority of {{k}}",
+    "undoEdit": "edit rule {{k}}",
+    "notInChart": "“{{v}}” isn't an account in this book's chart.",
+    "suggestionHint": "Suggestion (the keyword). Press Tab to use it.",
+    "formulaSuggestion": "Suggestion: {{s}}",
+    "dialog": {
+      "title": "Create rule",
+      "from": "From:",
+      "keyword": "Keyword",
+      "keywordHelp": "Short and stable: the part that repeats on every charge (not dates, IDs or trace numbers).",
+      "suggesting": "Suggesting a keyword…",
+      "typeKeyword": "Type a keyword to see which transactions it catches.",
+      "catches_one": "Catches {{count}} transaction · {{pending}} uncategorized",
+      "catches_other": "Catches {{count}} transactions · {{pending}} uncategorized",
+      "catchesNone": "Catches no transaction — check the keyword.",
+      "duplicate": "A rule with this keyword already exists: {{k}} → {{c}}.",
+      "missesSeed": "This keyword doesn't catch the row you started from.",
+      "manualKept_one": "{{count}} was written by hand and won't be touched (hand-written wins).",
+      "manualKept_other": "{{count}} were written by hand and won't be touched (hand-written wins).",
+      "category": "Category",
+      "moneyOut": "· money going out",
+      "moneyIn": "· money coming in",
+      "change": "Change",
+      "noMatchCat": "No account matches “{{q}}”.",
+      "createUnder": "Create “{{q}}” under:",
+      "warnOut": "“{{s}}” is almost never for money going out. Check it's the right section.",
+      "warnIn": "“{{s}}” is almost never for money coming in. Check it's the right section.",
+      "subcategory": "Subcategory",
+      "subcategoryHelp": "The clean merchant name shown on the books.",
+      "openRules": "Open in the Rules sheet instead",
+      "create_one": "Create rule · catches {{count}}",
+      "create_other": "Create rule · catches {{count}}",
+      "createPlain": "Create rule",
+      "created_one": "Rule {{k}} created · {{count}} transaction categorized",
+      "created_other": "Rule {{k}} created · {{count}} transactions categorized",
+      "subcategoryTab": "Press Tab to use the suggestion in gray.",
+      "needSub": "Write the subcategory"
+    },
+    "undoStyle_one": "highlight {{count}} rule",
+    "undoStyle_other": "highlight {{count}} rules"
   },
   "verify": {
     "title": "Verify your email — we sent a link to {{email}}.",
@@ -372,7 +446,8 @@
       "out": "OUT",
       "ruleDeviation": "Doesn't match its rule — should be {{s}}",
       "merchantInconsistency": "Same merchant categorized differently ({{m}})",
-      "uncategorized": "Not categorized yet"
+      "uncategorized": "Not categorized yet",
+      "bankRemoved": "The bank withdrew this transaction — keep it or delete it (right-click)"
     },
     "saving": "Saving…",
     "fixing": "Fixing…",
@@ -404,7 +479,7 @@
     "editorPlaceholder": "Type to filter or create…",
     "editorNoMatch": "No account matches “<b>{{q}}</b>”. Create it under:",
     "editorEmpty": "Type to search your chart of accounts.",
-    "tabSheet": "Sheet",
+    "tabSheet": "Bookkeeping",
     "tabPivot": "Pivot",
     "tabRules": "Rules",
     "allAccounts": "All accounts",
@@ -421,7 +496,7 @@
     "newLabel": "Label name (what it means):",
     "addLabel": "New label",
     "count": "{{n}} transactions",
-    "hint": "Double-click or press Enter to edit · Tab / Enter / arrows to move · drag to select a range. ",
+    "hint": "Type to start editing · Enter or the arrows confirm · drag to select a range · right-click a cell for more options · Ctrl+Z undoes. Editing a cell only changes that transaction — it does not rewrite your rules.",
     "ruleFromRow": "Create a rule from this description",
     "newRule": "Rule",
     "nSelected_one": "{{count}} selected",
@@ -434,7 +509,90 @@
     "onlyPending": "Pending ({{n}})",
     "pendingHint": "No rule covers this yet — pick a category or create a rule",
     "useClassic": "Use the previous view",
-    "useSheet": "Use the sheet"
+    "useSheet": "Use the sheet",
+    "undo": "Undo",
+    "undoWhat": "Undo: {{what}}",
+    "undoCell": "{{col}} of {{what}}",
+    "undoFix": "fix → {{c}}",
+    "undoFollow": "follow the rule",
+    "undoChanged": "That row changed after this edit, so it wasn't undone.",
+    "notInChart": "“{{v}}” isn't an account in this book's chart.",
+    "menu": {
+      "view": "View full content",
+      "edit": "Edit",
+      "copy": "Copy",
+      "paste": "Paste",
+      "pasteBlocked": "The browser didn't allow reading the clipboard. Use Ctrl+V.",
+      "useSuggestion": "Use the suggestion: {{s}}",
+      "close": "Close",
+      "followRule": "Follow the rule again",
+      "newRule": "Create a rule from this row",
+      "bankKeep": "Keep it (clear the bank's mark)",
+      "bankDelete": "Delete it from the book (the bank withdrew it)",
+      "bankDeleteConfirm": "Delete this transaction? The bank withdrew it. This can't be undone."
+    },
+    "case": {
+      "asis": "Text as written",
+      "upper": "ALL CAPS",
+      "title": "First Letter Capitalized"
+    },
+    "createRule": "Create rule",
+    "createRuleFromRow": "Create rule from this row",
+    "ruleBlank": "Create a new rule (select a row first to start from its description)",
+    "editorAdd": "+ New category",
+    "editorAddNamed": "+ Add “{{q}}” as a new category",
+    "editorAddType": "Type the new category's name above (in English: it's accounting data), then pick its section.",
+    "editorAddExists": "“{{q}}” already exists — pick it from the list.",
+    "editorAddUnder": "Create “<b>{{q}}</b>” under:",
+    "editorAddCancel": "Cancel",
+    "unlikelyOut": "rare for money going out",
+    "unlikelyIn": "rare for money coming in",
+    "sectionHelp": {
+      "REVENUE": "What you charge for your work or your sales.",
+      "COGS": "Direct costs of the work: materials, subcontractors, production labor.",
+      "OPERATING_EXPENSE": "Costs of running the business: rent, utilities, software, office, admin payroll.",
+      "OTHER_INCOME": "Income outside the main activity: interest earned, refunds.",
+      "OTHER_EXPENSE": "Expenses outside the operation: interest paid, taxes.",
+      "NON_PL": "Not profit or expense: transfers between your accounts, owner draws or contributions, loans, card payments."
+    },
+    "fmt": {
+      "bold": "Bold",
+      "italic": "Italic",
+      "pick": "Pick any color",
+      "clear": "Clear formatting"
+    },
+    "mb": {
+      "label": "Menu",
+      "file": "File",
+      "edit": "Edit",
+      "view": "View",
+      "format": "Format",
+      "options": "Options",
+      "upload": "Upload a statement…",
+      "linkBank": "Link a bank…",
+      "importRules": "Import rules…",
+      "exportRules": "Export rules (CSV)",
+      "exportSheet": "Export this sheet to Excel (CSV)",
+      "openPnl": "Open the P&L",
+      "find": "Find in the sheet",
+      "toolbar": "Toolbar",
+      "formulaBar": "Formula bar",
+      "pinDescription": "Pin Date and Description",
+      "density": "Row size",
+      "textCase": "Text",
+      "selectFirst": "Select rows first",
+      "chart": "Chart of accounts…",
+      "language": "Language",
+      "shortcuts": "Keyboard shortcuts",
+      "shortcutsText": "Type on a cell — starts editing right away (no Enter needed)\nEnter / F2 / double-click — edit the cell\nArrows while typing — save and move\nTab — save and move right\nTab on a gray suggestion — use it\n→ at the end of a gray suggestion — fill it in and keep typing\nDelete at the end of a gray suggestion — drop it\nEscape — cancel the edit\nCtrl+C / Ctrl+V — copy / paste (also a range)\nDelete — clear the selected cells\nDrag the corner of a cell — fill (like Excel)\nCtrl+Z — undo\nRight-click — more options for the cell"
+    },
+    "undoFormat_one": "format {{count}} row",
+    "undoFormat_other": "format {{count}} rows",
+    "density": {
+      "compact": "Compact",
+      "normal": "Normal",
+      "roomy": "Roomy"
+    }
   },
   "common": {
     "loading": "Loading…",
@@ -454,17 +612,47 @@
     "yours": "Your businesses"
   },
   "shell": {
-    "office": "Office",
     "book": "This book",
     "client": "Client",
-    "soon": "Soon",
     "menu": "Menu",
     "close": "Close menu",
-    "clients": "Clients",
-    "users": "Users",
-    "calendar": "Calendar",
-    "requests": "Requests",
-    "payroll": "Payroll",
-    "settings": "Book settings"
+    "settings": "Book settings",
+    "tour": {
+      "title": "Demo tour",
+      "progress": "{{done}} of {{total}}",
+      "minimize": "Minimize",
+      "reset": "Start over",
+      "finished": "That's the whole tour. Thanks for trying ContaBu.",
+      "steps": {
+        "s1": {
+          "t": "Try the demo",
+          "d": "You land in your own office with 3 client books."
+        },
+        "s2": {
+          "t": "Open Rivera HVAC",
+          "d": "The Sheet shows what no rule covers yet (Pending), and the P&L says how much is still uncategorized."
+        },
+        "s3": {
+          "t": "Ask the team to propose rules",
+          "d": "Review the proposal (coverage and clashes already checked), approve it, and watch Pending drop live."
+        },
+        "s4": {
+          "t": "Open Audit",
+          "d": "The team found a merchant categorized two ways and rules that clash. Click an Observation to read the full report."
+        },
+        "s5": {
+          "t": "Fix a row by hand",
+          "d": "Then approve another rule: your manual row doesn't move. What you write by hand wins."
+        },
+        "s6": {
+          "t": "Link a bank",
+          "d": "Teller sandbox (user username, password password). New transactions come in and the rules categorize them."
+        },
+        "s7": {
+          "t": "Open Casa Lupita",
+          "d": "The same kind of purchase is audited differently because of the bookkeeper's note."
+        }
+      }
+    }
   }
 }

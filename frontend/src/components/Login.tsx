@@ -6,8 +6,10 @@ import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
   sendPasswordResetEmail,
+  signInAnonymously,
 } from "firebase/auth";
 import { auth, googleProvider } from "../firebase";
+import { DEMO_MODE } from "../demo";
 import LanguageSwitcher from "./LanguageSwitcher";
 
 // Pantalla de acceso. Al autenticar, `onAuthStateChanged` (en App) detecta la sesión y
@@ -38,6 +40,25 @@ export default function Login() {
       await signInWithPopup(auth, googleProvider);
     } catch (e) {
       fail(t("login.error"), e);
+    }
+  }
+
+  // DEMO (FASE 13, 3-oct): un clic, sin crear cuenta. Login ANÓNIMO de Firebase → el alta de siempre
+  // le crea su propia oficina y el backend del demo le siembra los libros. Si el proveedor anónimo
+  // todavía no está activado en la consola de Firebase, se dice claro (no un código críptico).
+  async function tryDemo() {
+    setBusy(true);
+    setError(null);
+    try {
+      await signInAnonymously(auth);
+    } catch (e) {
+      const code = (e as { code?: string })?.code ?? "";
+      if (code === "auth/operation-not-allowed" || code === "auth/admin-restricted-operation") {
+        setError(t("login.demoNotEnabled"));
+        setBusy(false);
+      } else {
+        fail(t("login.error"), e);
+      }
     }
   }
 
@@ -94,6 +115,20 @@ export default function Login() {
             <p className="text-sm text-slate-500">{t("login.subtitle")}</p>
           </div>
 
+          {DEMO_MODE && (
+            <div className="space-y-1.5">
+              <button
+                onClick={tryDemo}
+                disabled={busy}
+                className="w-full py-3 rounded-xl font-semibold text-white shadow-sm disabled:opacity-60"
+                style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+              >
+                {busy ? t("login.loading") : t("login.tryDemo")}
+              </button>
+              <p className="text-xs text-center text-slate-500">{t("login.demoHint")}</p>
+            </div>
+          )}
+
           <button
             onClick={withGoogle}
             disabled={busy}
@@ -103,6 +138,10 @@ export default function Login() {
             {t("login.google")}
           </button>
 
+          {DEMO_MODE && error && <p className="text-sm text-rose-600 text-center">{error}</p>}
+
+          {/* En el DEMO: solo "Probar el demo" y Google. El correo/contraseña es de la app real. */}
+          {!DEMO_MODE && (<>
           <div className="flex items-center gap-3 text-xs text-slate-400">
             <div className="h-px flex-1 bg-slate-200" />
             {t("login.or")}
@@ -158,6 +197,7 @@ export default function Login() {
               {mode === "signup" ? t("login.signIn") : t("login.signUp")}
             </button>
           </p>
+          </>)}
         </div>
       </div>
     </div>

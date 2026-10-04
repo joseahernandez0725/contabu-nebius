@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { uploadCsv, setTransactionsAccount, type UploadResult } from "../api";
+import BankConnections from "./BankConnections";
 
 export default function Upload({ onDone, onProposeRules }: {
   onDone: () => void;
@@ -117,6 +118,9 @@ export default function Upload({ onDone, onProposeRules }: {
 
         {error && <div className="alert alert-error mt-4 text-sm">{error}</div>}
       </div>
+
+      {/* Vincular el banco (Plaid): los movimientos entran solos, por el mismo motor. Movimientos. */}
+      <BankConnections />
 
       {result && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center">

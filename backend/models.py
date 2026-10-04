@@ -42,9 +42,9 @@ class Role(str, Enum):
     - MEMBER: puede editar (subir, categorizar, reglas, P&L), pero NO gestionar equipo ni eliminar.
     - VIEWER: solo lectura (ver P&L/movimientos/reglas); el backend rechaza sus escrituras.
     - CLIENT: el DUEÑO DEL NEGOCIO (FASE 13). No es un VIEWER con permisos extra ni un MEMBER con
-      menos: es otra superficie. Ve SUS números y APORTA datos crudos (extracto, foto de recibo,
-      respuesta a una pregunta), pero NO toca el criterio contable (reglas, plan de cuentas,
-      categorías). Solo nace de una INVITACIÓN: registrarse crea una firma, nunca un cliente.
+      menos: es otra superficie. APORTA datos crudos (su extracto; mañana, respuestas a preguntas),
+      NO ve el libro en construcción (decisión del 30-sep: lo recibe cuando el bookkeeper se lo envía)
+      y NO toca el criterio contable. Solo nace de una INVITACIÓN: registrarse crea una firma.
     """
     OWNER = "OWNER"
     MEMBER = "MEMBER"
@@ -189,6 +189,13 @@ class Transaction(SQLModel, table=True):
     # recibo lo manda el lunes"). Distinta también de `observation`, que la escribe el agente.
     note: Optional[str] = Field(default=None)
     matched_rule_id: Optional[int] = Field(default=None, index=True)
+    # BANCO VINCULADO (FASE 10, 4-oct): el `transaction_id` de Plaid. Solo lo tienen las filas que
+    # vinieron de un banco vinculado; con él, re-sincronizar deduplica exacto y los avisos del banco
+    # (`modified` / `removed`) se aplican a LA fila que corresponde.
+    plaid_transaction_id: Optional[str] = Field(default=None, index=True)
+    # El banco RETIRÓ este movimiento después de registrarlo. No se borra en silencio: se marca, se
+    # ve en la Hoja y el bookkeeper decide (mantenerlo o eliminarlo).
+    bank_removed_at: Optional[datetime] = Field(default=None)
 
     created_at: datetime = Field(default_factory=_utcnow)
 
@@ -220,6 +227,8 @@ class CategoryRule(SQLModel, table=True):
     # Prioridad MANUAL (1 = primero, como subir una fila en Excel). None → orden automático (la más
     # larga gana; empate → alfabético). Las que tienen número van ANTES que todas las automáticas.
     priority: Optional[int] = Field(default=None)
+    # Cómo se VE su fila en la hoja de Reglas: {bg, bold, italic} (4-oct). Solo presentación.
+    style: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -363,6 +372,10 @@ class Firm(SQLModel, table=True):
     brand_name: Optional[str] = Field(default=None)
     brand_logo_url: Optional[str] = Field(default=None)
     brand_color: Optional[str] = Field(default=None)   # hex, acento de la UI del cliente
+    # DEMO (3-oct): cuándo se BORRA esta oficina. Solo la tienen las oficinas nacidas en el despliegue
+    # de demo (`DEMO_MODE`); una oficina real la tiene en NULL. La limpieza (`demo.py`) SOLO borra filas
+    # con esta marca vencida — así un servicio de demo mal apuntado a la base real no puede borrar nada.
+    demo_expires_at: Optional[datetime] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -405,7 +418,7 @@ class CategorizationChange(SQLModel, table=True):
     changed_at: datetime = Field(default_factory=_utcnow, index=True)
     changed_by_user_id: Optional[int] = Field(default=None, index=True)  # None = lo cambió el sistema
     # Por dónde llegó el cambio (código estable, en inglés, para agrupar y medir):
-    # manual · follow_rule · rule_update · rule_applied · rule_precedence
+    # manual · follow_rule · rule_update · rule_applied · rule_precedence · undo · bank_modified
     via: str = Field(index=True)
     source_before: Optional[str] = Field(default=None)   # rule | transfer | ai | manual | band | None
     source_after: Optional[str] = Field(default=None)
@@ -418,3 +431,29 @@ class CategorizationChange(SQLModel, table=True):
     matched_rule_id_before: Optional[int] = Field(default=None)  # qué regla había decidido: señal de regla mala
     matched_rule_id_after: Optional[int] = Field(default=None)   # qué regla la tomó (si fue una)
     reason: Optional[str] = Field(default=None)                  # texto libre, opcional
+
+
+class BankConnection(SQLModel, table=True):
+    """Un BANCO VINCULADO a un libro por Plaid (FASE 10, Movimientos · 3-oct-2026).
+
+    Una fila por Item de Plaid (una institución, una o varias cuentas). Es POR LIBRO: el banco del
+    cliente alimenta el libro de ese cliente, no la oficina.
+
+    🔒 `access_token_enc` es el access_token de Plaid CIFRADO (Fernet, clave en `BANK_TOKEN_KEY`).
+    Nunca se escribe en logs ni se devuelve al navegador: solo `bank.py` lo descifra, para llamar a
+    Plaid desde el servidor. `next_cursor` = dónde quedó `/transactions/sync` (no es secreto).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    environment: str                                   # sandbox | production
+    item_id: str = Field(index=True)                   # Item de Plaid (único por libro)
+    institution_name: Optional[str] = Field(default=None)
+    access_token_enc: str
+    # Las cuentas del Item: [{id, name, mask, type, subtype}]
+    accounts: list = Field(default_factory=list, sa_column=Column(JSON))
+    status: str = Field(default="active")              # active | disconnected
+    last_error: Optional[str] = Field(default=None)    # error_code de Plaid, p. ej. ITEM_LOGIN_REQUIRED
+    next_cursor: Optional[str] = Field(default=None)
+    last_synced_at: Optional[datetime] = Field(default=None)
+    created_by_user_id: Optional[int] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)

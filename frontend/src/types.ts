@@ -35,6 +35,10 @@ export interface Transaction {
    *  ni la observación (la escribe el agente): es lo que él quiere recordar de ESA transacción. */
   note: string | null;
   matched_rule_id: number | null; // QUÉ regla decidió (referencia suave; null si no fue una regla)
+  /** Banco vinculado (Plaid): su id del movimiento, y si el banco lo RETIRÓ después de registrado
+   *  (no se borra solo: el bookkeeper decide mantenerlo o eliminarlo). */
+  plaid_transaction_id?: string | null;
+  bank_removed_at?: string | null;
 }
 
 /** Observación del AGENTE AUDITOR para UNA fila — la 6ª columna de la hoja (FASE 10, paso 6).

@@ -5,7 +5,8 @@
     "upload": "Subir",
     "audit": "Auditoría",
     "pnl": "P&L",
-    "rules": "Reglas"
+    "rules": "Reglas",
+    "bank": "Vincular un banco"
   },
   "sectors": {
     "construction": "Construcción",
@@ -55,7 +56,10 @@
     "forgot": "¿Olvidaste tu contraseña?",
     "resetNeedsEmail": "Escribe tu correo arriba primero.",
     "resetSent": "Si ese correo tiene cuenta, te enviamos un enlace para restablecer tu contraseña.",
-    "resetError": "No se pudo enviar el correo de restablecimiento."
+    "resetError": "No se pudo enviar el correo de restablecimiento.",
+    "tryDemo": "Probar el demo",
+    "demoHint": "Un clic, sin crear cuenta. Te damos tu propia oficina con 3 libros de clientes.",
+    "demoNotEnabled": "El acceso al demo todavía no está activado. Entra con Google."
   },
   "review": {
     "count": "{{count}} movimientos",
@@ -102,8 +106,9 @@
   },
   "empty": {
     "welcome": "¡Bienvenido a ContaBu!",
-    "subtitle": "Sube tu primer extracto bancario y la IA organizará tu negocio en segundos.",
-    "cta": "Subir mi extracto"
+    "subtitle": "Sube un extracto o vincula el banco: tus reglas ordenan cada movimiento y lo que ninguna regla cubre queda Pendiente.",
+    "cta": "Subir mi extracto",
+    "linkBank": "Vincular mi banco"
   },
   "sections": {
     "REVENUE": "Ingreso",
@@ -156,7 +161,7 @@
   },
   "upload": {
     "title": "Sube tu extracto bancario",
-    "subtitle": "Sube un CSV de tu banco. La IA categoriza cada movimiento por ti.",
+    "subtitle": "Sube un CSV o Excel de tu banco. Tus reglas categorizan cada movimiento; lo que ninguna cubre queda Pendiente.",
     "choose": "Toca para elegir tu archivo CSV",
     "submit": "Subir y categorizar",
     "done": "¡Listo!",
@@ -179,6 +184,34 @@
     "audit": "El auditor revisó tus libros y encontró {{count}} cosas para mirar — ve a Auditoría.",
     "proposeHint": "La IA categorizó {{count}} transacciones. Convierte lo que aprendió en reglas que tú apruebas — la próxima vez no necesitarán IA.",
     "proposeCta": "Crear mis reglas"
+  },
+  "bank": {
+    "title": "Vincular un banco",
+    "subtitle": "Los movimientos entran solos y pasan por tus reglas, igual que un extracto subido.",
+    "notConfigured": "La vinculación de bancos todavía no está configurada en este servidor (faltan las llaves de Plaid).",
+    "link": "Vincular banco",
+    "sandboxHint": "Modo de prueba (Plaid Sandbox): entra con user_good / pass_good.",
+    "unnamed": "Banco",
+    "lastSync": "Actualizado {{date}}",
+    "neverSynced": "Sin actualizar todavía",
+    "repair": "Reconectar",
+    "refresh": "Actualizar",
+    "remove": "Desvincular",
+    "confirmRemove": "¿Desvincular {{name}}? Los movimientos ya importados se quedan en el libro.",
+    "notReady": "El banco todavía está preparando su historia. Pulsa Actualizar en unos minutos.",
+    "synced": "{{inserted}} nuevos · {{skipped}} ya estaban en el libro · {{held}} pendientes en el banco · {{pending}} sin regla todavía",
+    "err": {
+      "bank_not_configured": "La vinculación de bancos todavía no está configurada en este servidor.",
+      "bank_disconnected": "El banco cortó la conexión. Reconecta para seguir importando.",
+      "bank_error": "El banco no respondió. Inténtalo de nuevo en un momento.",
+      "bank_script": "No se pudo cargar Plaid. Revisa tu conexión e inténtalo de nuevo."
+    },
+    "beforeCsv_one": "{{count}} omitido: ese día ya estaba en el libro por un CSV",
+    "beforeCsv_other": "{{count}} omitidos: esos días ya estaban en el libro por un CSV",
+    "modified_one": "El banco cambió {{count}} movimiento (fecha, monto o descripción) · {{recat}} re-categorizados por tus reglas",
+    "modified_other": "El banco cambió {{count}} movimientos (fecha, monto o descripción) · {{recat}} re-categorizados por tus reglas",
+    "removed_one": "El banco retiró {{count}} movimiento que ya estaba en el libro. Está marcado en Bookkeeping: tú decides si se queda.",
+    "removed_other": "El banco retiró {{count}} movimientos que ya estaban en el libro. Están marcados en Bookkeeping: tú decides si se quedan."
   },
   "prov": {
     "label": "Quién decidió",
@@ -271,7 +304,7 @@
     "createError": "No se pudo crear la regla.",
     "add": "Nueva regla",
     "anySector": "Sector",
-    "hint": "La hoja busca en estas reglas. Editar una regla no reescribe los meses anteriores — el auditor marca lo que quedó desalineado.",
+    "hint": "La hoja busca en estas reglas. Editar una regla la vuelve a aplicar a lo que ella decide; lo que escribiste a mano nunca se toca. Clic derecho en una celda para más opciones.",
     "keywordHint": "ej. HOME DEPOT",
     "matches": "Filas",
     "scope": "Sector",
@@ -295,7 +328,48 @@
       "exists": "ya existe",
       "duplicate": "repetida en el archivo",
       "needs_section": "elige una categoría"
-    }
+    },
+    "undoCreate": "crear la regla {{k}}",
+    "undoPriority": "la prioridad de {{k}}",
+    "undoEdit": "editar la regla {{k}}",
+    "notInChart": "“{{v}}” no es una cuenta del plan de este libro.",
+    "suggestionHint": "Sugerencia (la palabra clave). Pulsa Tab para usarla.",
+    "formulaSuggestion": "Sugerencia: {{s}}",
+    "dialog": {
+      "title": "Crear regla",
+      "from": "Desde:",
+      "keyword": "Palabra clave",
+      "keywordHelp": "Corta y estable: lo que se repite en cada cargo (no fechas, IDs ni números de rastreo).",
+      "suggesting": "Sugiriendo una palabra clave…",
+      "typeKeyword": "Escribe una palabra clave para ver qué movimientos caza.",
+      "catches_one": "Caza {{count}} movimiento · {{pending}} sin categoría",
+      "catches_other": "Caza {{count}} movimientos · {{pending}} sin categoría",
+      "catchesNone": "No caza ningún movimiento — revisa la palabra clave.",
+      "duplicate": "Ya existe una regla con esta palabra clave: {{k}} → {{c}}.",
+      "missesSeed": "Esta palabra clave no caza la fila de la que partiste.",
+      "manualKept_one": "{{count}} está escrito a mano y no se toca (lo manual manda).",
+      "manualKept_other": "{{count}} están escritos a mano y no se tocan (lo manual manda).",
+      "category": "Categoría",
+      "moneyOut": "· dinero que sale",
+      "moneyIn": "· dinero que entra",
+      "change": "Cambiar",
+      "noMatchCat": "Ninguna cuenta coincide con “{{q}}”.",
+      "createUnder": "Crear “{{q}}” en:",
+      "warnOut": "“{{s}}” casi nunca es para dinero que sale. Revisa que sea la sección correcta.",
+      "warnIn": "“{{s}}” casi nunca es para dinero que entra. Revisa que sea la sección correcta.",
+      "subcategory": "Subcategoría",
+      "subcategoryHelp": "El nombre limpio del comercio que se ve en los libros.",
+      "openRules": "Mejor abrir en la hoja de Reglas",
+      "create_one": "Crear regla · caza {{count}}",
+      "create_other": "Crear regla · caza {{count}}",
+      "createPlain": "Crear regla",
+      "created_one": "Regla {{k}} creada · {{count}} movimiento categorizado",
+      "created_other": "Regla {{k}} creada · {{count}} movimientos categorizados",
+      "subcategoryTab": "Pulsa Tab para usar la sugerencia en gris.",
+      "needSub": "Escribe la subcategoría"
+    },
+    "undoStyle_one": "resaltar {{count}} regla",
+    "undoStyle_other": "resaltar {{count}} reglas"
   },
   "cat": {
     "Small Tools & Equipment": "Herramientas y equipo menor",
@@ -464,7 +538,7 @@
     "fixing": "Arreglando…",
     "following": "Buscando la regla…",
     "fromRule": "Viene de una regla",
-    "hint": "Doble clic o Enter para editar · Tab / Enter / flechas para moverte · arrastra para seleccionar un rango. Editar una celda cambia solo esa transacción — no reescribe tus reglas.",
+    "hint": "Escribe para empezar a editar · Enter o las flechas confirman · arrastra para seleccionar un rango · clic derecho en una celda para más opciones · Ctrl+Z deshace. Editar una celda cambia solo esa transacción — no reescribe tus reglas.",
     "labels": "Etiquetas",
     "manualClick": "Escrita a mano — clic para volver a seguir la regla",
     "nSelected": "{{n}} seleccionadas",
@@ -493,7 +567,8 @@
       "out": "SALIÓ",
       "ruleDeviation": "No coincide con su regla — debería ser {{s}}",
       "signMismatch": "{{section}} pero el dinero {{dir}}",
-      "uncategorized": "Sin categorizar"
+      "uncategorized": "Sin categorizar",
+      "bankRemoved": "El banco retiró este movimiento — mantenlo o elimínalo (clic derecho)"
     },
     "observation": "Observación",
     "onlyFlagged": "Por revisar ({{n}})",
@@ -502,7 +577,7 @@
     "subcategory": "Subcategoría",
     "tabPivot": "Pivote",
     "tabRules": "Reglas",
-    "tabSheet": "Hoja",
+    "tabSheet": "Bookkeeping",
     "ruleFromRow": "Crear una regla a partir de esta descripción",
     "newRule": "Regla",
     "nSelected_one": "{{count}} seleccionada",
@@ -515,20 +590,133 @@
     "onlyPending": "Pendientes ({{n}})",
     "pendingHint": "Ninguna regla la cubre todavía — elige categoría o crea una regla",
     "useClassic": "Usar la vista anterior",
-    "useSheet": "Usar la hoja"
+    "useSheet": "Usar la hoja",
+    "undo": "Deshacer",
+    "undoWhat": "Deshacer: {{what}}",
+    "undoCell": "{{col}} de {{what}}",
+    "undoFix": "arreglo → {{c}}",
+    "undoFollow": "seguir la regla",
+    "undoChanged": "Esa fila cambió después de esta edición, así que no se deshizo.",
+    "notInChart": "“{{v}}” no es una cuenta del plan de este libro.",
+    "menu": {
+      "view": "Ver el contenido completo",
+      "edit": "Editar",
+      "copy": "Copiar",
+      "paste": "Pegar",
+      "pasteBlocked": "El navegador no dejó leer el portapapeles. Usa Ctrl+V.",
+      "useSuggestion": "Usar la sugerencia: {{s}}",
+      "close": "Cerrar",
+      "followRule": "Volver a seguir la regla",
+      "newRule": "Crear una regla desde esta fila",
+      "bankKeep": "Mantenerlo (quitar la marca del banco)",
+      "bankDelete": "Eliminarlo del libro (el banco lo retiró)",
+      "bankDeleteConfirm": "¿Eliminar este movimiento? El banco lo retiró. No se puede deshacer."
+    },
+    "case": {
+      "asis": "Texto como está escrito",
+      "upper": "TODO EN MAYÚSCULAS",
+      "title": "Primera Letra En Mayúscula"
+    },
+    "createRule": "Crear regla",
+    "createRuleFromRow": "Crear regla con esta fila",
+    "ruleBlank": "Crear una regla nueva (selecciona una fila antes para partir de su descripción)",
+    "editorAdd": "+ Nueva categoría",
+    "editorAddNamed": "+ Agregar “{{q}}” como categoría nueva",
+    "editorAddType": "Escribe arriba el nombre de la categoría nueva (en inglés: es dato contable) y luego elige su sección.",
+    "editorAddExists": "“{{q}}” ya existe — elígela de la lista.",
+    "editorAddUnder": "Crear “<b>{{q}}</b>” en:",
+    "editorAddCancel": "Cancelar",
+    "unlikelyOut": "poco común para dinero que sale",
+    "unlikelyIn": "poco común para dinero que entra",
+    "sectionHelp": {
+      "REVENUE": "Lo que cobras por tu trabajo o tus ventas.",
+      "COGS": "Costos directos del trabajo: materiales, subcontratistas, mano de obra de producción.",
+      "OPERATING_EXPENSE": "Gastos de mantener el negocio: renta, servicios, software, oficina, nómina administrativa.",
+      "OTHER_INCOME": "Ingresos fuera de la actividad principal: intereses ganados, reembolsos.",
+      "OTHER_EXPENSE": "Gastos fuera de la operación: intereses pagados, impuestos.",
+      "NON_PL": "No es ganancia ni gasto: transferencias entre tus cuentas, retiros o aportes del dueño, préstamos, pago de tarjeta."
+    },
+    "fmt": {
+      "bold": "Negrita",
+      "italic": "Cursiva",
+      "pick": "Elegir cualquier color",
+      "clear": "Quitar el formato"
+    },
+    "mb": {
+      "label": "Menú",
+      "file": "Archivo",
+      "edit": "Edición",
+      "view": "Ver",
+      "format": "Formato",
+      "options": "Opciones",
+      "upload": "Subir un extracto…",
+      "linkBank": "Vincular un banco…",
+      "importRules": "Importar reglas…",
+      "exportRules": "Exportar reglas (CSV)",
+      "exportSheet": "Exportar esta hoja a Excel (CSV)",
+      "openPnl": "Abrir el P&L",
+      "find": "Buscar en la hoja",
+      "toolbar": "Barra de herramientas",
+      "formulaBar": "Barra de fórmulas",
+      "pinDescription": "Fijar Fecha y Descripción",
+      "density": "Tamaño de fila",
+      "textCase": "Texto",
+      "selectFirst": "Primero selecciona filas",
+      "chart": "Plan de cuentas…",
+      "language": "Idioma",
+      "shortcuts": "Atajos de teclado",
+      "shortcutsText": "Escribir sobre una celda — empieza a editar de una vez (sin Enter)\nEnter / F2 / doble clic — editar la celda\nFlechas mientras escribes — guardar y moverse\nTab — guardar y pasar a la derecha\nTab sobre una sugerencia en gris — usarla\n→ al final de una sugerencia en gris — ponerla y seguir escribiendo\nSupr al final de una sugerencia en gris — descartarla\nEscape — cancelar la edición\nCtrl+C / Ctrl+V — copiar / pegar (también un rango)\nSupr — borrar las celdas seleccionadas\nArrastrar la esquina de una celda — rellenar (como en Excel)\nCtrl+Z — deshacer\nClic derecho — más opciones de la celda"
+    },
+    "undoFormat_one": "formato de {{count}} fila",
+    "undoFormat_other": "formato de {{count}} filas",
+    "density": {
+      "compact": "Compacto",
+      "normal": "Normal",
+      "roomy": "Amplio"
+    }
   },
   "shell": {
-    "office": "Oficina",
     "book": "Este libro",
     "client": "Cliente",
-    "soon": "Pronto",
     "menu": "Menú",
     "close": "Cerrar menú",
-    "clients": "Clientes",
-    "users": "Usuarios",
-    "calendar": "Calendario",
-    "requests": "Solicitudes",
-    "payroll": "Nómina",
-    "settings": "Ajustes del libro"
+    "settings": "Ajustes del libro",
+    "tour": {
+      "title": "Recorrido del demo",
+      "progress": "{{done}} de {{total}}",
+      "minimize": "Minimizar",
+      "reset": "Empezar de nuevo",
+      "finished": "Ese es todo el recorrido. Gracias por probar ContaBu.",
+      "steps": {
+        "s1": {
+          "t": "Probar el demo",
+          "d": "Caes en tu propia oficina con 3 libros de clientes."
+        },
+        "s2": {
+          "t": "Abre Rivera HVAC",
+          "d": "La Hoja muestra lo que ninguna regla cubre todavía (Pendiente), y el P&L dice cuánto falta por categorizar."
+        },
+        "s3": {
+          "t": "Pídele al equipo que proponga reglas",
+          "d": "Revisa la propuesta (cobertura y choques ya validados), apruébala y mira cómo bajan los Pendientes en vivo."
+        },
+        "s4": {
+          "t": "Abre Auditoría",
+          "d": "El equipo encontró un comercio categorizado de dos formas y reglas que chocan. Haz clic en una Observación para leer el reporte completo."
+        },
+        "s5": {
+          "t": "Corrige una fila a mano",
+          "d": "Luego aprueba otra regla: tu fila manual no se mueve. Lo que escribes a mano manda."
+        },
+        "s6": {
+          "t": "Vincula un banco",
+          "d": "Teller sandbox (usuario username, clave password). Entran movimientos nuevos y las reglas los categorizan solas."
+        },
+        "s7": {
+          "t": "Abre Casa Lupita",
+          "d": "El mismo tipo de compra se audita distinto por la nota del bookkeeper."
+        }
+      }
+    }
   }
 }

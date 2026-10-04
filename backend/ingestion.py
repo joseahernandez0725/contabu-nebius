@@ -365,8 +365,7 @@ def ingest_csv(
     company = session.get(Company, company_id)
     # Los días de espera son un ajuste simple del libro (`Company.settlement_buffer_days`, Ajustes del
     # libro). Volvió aquí el 2-oct: `criteria.py`, que lo leía, se borró con los criterios por monto.
-    buffer_days = company.settlement_buffer_days \
-        if company and company.settlement_buffer_days is not None else DEFAULT_SETTLEMENT_BUFFER_DAYS
+    buffer_days = settlement_buffer_days(company)
     today = datetime.now(timezone.utc).date()
 
     # Trozo a procesar: rows[offset : offset+limit]. Permite subir en LOTES (cada lote bajo el
@@ -398,14 +397,91 @@ def ingest_csv(
         fp = make_fingerprint(d, description, signed, account)
         parsed.append((d, description, signed, account, fp))
 
+    core = ingest_parsed(session, company_id, sector, parsed, categorize=categorize,
+                         dry_run=dry_run, ai_limit=ai_limit, profile=profile)
+    return {
+        "inserted": core["inserted"],
+        "errors": errors,
+        # Para la subida por lotes: total de filas del archivo y cuántas cubrió este lote.
+        "total": total,
+        "offset": offset,
+        "processed": len(to_process),
+        "by_rule": core["by_rule"],
+        "by_band": 0,  # ya no hay banda de monto; la clave sigue para el frontend (Audit.tsx, api.ts)
+        "by_transfer": core["by_transfer"],
+        # Transacciones que NO se categorizaron por exceder el cupo de IA (hay que subir de plan).
+        "quota_blocked": core["quota_blocked"],
+        "by_ai": core["by_ai"],
+        # Cuántas filas ajustó el pase de consistencia (mismo comercio → misma categoría).
+        "consistency_adjusted": core["consistency_adjusted"],
+        "dry_run": dry_run,
+        "mapping": mapping.model_dump(),
+        "preview": core["preview"],
+        # Cuántas filas se omitieron por ya existir (re-subida / rango solapado).
+        "skipped_duplicates": core["skipped_duplicates"],
+        # Cuántas se retuvieron por estar pending / aún no asentadas (entran en otra subida).
+        "held_pending": held_pending,
+        # Si la IA no pudo sacar la cuenta del archivo, el frontend la pide al usuario
+        # y la aplica con set-account sobre estos IDs.
+        "account_detected": core["account_detected"],
+        "transaction_ids": core["transaction_ids"],
+    }
+
+
+def settlement_buffer_days(company: "Company | None") -> int:
+    """Días de espera del libro: lo más reciente se retiene hasta que el banco lo asienta."""
+    if company is not None and company.settlement_buffer_days is not None:
+        return company.settlement_buffer_days
+    return DEFAULT_SETTLEMENT_BUFFER_DAYS
+
+
+def ingest_parsed(
+    session: Session,
+    company_id: int,
+    sector: str,
+    parsed: list[tuple],
+    *,
+    categorize: bool = True,
+    dry_run: bool = False,
+    ai_limit: int | None = None,
+    profile: dict | None = None,
+) -> dict:
+    """EL MOTOR DE ENTRADA, común a toda fuente de movimientos (CSV/Excel y Teller, 3-oct-2026).
+
+    Recibe filas ya parseadas y YA asentadas — `(fecha, descripción, monto CON signo, cuenta
+    enmascarada, huella)` y, si vienen de un banco vinculado, un 6º elemento: el `transaction_id` de
+    Plaid —; quien llama retiene lo pendiente y lo demasiado reciente — y hace lo mismo
+    para todas: deduplicación por huella → regla → transferencia → (IA apagada) → Pendiente, y crea
+    las transacciones. Así un movimiento de Teller y uno de un CSV pasan exactamente por el mismo
+    camino."""
     # 1b) DEDUPLICACIÓN por huella (multiconjunto): omite las filas que YA existen en la BD de
     #     esta empresa, para no duplicar al re-subir el mismo archivo o un rango solapado.
     #     Se hace por CONTEO: si el archivo trae 2 movimientos idénticos y la BD ya tiene 2, se
     #     omiten los 2; si tiene 0, se insertan los 2 → conserva repeticiones legítimas.
     #     Va ANTES de reglas/IA para no gastar cuota de Gemini en lo que no se va a insertar.
     skipped_duplicates = 0
+    # 1a) Filas de un BANCO VINCULADO (traen el id de Plaid): se deduplican EXACTO por ese id, nunca
+    #     por huella — dos cafés iguales el mismo día son dos ids distintos (4-oct-2026).
+    if not dry_run and any(len(row) > 5 and row[5] for row in parsed):
+        ids = {row[5] for row in parsed if len(row) > 5 and row[5]}
+        known = set(session.exec(
+            select(Transaction.plaid_transaction_id)
+            .where(Transaction.company_id == company_id)
+            .where(Transaction.plaid_transaction_id.in_(ids))
+        ).all())
+        kept_ids: list[tuple] = []
+        for row in parsed:
+            pid = row[5] if len(row) > 5 else None
+            if pid and pid in known:
+                skipped_duplicates += 1
+                continue
+            if pid:
+                known.add(pid)  # también un id repetido dentro del mismo lote
+            kept_ids.append(row)
+        parsed = kept_ids
+    # 1b) Las demás (CSV): por huella.
     if not dry_run and parsed:
-        fps = [row[4] for row in parsed]
+        fps = [row[4] for row in parsed if not (len(row) > 5 and row[5])]
         existing: dict[str, int] = dict(
             session.exec(
                 select(Transaction.fingerprint, func.count())
@@ -418,6 +494,9 @@ def ingest_csv(
         kept: list[tuple] = []
         for row in parsed:
             fp = row[4]
+            if len(row) > 5 and row[5]:
+                kept.append(row)  # ya deduplicada por su id
+                continue
             if remaining_skip.get(fp, 0) > 0:
                 remaining_skip[fp] -= 1
                 skipped_duplicates += 1
@@ -434,7 +513,8 @@ def ingest_csv(
     transfer_hits: dict[int, tuple] = {}  # idx -> (account_type, category) — transferencia entre cuentas
     ai_indices: list[int] = []
     if categorize:
-        for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
+        for idx, row in enumerate(parsed):
+            desc = row[1]
             rule = match_rule(rules, desc)
             if rule is not None:
                 rule_hits[idx] = rule
@@ -489,11 +569,13 @@ def ingest_csv(
     preview: list[dict] = []
     created: list[Transaction] = []
     any_account = False
-    for idx, (d, description, signed, account, fp) in enumerate(parsed):
+    for idx, row in enumerate(parsed):
+        d, description, signed, account, fp = row[:5]
         tx = Transaction(company_id=company_id, date=d, description=description,
                          amount=abs(signed), bank_account=account, fingerprint=fp,
                          is_inflow=signed > 0,  # dirección real del banco (entró/salió)
-                         check_number=check_number(description))  # número de cheque (si lo es)
+                         check_number=check_number(description),  # número de cheque (si lo es)
+                         plaid_transaction_id=(row[5] if len(row) > 5 else None) or None)
         if account:
             any_account = True
         source = _apply_categorization(tx, idx, description, rule_hits, transfer_hits, ai_cats)
@@ -528,28 +610,13 @@ def ingest_csv(
 
     return {
         "inserted": inserted,
-        "errors": errors,
-        # Para la subida por lotes: total de filas del archivo y cuántas cubrió este lote.
-        "total": total,
-        "offset": offset,
-        "processed": len(to_process),
         "by_rule": by_rule,
-        "by_band": 0,  # ya no hay banda de monto; la clave sigue para el frontend (Audit.tsx, api.ts)
         "by_transfer": by_transfer,
-        # Transacciones que NO se categorizaron por exceder el cupo de IA (hay que subir de plan).
-        "quota_blocked": quota_blocked,
         "by_ai": by_ai,
-        # Cuántas filas ajustó el pase de consistencia (mismo comercio → misma categoría).
+        "quota_blocked": quota_blocked,
         "consistency_adjusted": consistency_adjusted,
-        "dry_run": dry_run,
-        "mapping": mapping.model_dump(),
         "preview": preview,
-        # Cuántas filas se omitieron por ya existir (re-subida / rango solapado).
         "skipped_duplicates": skipped_duplicates,
-        # Cuántas se retuvieron por estar pending / aún no asentadas (entran en otra subida).
-        "held_pending": held_pending,
-        # Si la IA no pudo sacar la cuenta del archivo, el frontend la pide al usuario
-        # y la aplica con set-account sobre estos IDs.
         "account_detected": any_account,
         "transaction_ids": transaction_ids,
     }

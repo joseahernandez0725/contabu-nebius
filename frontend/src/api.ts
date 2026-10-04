@@ -309,6 +309,29 @@ export interface Rule {
   matches: number; // cuántas transacciones afecta
   scope: "COMPANY" | "SECTOR";  // de ESTE libro, o compartida por todo un sector
   sector: string | null;        // el sector, cuando scope === "SECTOR"
+  direction?: "in" | "out" | "mixed" | null;  // hacia dónde va el dinero de lo que caza
+  style?: RuleStyle | null;     // resaltado de su fila en la hoja de Reglas
+}
+export interface RuleStyle { bg: string | null; bold: boolean; italic: boolean }
+
+// Vista previa de una regla ANTES de crearla (la ventana "Crear regla"). Sin keyword y con la fila,
+// el backend sugiere una palabra clave limpia (sin fechas, IDs ni números de rastreo).
+export interface RulePreview {
+  keyword: string;
+  matches: number; pending: number; manual: number; inflow: number; outflow: number;
+  examples: { id: number; date: string; description: string; amount: number; is_inflow: boolean;
+              category: string | null; source: string | null }[];
+  duplicate: { id: number; match_text: string; category: string } | null;
+  seed_matched: boolean | null;
+}
+export async function previewRule(payload: { keyword?: string; transaction_id?: number }): Promise<RulePreview> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/preview`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error("preview_failed");
+  return res.json();
 }
 
 export async function getRules(): Promise<Rule[]> {
@@ -333,7 +356,8 @@ export async function createRule(payload: {
 
 export async function updateRule(
   id: number,
-  payload: { account_type?: string; category?: string; subcategory?: string; priority?: number | null },
+  payload: { account_type?: string; category?: string; subcategory?: string; priority?: number | null;
+             style?: RuleStyle | null },
 ): Promise<{ applied: number; reassigned: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
     method: "PATCH",
@@ -344,8 +368,9 @@ export async function updateRule(
   return res.json();
 }
 
-export async function deleteRule(id: number): Promise<void> {
-  const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
+// `revert`: DESHACER la creación de una regla — devuelve las transacciones que movió a como estaban.
+export async function deleteRule(id: number, revert = false): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}${revert ? "?revert=true" : ""}`, {
     method: "DELETE",
     headers: await authHeaders(),
   });
@@ -620,6 +645,23 @@ export async function updateTransaction(
   return res.json(); // { id, applied, rule_updated } — applied = otras tx que alineó la regla
 }
 
+// DESHACER (Ctrl+Z / botón): devuelve la transacción a como estaba antes de su último cambio de
+// categoría, con su procedencia exacta. 409 = alguien la cambió después (no se pisa).
+export async function undoTransactionChange(id: number): Promise<void> {
+  const res = await fetch(`${API}/api/transactions/${id}/undo`, { method: "POST", headers: await authHeaders() });
+  if (res.status === 409) throw new Error("changed_since");
+  if (!res.ok) throw new Error("undo_failed");
+}
+
+// El banco vinculado retiró este movimiento: el bookkeeper decide si se queda o se elimina (4-oct).
+export async function decideBankRemoved(id: number, action: "keep" | "delete"): Promise<void> {
+  const res = await fetch(`${API}/api/companies/${cid()}/transactions/${id}/bank-removed`, {
+    method: "POST", headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!res.ok) throw new Error("bank_removed_failed");
+}
+
 // Una explicación que aplica a VARIAS transacciones de la misma contraparte (renta mensual, etc.).
 // Ya no categoriza con IA (1-oct): la respuesta queda como NOTA de cada línea y la pregunta se cierra.
 export async function clarifyGroup(transactionIds: number[], answer: string): Promise<{ updated: number }> {
@@ -698,3 +740,65 @@ export async function updateSettlement(waitDays: number): Promise<Company> {
   }
   return res.json();
 }
+
+// ==================================================================================================
+// FASE 10 — BANCOS VINCULADOS (área Movimientos, 3-oct). Proveedor: Plaid. El access_token NUNCA
+// llega aquí: el navegador solo ve link_tokens de un solo uso y el public_token de Link, que el
+// backend canjea. Errores: un CÓDIGO estable (`bank_not_configured`, `bank_disconnected`, `bank_error`)
+// que la pantalla traduce con `bank.err.*`.
+// ==================================================================================================
+export interface BankAccount { id: string; name: string | null; mask: string | null; type: string | null; subtype: string | null }
+export interface BankConnection {
+  id: number;
+  environment: string;
+  institution_name: string | null;
+  accounts: BankAccount[];
+  status: "active" | "disconnected";
+  last_error: string | null;
+  last_synced_at: string | null;
+}
+export interface BankSync {
+  accounts: number; fetched: number; inserted: number; skipped_duplicates: number;
+  held_pending: number; by_rule: number; by_transfer: number; pending: number; not_ready: boolean;
+  // Avisos del banco y solape con CSV (4-oct): lo que el banco cambió o retiró, y lo que ya cubría un CSV.
+  skipped_before_csv?: number; modified_applied?: number; modified_recategorized?: number;
+  removed_marked?: number; removed_ignored?: number;
+}
+export interface BankConfig { enabled: boolean; provider: string; environment: string }
+
+export class BankApiError extends Error {
+  code: string;
+  reason?: string;
+  constructor(code: string, reason?: string) { super(code); this.code = code; this.reason = reason; }
+}
+
+async function bankFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API}/api/companies/${cid()}/bank-connections${path}`, {
+    ...init,
+    headers: { ...(await authHeaders()), "Content-Type": "application/json", ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j?.detail).catch(() => null);
+    throw new BankApiError(detail?.code ?? "bank_error", detail?.reason);
+  }
+  return res.json();
+}
+
+export const getBankConnections = () =>
+  bankFetch<{ config: BankConfig; connections: BankConnection[] }>("");
+
+export const createBankLinkToken = (language: string, connectionId?: number) =>
+  bankFetch<{ link_token: string }>("/link-token", {
+    method: "POST", body: JSON.stringify({ language, connection_id: connectionId ?? null }),
+  });
+
+export const createBankConnection = (publicToken: string, institutionName?: string | null) =>
+  bankFetch<{ connection: BankConnection; sync: BankSync }>("", {
+    method: "POST", body: JSON.stringify({ public_token: publicToken, institution_name: institutionName ?? null }),
+  });
+
+export const syncBankConnection = (id: number) =>
+  bankFetch<{ connection: BankConnection; sync: BankSync }>(`/${id}/sync`, { method: "POST" });
+
+export const deleteBankConnection = (id: number) =>
+  bankFetch<{ deleted: number; revoked: boolean }>(`/${id}`, { method: "DELETE" });

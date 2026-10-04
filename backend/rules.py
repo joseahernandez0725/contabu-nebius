@@ -315,7 +315,11 @@ def reapply_rule_precedence(session: Session, company_id: int, *,
         if is_check(t.description) and not t.description_extra:
             continue
         winner = match_rule(rules, matchable_text(t.description, t.description_extra))
-        if winner is None or winner.id == t.matched_rule_id:
+        if winner is None:
+            continue
+        sub = winner.subcategory.upper() if winner.subcategory else t.subcategory
+        if winner.id == t.matched_rule_id and (t.account_type, t.category, t.subcategory) == (
+                winner.account_type, winner.category, sub):
             continue
         before = snapshot(t)
         t.account_type = winner.account_type
@@ -336,8 +340,8 @@ def apply_rule_to_transactions(
     user_id: Optional[int] = None,
 ) -> int:
     """Aplica una regla a las transacciones YA EXISTENTES del mismo comercio (corregir una → corregir
-    todas). Actualiza account_type/category de las que matchean la regla y aún no coinciden. Deja la
-    `subcategory` (el comercio específico) de cada una. Devuelve cuántas actualizó.
+    todas). Actualiza account_type/category/subcategory de las que matchean la regla y aún no
+    coinciden. Si la regla no trae subcategoría, se deja la de cada una. Devuelve cuántas actualizó.
 
     Se llama tras una corrección manual: el dueño arregla un movimiento y todas las demás del mismo
     comercio se alinean de una vez (consistencia retroactiva). Cada transacción que cambia de
@@ -367,7 +371,10 @@ def apply_rule_to_transactions(
             continue
         if match_rule([rule], matchable_text(t.description, getattr(t, "description_extra", None))) is None:
             continue
-        if (t.account_type, t.category) == (rule.account_type, rule.category):
+        # La subcategoría también cuenta (Jose, 4-oct: "modifiqué la subcategoría en Reglas y no veo
+        # el cambio en el libro" — antes solo se comparaba la categoría y el cambio no bajaba).
+        sub = rule.subcategory.upper() if rule.subcategory else t.subcategory
+        if (t.account_type, t.category, t.subcategory) == (rule.account_type, rule.category, sub):
             # Ya tiene los valores correctos, pero puede que le falte la PROCEDENCIA: esta regla sí
             # la cubre, así que se estampa igual. Sin esto la hoja no puede mostrar la marca `ƒ`
             # (celda = "fórmula") ni el auditor puede detectar un desvío más adelante.
@@ -472,6 +479,115 @@ def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
 
     # El comercio no aparece en la descripción → tomar una frase real de la descripción.
     return _phrase_in_description(dwords)
+
+
+# ── Sugerir una palabra clave LIMPIA (4-oct-2026, pedido de Jose) ──────────────────────────────
+# "Crear regla con esta fila" ponía la descripción COMPLETA del banco (fecha, ORIG ID, TRACE#…): la regla
+# solo cazaba ESE movimiento. Aquí se saca el comercio de los formatos que traen los bancos de EE.UU.
+
+_ACH_NAME_RE = re.compile(r"ORIG CO NAME:\s*(.+?)\s+ORIG ID:", re.IGNORECASE)
+_P2P_RE = re.compile(r"^(?:ZELLE|VENMO|CASH ?APP)\b.*?\b(?:TO|FROM)\s+(.+)$", re.IGNORECASE)
+_DOMAIN_RE = re.compile(r"\b([A-Z][A-Z0-9]{2,})\.(?:COM|NET|ORG|CO|IO|C)\b")
+_PHONE_RE = re.compile(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b|\b\d{3}-\d{7}\b")
+_DATE_RE = re.compile(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b")
+_US_STATES = {"AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS",
+              "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY",
+              "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV",
+              "WI", "WY", "DC"}
+
+
+_CONNECTORS = {"OF", "THE", "AND", "&", "DE", "LA", "EL"}  # dentro de un nombre ("STATE OF CALIF")
+
+
+def _is_code(token: str) -> bool:
+    """¿Es un código y no una palabra? (C4860, MEA8E, 29038657532, WFCT0ZNDCQ96). `7-ELEVEN` no lo es."""
+    if not any(c.isdigit() for c in token):
+        return False
+    return not any(part.isalpha() and len(part) >= 3 for part in token.split("-"))
+
+
+# Primera palabra de ciudades compuestas (SAN JOSE, LOS ANGELES, NEW YORK…): no es el comercio.
+_CITY_LEADS = {"SAN", "SANTA", "LOS", "LAS", "NEW", "EL", "FORT", "FT", "PORT", "SAINT", "ST",
+               "WEST", "EAST", "NORTH", "SOUTH", "LA", "MOUNT", "MT", "PALO", "WALNUT", "DALY"}
+
+
+def _name_words(text: str, max_words: int) -> str:
+    """Las primeras palabras de un NOMBRE (sin códigos ni basura legal al final)."""
+    out: list[str] = []
+    for w in re.sub(r"[^A-Z0-9&'-]+", " ", text.upper()).split():
+        if _is_code(w):
+            break
+        out.append(w)
+        if len(out) >= max_words:
+            break
+    while out and out[-1] in {"INC", "LLC", "LTD", "CO", "CORP", "THE", "AND", "&"}:
+        out.pop()
+    return " ".join(out)
+
+
+def suggest_keyword(description: Optional[str], extra: Optional[str] = None) -> str:
+    """Una palabra clave CORTA y estable para la regla de este movimiento — lo que cambia en cada
+    pago (fechas, números de rastreo, IDs, teléfonos, ciudad y estado) se queda afuera.
+
+    Orden: lo que escribió el bookkeeper (`description_extra`, p. ej. a quién fue el cheque) → nombre
+    de la empresa en un ACH (`ORIG CO NAME:PAYROLL SERVICE ORIG ID:…` → `PAYROLL SERVICE`) → la persona
+    o empresa de un Zelle/Venmo → un dominio (`REMITLY.COM` → `REMITLY`) → las primeras palabras reales.
+    Siempre devuelve algo que la regla puede cazar en ESTA descripción (si no, la frase específica)."""
+    if extra and extra.strip():
+        return _name_words(extra, 4) or extra.strip().upper()
+    d = " ".join((description or "").upper().split())
+    if not d or is_check(d):
+        return ""  # un cheque SIN texto no tiene comercio: primero hay que escribir a quién fue
+    cand = ""
+    m = _ACH_NAME_RE.search(d)
+    if m:
+        cand = _name_words(m.group(1), 4)
+    if not cand:
+        m = _P2P_RE.search(d)
+        if m:
+            cand = _name_words(m.group(1), 3)
+    if not cand:
+        m = _DOMAIN_RE.search(d)
+        if m:
+            cand = m.group(1)
+    if not cand:
+        text = _PHONE_RE.sub(" ", _DATE_RE.sub(" ", d))
+        text = re.sub(r"#\s*\w+", " ", text)
+        words = [w for w in re.sub(r"[^A-Z0-9&'-]+", " ", text).split() if any(c.isalnum() for c in w)]
+        # Prefijo del procesador (SQ *, TST*, POS DEBIT…) y ruido antes de la primera palabra real.
+        while words and (words[0] in _PROCESSOR_PREFIXES or words[0] in _MERCHANT_NOISE or _is_code(words[0])):
+            words = words[1:]
+        out: list[str] = []
+        real = 0
+        for w in words:
+            if _is_code(w) or w in _US_STATES or (real and w in _MERCHANT_NOISE and w not in _CONNECTORS):
+                break
+            out.append(w)
+            if len(w) >= 2 and w not in _CONNECTORS:
+                real += 1
+            if real >= (3 if len(words) <= 3 else 2):
+                break
+        # La CIUDAD va justo antes del estado ("7-ELEVEN PITTSBURG CA"): si lo elegido llega hasta
+        # ella, se corta ahí. También la primera mitad de una ciudad compuesta ("SAN", "LOS"…).
+        # (Pegada al estado en el texto del banco: "MEMBERSHIP 800-922-8228 CA" no es una ciudad.)
+        st = next((i for i, w in enumerate(words) if w in _US_STATES), None)
+        if (st is not None and st >= 2 and len(out) >= st
+                and re.search(rf"(^|\s){re.escape(words[st - 1])}\s+{words[st]}(\s|$)", d)):
+            out = out[:st - 1]
+        while st is not None and len(out) >= 2 and out[-1] in _CITY_LEADS:
+            out.pop()
+        cand = " ".join(out)
+    # Tiene que cazar ESTA descripción (palabra completa, frase seguida). Si al limpiar quedaron
+    # palabras que no eran vecinas ("ARCO#07144ARCO" → "ARCO PITTSBURG"), se acorta hasta que case.
+    words = cand.split()
+    while words:
+        while words and words[-1] in _CONNECTORS:
+            words.pop()
+        c = " ".join(words)
+        if c and f" {_phrase(c)} " in f" {_phrase(d)} ":
+            return c
+        words = words[:-1]
+    return specific_phrase(d, None)
 
 
 def validate_keyword(keyword: str, covers: list[str], items: list[dict]) -> dict:

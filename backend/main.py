@@ -10,6 +10,7 @@ tocarla. El `company_id` de la URL ya NO se confía a ciegas.
 import json
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import os
 import re
 from typing import Optional
 
@@ -27,9 +28,10 @@ from auth import (current_user, effective_role, owned_company, owner_company, ow
                   client_writable_company, console_company, user_firm)
 from categories import categories_for, categories_for_company
 from company_profile import format_profile_facts
-from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_UPDATE, record_change,
-                         snapshot)
+from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_UPDATE, last_change, record_change,
+                         snapshot, undo_change)
 from db import get_session
+import demo  # FASE 13 — despliegue de demo (no hace nada si DEMO_MODE está apagado)
 from ingestion import categorize_pending, ingest_csv, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
@@ -38,12 +40,14 @@ from models import (
     SheetLabel,
     TransactionLabel,
     CellFormat,
-    CategorizationChange,)
+    CategorizationChange,
+    BankConnection,)
 from reports import pivot, pivot_leaves, income_statement
+import bank
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
     is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
-    reapply_rule_precedence,
+    reapply_rule_precedence, suggest_keyword, normalize,
 )
 
 
@@ -122,6 +126,7 @@ class RuleUpdate(BaseModel):
     category: Optional[str] = None
     subcategory: Optional[str] = None  # comercio presentable que asigna la regla ("" → limpiar)
     priority: Optional[int] = None     # prioridad manual (1 = primero); null → orden automático
+    style: Optional[dict] = None       # resaltado de la fila en la hoja de Reglas: {bg, bold, italic}
 
 
 class RuleCreate(BaseModel):
@@ -157,6 +162,10 @@ app.add_middleware(
         "https://contabu-prod.firebaseapp.com",
         "https://contabu.com",
         "https://www.contabu.com",
+        # Orígenes extra por variable de entorno, separados por coma (FASE 13, 3-oct): el servicio de demo
+        # pone el de SU frontend (p. ej. https://demo.contabu.com) sin tocar el código — el subdominio
+        # todavía no está decidido (docs/DEMO Y ENTREGA.md).
+        *[o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()],
     ],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -173,6 +182,7 @@ def _create_own_firm(user: User, session: Session) -> tuple[Firm, FirmRole]:
     """Oficina de UN usuario (FASE 13 Paso 4). Jose: quien se registra *"queda como un bookkeeper así
     sea un solo usuario, con todas las herramientas"*. El rol CLIENT nunca nace aquí: solo por invitación."""
     firm = Firm(name=(user.email or "").strip() or "My Firm", owner_user_id=user.id)
+    demo.mark_if_demo(firm)  # solo en el demo: fecha de borrado (la limpieza solo toca estas)
     session.add(firm)
     session.flush()
     session.add(FirmMember(firm_id=firm.id, user_id=user.id, email=user.email or "", role=FirmRole.OWNER))
@@ -203,14 +213,20 @@ def get_me(
     ids |= set(session.exec(select(CompanyMember.company_id).where(CompanyMember.user_id == user.id)).all())
 
     if not ids and (firm is None or firm_role == FirmRole.OWNER):
-        # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector).
         if firm is None:
+            # DEMO: cada visitante que llega barre las oficinas vencidas (el demo solo crece cuando
+            # alguien entra). Va ANTES de crear la oficina nueva: su commit no debe arrastrarla.
+            demo.cleanup_quietly(session)
             firm, firm_role = _create_own_firm(user, session)
-        company = Company(name="My Business", sector="", user_id=user.id, firm_id=firm.id)
-        session.add(company)
+        if demo.DEMO_MODE:
+            # DEMO: los libros sembrados por el generador de Movimientos (o uno vacío si aún no existe).
+            books = demo.seed_visitor_books(session, firm, user)
+        else:
+            # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector).
+            books = [Company(name="My Business", sector="", user_id=user.id, firm_id=firm.id)]
+            session.add(books[0])
         session.commit()
-        session.refresh(company)
-        ids = {company.id}
+        ids = {b.id for b in books}
 
     companies = session.exec(select(Company).where(Company.id.in_(ids)).order_by(Company.id)).all() if ids else []
     roles: dict[int, str] = {}
@@ -427,6 +443,209 @@ def set_transactions_account(
     return {"updated": len(rows), "bank_account": masked}
 
 
+
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+# BANCOS VINCULADOS (Plaid) — área Movimientos, 3-oct-2026. Lógica en `bank.py`.
+# El access_token nace en el servidor (canje del public_token), se guarda cifrado y NUNCA viaja
+# al navegador. Al navegador solo llegan link_tokens de un solo uso.
+# ════════════════════════════════════════════════════════════════════════════════════════════════
+
+class BankLinkTokenRequest(BaseModel):
+    """Para abrir Plaid Link. Con `connection_id` se abre en modo actualización (reparar)."""
+    connection_id: Optional[int] = None
+    language: Optional[str] = None  # "es" | "en" — el idioma de Link
+
+
+class BankConnectionCreate(BaseModel):
+    """Lo que devuelve Plaid Link en `onSuccess`: el public_token (de un solo uso) y el banco."""
+    public_token: str
+    institution_name: Optional[str] = None
+
+
+def _bank_connection_out(c: BankConnection) -> dict:
+    """La conexión SIN el token (ni cifrado) y sin el cursor."""
+    return {"id": c.id, "environment": c.environment, "institution_name": c.institution_name,
+            "accounts": c.accounts or [], "status": c.status, "last_error": c.last_error,
+            "last_synced_at": c.last_synced_at.isoformat() if c.last_synced_at else None}
+
+
+def _owned_bank_connection(company_id: int, connection_id: int, session: Session) -> BankConnection:
+    conn = session.get(BankConnection, connection_id)
+    if conn is None or conn.company_id != company_id:
+        raise HTTPException(status_code=404, detail="Conexión no encontrada.")
+    return conn
+
+
+def _bank_http_error(e: Exception) -> HTTPException:
+    """Errores con código estable para que la pantalla los traduzca (EN/ES)."""
+    if isinstance(e, bank.BankConfigError):
+        return HTTPException(status_code=503, detail={"code": "bank_not_configured", "reason": e.code})
+    if e.disconnected:
+        return HTTPException(status_code=409, detail={"code": "bank_disconnected", "reason": e.code})
+    return HTTPException(status_code=502, detail={"code": "bank_error", "reason": e.code})
+
+
+def _bank_sync(session: Session, conn: BankConnection, company: Company) -> dict:
+    """Sincroniza y deja el estado de la conexión al día."""
+    try:
+        summary = bank.sync(session, conn, company)
+    except bank.BankConfigError as e:
+        raise _bank_http_error(e)
+    except bank.BankError as e:
+        session.rollback()
+        conn = session.get(BankConnection, conn.id)
+        conn.last_error = e.code
+        if e.disconnected:
+            conn.status = "disconnected"
+        session.add(conn)
+        session.commit()
+        raise _bank_http_error(e)
+    conn.status = "active"
+    conn.last_error = None
+    conn.last_synced_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    session.add(conn)
+    session.commit()
+    session.refresh(conn)
+    return {"connection": _bank_connection_out(conn), "sync": summary,
+            "audit_findings": len(_company_audit(session, company.id))}
+
+
+@app.get("/api/companies/{company_id}/bank-connections")
+def list_bank_connections(
+    company_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Si la vinculación está configurada (sin secretos) y los bancos vinculados al libro."""
+    console_company(company_id, user, session)
+    rows = session.exec(select(BankConnection).where(BankConnection.company_id == company_id)
+                        .order_by(BankConnection.id)).all()
+    return {"config": bank.public_config(), "connections": [_bank_connection_out(c) for c in rows]}
+
+
+@app.post("/api/companies/{company_id}/bank-connections/link-token")
+def create_bank_link_token(
+    company_id: int,
+    payload: BankLinkTokenRequest,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Un link_token de un solo uso para abrir Plaid Link (nuevo banco, o reparar uno cortado)."""
+    owned_company(company_id, user, session, write=True)
+    access_token = None
+    if payload.connection_id is not None:
+        conn = _owned_bank_connection(company_id, payload.connection_id, session)
+        try:
+            access_token = bank.decrypt_token(conn.access_token_enc)
+        except bank.BankConfigError as e:
+            raise _bank_http_error(e)
+    try:
+        return {"link_token": bank.create_link_token(user.id, payload.language or "en", access_token)}
+    except (bank.BankConfigError, bank.BankError) as e:
+        raise _bank_http_error(e)
+
+
+@app.post("/api/companies/{company_id}/bank-connections")
+def create_bank_connection(
+    company_id: int,
+    payload: BankConnectionCreate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Canjea el public_token que devolvió Plaid Link, guarda la conexión (token cifrado) y hace la
+    primera sincronización. Si ese Item ya estaba en el libro, actualiza su token en vez de duplicarlo."""
+    company = owned_company(company_id, user, session, write=True)
+    public_token = (payload.public_token or "").strip()
+    if not public_token:
+        raise HTTPException(status_code=422, detail="public_token es obligatorio")
+    try:
+        access_token, item_id = bank.exchange_public_token(public_token)
+        enc = bank.encrypt_token(access_token)
+    except (bank.BankConfigError, bank.BankError) as e:
+        raise _bank_http_error(e)
+    conn = session.exec(select(BankConnection).where(BankConnection.company_id == company_id)
+                        .where(BankConnection.item_id == item_id)).first()
+    if conn is None:
+        conn = BankConnection(company_id=company_id, environment=bank.environment(),
+                              item_id=item_id, access_token_enc=enc, created_by_user_id=user.id)
+    conn.access_token_enc = enc
+    conn.institution_name = (payload.institution_name or "").strip() or conn.institution_name
+    session.add(conn)
+    session.commit()
+    session.refresh(conn)
+    return _bank_sync(session, conn, company)
+
+
+@app.post("/api/companies/{company_id}/bank-connections/{connection_id}/sync")
+def sync_bank_connection(
+    company_id: int,
+    connection_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """"Actualizar": trae lo nuevo desde el cursor. Lo que ya estaba no se duplica. También se usa
+    después de reparar una conexión en Plaid Link (modo actualización)."""
+    company = owned_company(company_id, user, session, write=True)
+    return _bank_sync(session, _owned_bank_connection(company_id, connection_id, session), company)
+
+
+@app.delete("/api/companies/{company_id}/bank-connections/{connection_id}")
+def delete_bank_connection(
+    company_id: int,
+    connection_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Desvincular: borra el Item en Plaid (`/item/remove`) y la conexión. Los movimientos ya
+    importados SE QUEDAN en el libro (son contabilidad, no caché del banco). Si el banco ya había
+    cortado la conexión, se borra igual."""
+    owned_company(company_id, user, session, write=True)
+    conn = _owned_bank_connection(company_id, connection_id, session)
+    revoked = True
+    try:
+        bank.remove_item(bank.decrypt_token(conn.access_token_enc), conn.environment)
+    except (bank.BankError, bank.BankConfigError):
+        revoked = False  # cortada o token ilegible: no queda acceso que revocar en Plaid
+    session.delete(conn)
+    session.commit()
+    return {"deleted": connection_id, "revoked": revoked}
+
+
+class BankRemovedDecision(BaseModel):
+    action: str  # "keep" (quitar la marca, el movimiento se queda) | "delete" (eliminarlo del libro)
+
+
+@app.post("/api/companies/{company_id}/transactions/{transaction_id}/bank-removed")
+def decide_bank_removed(
+    company_id: int,
+    transaction_id: int,
+    payload: BankRemovedDecision,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """El banco vinculado RETIRÓ un movimiento ya registrado (aviso `removed` de Plaid) y el bookkeeper
+    decide: `keep` quita la marca y lo deja; `delete` lo elimina del libro (con sus etiquetas y su
+    formato; el historial de correcciones se queda: es historia). Solo filas marcadas por el banco."""
+    owned_company(company_id, user, session, write=True)
+    tx = session.get(Transaction, transaction_id)
+    if not tx or tx.company_id != company_id:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if tx.bank_removed_at is None:
+        raise HTTPException(status_code=409, detail="not_removed_by_bank")
+    if payload.action == "keep":
+        tx.bank_removed_at = None
+        session.add(tx)
+    elif payload.action == "delete":
+        for model in (TransactionLabel, CellFormat):
+            for row in session.exec(select(model).where(model.transaction_id == tx.id)).all():
+                session.delete(row)
+        session.delete(tx)
+    else:
+        raise HTTPException(status_code=422, detail="action must be keep or delete")
+    session.commit()
+    return {"id": transaction_id, "action": payload.action}
+
+
 @app.get("/api/companies/{company_id}")
 def get_company(
     company_id: int,
@@ -480,7 +699,8 @@ def delete_company(
         raise HTTPException(status_code=400, detail="No puedes eliminar tu única empresa.")
     # Borrar los datos hijos (reglas de SECTOR no se tocan: tienen company_id NULL).
     for model in (Transaction, CategoryRule, CompanyCategory, PnlReport, CompanyMember,
-                  CategorizationChange):  # + el historial de correcciones del libro
+                  CategorizationChange,   # + el historial de correcciones del libro
+                  BankConnection):        # + sus bancos vinculados (Teller)
         session.exec(delete(model).where(model.company_id == company_id))
     company = session.get(Company, company_id)
     session.delete(company)
@@ -692,18 +912,81 @@ def list_rules(
     out = []
     for r in rules:
         # Lo escrito a mano NO cuenta: está desconectado de las reglas (Jose, 3-oct).
-        matches = sum(1 for t in txs if t.source != "manual"
-                      and match_rule([r], matchable_text(t.description, t.description_extra)) is not None)
+        hit = [t for t in txs if t.source != "manual"
+               and match_rule([r], matchable_text(t.description, t.description_extra)) is not None]
+        matches = len(hit)
+        inflow = sum(1 for t in hit if t.is_inflow)
+        # Hacia dónde va el dinero de lo que caza: así el editor de categorías ofrece primero las
+        # secciones que tienen sentido (un pago no debería ir a Ingresos).
+        direction = None if not hit else ("in" if inflow == len(hit) else "out" if inflow == 0 else "mixed")
         out.append({
             "id": r.id, "match_text": r.match_text,
             "account_type": r.account_type.value if r.account_type else None,
             "category": r.category, "subcategory": r.subcategory, "matches": matches,
-            "priority": r.priority,
+            "direction": direction,
+            "priority": r.priority, "style": r.style,
             # `scope`/`sector`: si la regla es de ESTE libro o de todo un sector (la hoja de reglas
             # los muestra como una sola columna "Sector": "This book" o el nombre del sector).
             "scope": r.scope.value, "sector": r.sector,
         })
     out.sort(key=lambda x: x["matches"], reverse=True)
+    return out
+
+
+class RulePreviewIn(BaseModel):
+    """Vista previa de una regla ANTES de crearla. Sin `keyword`, se sugiere a partir de la fila."""
+    keyword: Optional[str] = None
+    transaction_id: Optional[int] = None
+
+
+@app.post("/api/companies/{company_id}/rules/preview")
+def preview_rule(
+    company_id: int,
+    payload: RulePreviewIn,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Qué cazaría una regla con esta palabra clave, sin crear nada (la ventana "Crear regla" la
+    llama mientras el bookkeeper escribe). Con `transaction_id` y sin `keyword`, sugiere una palabra
+    clave limpia para esa fila (`rules.suggest_keyword`). Devuelve cuántos movimientos caza, cuántos
+    están Pendientes, cuántos son escritos a mano (no se tocan), si el dinero entra o sale, y si ya
+    existe una regla con esa palabra."""
+    console_company(company_id, user, session)
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company_id)
+                       .order_by(Transaction.date.desc())).all()
+    keyword = (payload.keyword or "").strip()
+    seed = None
+    if payload.transaction_id is not None:
+        seed = next((t for t in txs if t.id == payload.transaction_id), None)
+        if seed is None:
+            raise HTTPException(status_code=404, detail="Transacción no encontrada.")
+        if not keyword:
+            keyword = suggest_keyword(seed.description, seed.description_extra)
+    out = {"keyword": keyword, "matches": 0, "pending": 0, "manual": 0, "inflow": 0, "outflow": 0,
+           "examples": [], "duplicate": None, "seed_matched": None}
+    if len(normalize(keyword)) < 2:
+        return out
+    probe = CategoryRule(id=-1, scope=RuleScope.COMPANY, company_id=company_id, match_text=keyword,
+                         account_type=AccountType.OPERATING_EXPENSE, category="-")
+    for t in txs:
+        if match_rule([probe], matchable_text(t.description, t.description_extra)) is None:
+            continue
+        out["matches"] += 1
+        out["pending"] += t.category is None
+        out["manual"] += t.source == "manual"
+        out["inflow" if t.is_inflow else "outflow"] += 1
+        if len(out["examples"]) < 8:
+            out["examples"].append({"id": t.id, "date": t.date.isoformat(), "description": t.description,
+                                    "amount": float(t.amount), "is_inflow": bool(t.is_inflow),
+                                    "category": t.category, "source": t.source})
+    if seed is not None:
+        out["seed_matched"] = match_rule([probe], matchable_text(seed.description, seed.description_extra)) is not None
+    dup = session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
+                       .where(CategoryRule.scope == RuleScope.COMPANY)).all()
+    for r in dup:
+        if normalize(r.match_text) == normalize(keyword):
+            out["duplicate"] = {"id": r.id, "match_text": r.match_text, "category": r.category}
+            break
     return out
 
 
@@ -775,36 +1058,70 @@ def update_rule(
         data["subcategory"] = (data["subcategory"] or "").strip() or None
     if "priority" in data:
         data["priority"] = _valid_priority(data["priority"])
+    if "style" in data:
+        st = data["style"] or {}
+        bg = st.get("bg")
+        clean = {"bg": bg if isinstance(bg, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", bg) else None,
+                 "bold": bool(st.get("bold")), "italic": bool(st.get("italic"))}
+        data["style"] = clean if (clean["bg"] or clean["bold"] or clean["italic"]) else None
     for field, value in data.items():
         setattr(rule, field, value)
     session.add(rule)
     session.flush()
     # Cambiar SOLO la prioridad no re-aplica la regla a todo lo que matchea (eso pisaría lo que
     # otra regla o el bookkeeper decidieron): solo se re-decide qué regla gana.
+    # Cambiar SOLO cómo se ve (style) no toca ninguna transacción.
     applied = (apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
-               if data.keys() - {"priority"} else 0)
-    reassigned = reapply_rule_precedence(session, company_id, user_id=user.id)
+               if data.keys() - {"priority", "style"} else 0)
+    reassigned = (reapply_rule_precedence(session, company_id, user_id=user.id)
+                  if data.keys() - {"style"} else 0)
     session.commit()
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
             "account_type": rule.account_type.value if rule.account_type else None,
             "category": rule.category, "subcategory": rule.subcategory,
-            "priority": rule.priority, "applied": applied, "reassigned": reassigned}
+            "priority": rule.priority, "style": rule.style, "applied": applied, "reassigned": reassigned}
 
 
 @app.delete("/api/companies/{company_id}/rules/{rule_id}")
 def delete_rule(
     company_id: int,
     rule_id: int,
+    revert: bool = False,
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Elimina una regla del reglamento. No re-categoriza lo ya hecho (solo deja de aplicar a futuro)."""
+    """Elimina una regla del reglamento. Por defecto no re-categoriza lo ya hecho (solo deja de
+    aplicar a futuro). Con `revert=true` —lo usa DESHACER al crear una regla— primero devuelve a su
+    estado anterior las transacciones que esta regla movió (según el historial de correcciones),
+    siempre que nadie las haya tocado después."""
     owned_company(company_id, user, session, write=True)
     rule = _owned_company_rule(company_id, rule_id, session)
+    reverted = 0
+    if revert:
+        changes = session.exec(
+            select(CategorizationChange)
+            .where(CategorizationChange.company_id == company_id)
+            .where(CategorizationChange.matched_rule_id_after == rule_id)
+            .order_by(CategorizationChange.id.desc())).all()
+        seen: set[int] = set()
+        for ch in changes:
+            if ch.transaction_id in seen:
+                continue  # solo el cambio MÁS RECIENTE de cada transacción
+            seen.add(ch.transaction_id)
+            tx = session.get(Transaction, ch.transaction_id)
+            if tx is not None and tx.company_id == company_id and \
+                    undo_change(session, tx, ch, user_id=user.id):
+                reverted += 1
+        # Lo que la regla solo "estampó" (misma categoría, sin cambio en el historial) pierde su
+        # procedencia: ya no la decide una regla que no existe.
+        for tx in session.exec(select(Transaction).where(Transaction.company_id == company_id)
+                               .where(Transaction.matched_rule_id == rule_id)).all():
+            tx.matched_rule_id = None
+            session.add(tx)
     session.delete(rule)
     session.commit()
-    return {"deleted": rule_id}
+    return {"deleted": rule_id, "reverted": reverted}
 
 
 class CheckoutPayload(BaseModel):
@@ -1409,9 +1726,13 @@ def list_transactions(
             "font_size": cf.font_size, "font_family": cf.font_family,
         }
 
+    # El banco vinculado RETIRÓ la fila después de registrarla (aviso `removed` de Plaid): manda sobre
+    # lo del auditor, porque el bookkeeper tiene que decidir si se queda (Movimientos, 4-oct).
+    removed_obs = {"type": "bank_removed", "severity": "high",
+                   "text": "The linked bank withdrew this transaction after it was recorded."}
     return [{
         **t.model_dump(),
-        "observation": obs.get(t.id),
+        "observation": removed_obs if t.bank_removed_at else obs.get(t.id),
         "labels": by_tx.get(t.id, []),
         "formats": fmts.get(t.id, {}),
     } for t in txs]
@@ -1606,6 +1927,27 @@ def update_transaction(
     # Devuelve la tx + cuántas OTRAS alineó la regla → el frontend lo muestra y re-pinta de verde.
     return {"id": tx.id, "applied": applied, "rule_updated": rule_updated,
             "rule_skipped_generic": rule_skipped_generic}
+
+
+@app.post("/api/transactions/{transaction_id}/undo")
+def undo_transaction_change(
+    transaction_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """DESHACER (Ctrl+Z / botón): devuelve la transacción al estado ANTES de su último cambio de
+    categorización, con su procedencia exacta (si la decidía una regla, vuelve a ser `ƒ`). Si alguien
+    la cambió después, no se pisa: 409."""
+    tx = owned_transaction(transaction_id, user, session, write=True)
+    change = last_change(session, tx)
+    if change is None:
+        raise HTTPException(status_code=404, detail={"code": "nothing_to_undo"})
+    if not undo_change(session, tx, change, user_id=user.id):
+        raise HTTPException(status_code=409, detail={"code": "changed_since"})
+    session.commit()
+    session.refresh(tx)
+    return {"id": tx.id, "category": tx.category, "subcategory": tx.subcategory,
+            "account_type": tx.account_type.value if tx.account_type else None, "source": tx.source}
 
 
 @app.post("/api/transactions/clarify-group")

@@ -167,9 +167,9 @@ def owned_company(company_id: int, user: User, session: Session, *, write: bool 
     `write=True` exige ser **operador** del libro (OWNER/MEMBER): rechaza VIEWER *y* CLIENT.
 
     ⚠️ Que CLIENT caiga aquí es a propósito y es lo que hace este cambio seguro: al aparecer el rol
-    nuevo, las 24 escrituras de la consola quedan **cerradas por defecto** (fail closed). Las 3 que el
-    cliente SÍ debe poder usar —subir extracto, foto de recibo, responder— se abren una por una con
-    `client_writable_company()`, nunca al revés.
+    nuevo, las escrituras de la consola quedan **cerradas por defecto** (fail closed). Lo que el
+    cliente SÍ debe poder hacer (hoy: subir su extracto) se abre una ruta a la vez con
+    `client_writable_company()`, nunca al revés. (La foto de recibo se eliminó el 3-oct.)
     """
     company = session.get(Company, company_id)
     if company is None:
@@ -211,7 +211,7 @@ def console_company(company_id: int, user: User, session: Session) -> Company:
 
 
 def client_writable_company(company_id: int, user: User, session: Session) -> Company:
-    """Lo que el CLIENTE aporta: subir un extracto, foto de un recibo, responder una pregunta.
+    """Lo que el CLIENTE aporta (hoy: subir su extracto; mañana, responder una pregunta).
 
     Pasan OWNER · MEMBER · CLIENT. **VIEWER no**: es de solo lectura y eso no cambia.
     Úsalo SOLO en los endpoints de la lista blanca del cliente (ver docs/FASE 13.md Paso 3).
