@@ -1,12 +1,11 @@
 {
   "nav": {
     "dashboard": "Summary",
-    "transactions": "Activity",
-    "upload": "Upload",
+    "transactions": "Transactions",
+    "upload": "Bank feeds",
     "audit": "Audit",
     "pnl": "P&L",
-    "rules": "Rules",
-    "bank": "Link a bank"
+    "rules": "Rules"
   },
   "sectors": {
     "construction": "Construction",
@@ -104,12 +103,12 @@
     "netIncome": "Net income"
   },
   "tx": {
-    "title": "Activity",
+    "title": "Transactions",
     "total": "{{count}} total",
     "search": "Search",
     "allAccounts": "All accounts",
     "empty": "No transactions yet.",
-    "emptyHint": "Upload a statement in the \"Upload\" tab.",
+    "emptyHint": "Link a bank or upload a statement in the \"Bank feeds\" tab.",
     "source": {
       "rule": "Rule",
       "ai": "AI",
@@ -167,7 +166,8 @@
     "quotaBlocked": "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them.",
     "audit": "The auditor checked your books and found {{count}} things to look at — see the Audit tab.",
     "proposeHint": "The AI categorized {{count}} transactions. Turn what it learned into rules you approve — next time they won't need AI.",
-    "proposeCta": "Create my rules"
+    "proposeCta": "Create my rules",
+    "orCsv": "or upload a statement (CSV)"
   },
   "bank": {
     "title": "Link a bank",
@@ -592,6 +592,19 @@
       "compact": "Compact",
       "normal": "Normal",
       "roomy": "Roomy"
+    },
+    "bank": {
+      "update": "↻ Update bank",
+      "updating": "Updating…",
+      "updatedAgo": "Updated {{when}}",
+      "never": "Never updated",
+      "disconnected_one": "{{count}} bank is disconnected.",
+      "disconnected_other": "{{count}} banks are disconnected.",
+      "goReconnect": "Reconnect in Bank feeds",
+      "failed_one": "{{count}} bank couldn't update. Try again in a few minutes.",
+      "failed_other": "{{count}} banks couldn't update. Try again in a few minutes.",
+      "close": "Close",
+      "justNow": "Updated just now"
     }
   },
   "common": {

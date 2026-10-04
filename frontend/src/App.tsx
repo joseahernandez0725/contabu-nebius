@@ -5,7 +5,6 @@ import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Sheet from "./components/Sheet";
 import Upload from "./components/Upload";
-import BankConnections from "./components/BankConnections";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
 import Pnl from "./components/Pnl";
@@ -247,8 +246,6 @@ function App() {
               // categorizaba algo, y desde el 27-sep no categoriza. El proponedor vuelve en Auditoría (F11).
               <Upload onDone={() => { reloadReview(); setView("dashboard"); }} />
             )}
-            {/* Solo vincular el banco (Resumen vacío · Archivo → Vincular un banco). Movimientos, 4-oct. */}
-            {view === "bank" && <div className="max-w-2xl"><BankConnections /></div>}
             {view === "settings" && (
               <Settings company={company} onSaved={onCompanyReady} onDeleted={onCompanyDeleted} canDelete={companies.length > 1} />
             )}

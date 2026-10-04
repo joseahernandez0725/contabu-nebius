@@ -70,6 +70,14 @@ export default function Upload({ onDone, onProposeRules }: {
 
   return (
     <div className="space-y-4">
+      {/* BANCOS (Jose, 4-oct): primero los bancos vinculados (Plaid; los movimientos entran solos, por
+          el mismo motor) y debajo, la otra puerta: el extracto en CSV. */}
+      <BankConnections />
+      <div className="flex items-center gap-3 text-xs text-slate-400">
+        <span className="h-px flex-1 bg-slate-200" />
+        {t("upload.orCsv")}
+        <span className="h-px flex-1 bg-slate-200" />
+      </div>
       <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
         <h2 className="font-semibold text-slate-900">{t("upload.title")}</h2>
         <p className="text-sm text-slate-500 mt-1">{t("upload.subtitle")}</p>
@@ -118,9 +126,6 @@ export default function Upload({ onDone, onProposeRules }: {
 
         {error && <div className="alert alert-error mt-4 text-sm">{error}</div>}
       </div>
-
-      {/* Vincular el banco (Plaid): los movimientos entran solos, por el mismo motor. Movimientos. */}
-      <BankConnections />
 
       {result && (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 text-center">

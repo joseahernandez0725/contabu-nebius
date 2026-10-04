@@ -2,11 +2,10 @@
   "nav": {
     "dashboard": "Resumen",
     "transactions": "Movimientos",
-    "upload": "Subir",
+    "upload": "Bancos",
     "audit": "Auditoría",
     "pnl": "P&L",
-    "rules": "Reglas",
-    "bank": "Vincular un banco"
+    "rules": "Reglas"
   },
   "sectors": {
     "construction": "Construcción",
@@ -125,7 +124,7 @@
     "search": "Buscar",
     "allAccounts": "Todas las cuentas",
     "empty": "Aún no hay movimientos.",
-    "emptyHint": "Sube un extracto en la pestaña \"Subir\".",
+    "emptyHint": "Vincula un banco o sube un extracto en la pestaña \"Bancos\".",
     "source": {
       "rule": "Regla",
       "ai": "IA",
@@ -183,7 +182,8 @@
     "quotaBlocked": "{{count}} transacciones no se categorizaron — alcanzaste tu cupo de IA. Sube de plan para categorizarlas.",
     "audit": "El auditor revisó tus libros y encontró {{count}} cosas para mirar — ve a Auditoría.",
     "proposeHint": "La IA categorizó {{count}} transacciones. Convierte lo que aprendió en reglas que tú apruebas — la próxima vez no necesitarán IA.",
-    "proposeCta": "Crear mis reglas"
+    "proposeCta": "Crear mis reglas",
+    "orCsv": "o sube un extracto (CSV)"
   },
   "bank": {
     "title": "Vincular un banco",
@@ -673,6 +673,19 @@
       "compact": "Compacto",
       "normal": "Normal",
       "roomy": "Amplio"
+    },
+    "bank": {
+      "update": "↻ Actualizar banco",
+      "updating": "Actualizando…",
+      "updatedAgo": "Actualizado {{when}}",
+      "never": "Sin actualizar todavía",
+      "disconnected_one": "{{count}} banco está desconectado.",
+      "disconnected_other": "{{count}} bancos están desconectados.",
+      "goReconnect": "Reconectar en Bancos",
+      "failed_one": "{{count}} banco no se pudo actualizar. Intenta de nuevo en unos minutos.",
+      "failed_other": "{{count}} bancos no se pudieron actualizar. Intenta de nuevo en unos minutos.",
+      "close": "Cerrar",
+      "justNow": "Actualizado hace un momento"
     }
   },
   "shell": {

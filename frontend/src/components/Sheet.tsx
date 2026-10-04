@@ -4,7 +4,8 @@ import i18n from "../i18n";
 import { RevoGrid } from "@revolist/react-datagrid";
 import {
   getSheetRows, getCategories, updateTransaction, undoTransactionChange, getLabels, createLabel, followRule, deleteRule,
-  decideBankRemoved,
+  decideBankRemoved, getBankConnections, syncBankConnection, BankApiError,
+  type BankConnection, type BankSync,
   setTransactionLabels, applyCellFormat, type ChartOfAccounts,
 } from "../api";
 import type { CellFormat, Observation, SheetLabel, SheetRow } from "../types";
@@ -15,6 +16,17 @@ import {
   cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem,
 } from "./gridKit";
 import type { View } from "./Sidebar";
+import { SyncSummary, sumSyncs } from "./BankConnections";
+
+/** "hace 5 minutos" / "5 minutes ago" — `iso` es UTC sin zona (como lo guarda el backend). */
+function timeAgo(iso: string, lang: string): string {
+  const sec = (Date.parse(iso + "Z") - Date.now()) / 1000;
+  const rtf = new Intl.RelativeTimeFormat(lang, { numeric: "auto" });
+  const a = Math.abs(sec);
+  if (a < 3600) return rtf.format(Math.round(sec / 60), "minute");
+  if (a < 86400) return rtf.format(Math.round(sec / 3600), "hour");
+  return rtf.format(Math.round(sec / 86400), "day");
+}
 
 const SHEET_EDITORS = { ...categoryEditors, ...textEditors };
 import Pivot from "./Pivot";
@@ -127,6 +139,40 @@ export default function Sheet({ onNavigate, menuRight }: {
   const load = useCallback(() => {
     getSheetRows().then(setRows).catch((e) => setError(String(e?.message ?? e)));
   }, []);
+
+  // ↻ ACTUALIZAR BANCO (Jose, 4-oct): re-sincroniza TODAS las conexiones activas del libro desde la
+  // hoja, por la misma ruta que el botón "Actualizar" de Bancos, y muestra el mismo resumen. Sin banco
+  // vinculado (o sin Plaid configurado) no aparece. Una conexión caída lleva a Bancos a reconectar.
+  const [bankConns, setBankConns] = useState<BankConnection[]>([]);
+  const [bankBusy, setBankBusy] = useState(false);
+  const [bankNote, setBankNote] = useState<{ sync: BankSync | null; disconnected: number; failed: number } | null>(null);
+  const [, setNowTick] = useState(0); // re-pinta "hace X" cada minuto
+  const loadBank = useCallback(() => {
+    getBankConnections().then((r) => setBankConns(r.config.enabled ? r.connections : [])).catch(() => setBankConns([]));
+  }, []);
+  useEffect(() => {
+    loadBank();
+    const id = window.setInterval(() => setNowTick((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, [loadBank]);
+  const syncAllBanks = useCallback(async () => {
+    setBankBusy(true); setBankNote(null);
+    const results: BankSync[] = [];
+    let disconnected = bankConns.filter((c) => c.status === "disconnected").length;
+    let failed = 0;
+    for (const c of bankConns.filter((c) => c.status !== "disconnected")) {
+      try { results.push((await syncBankConnection(c.id)).sync); }
+      catch (e) { if (e instanceof BankApiError && e.code === "bank_disconnected") disconnected++; else failed++; }
+    }
+    setBankNote({ sync: results.length ? sumSyncs(results) : null, disconnected, failed });
+    setBankBusy(false);
+    loadBank();
+    load(); // la hoja se recarga sola con lo que entró
+  }, [bankConns, loadBank, load]);
+  // "Actualizado hace X": la conexión MÁS atrasada (si una nunca se sincronizó, eso manda).
+  const bankStamps = bankConns.map((c) => c.last_synced_at);
+  const oldestSync = bankStamps.includes(null) ? null
+    : bankStamps.reduce<string | null>((m, s) => (m === null || (s as string) < m ? s : m), null);
   useEffect(() => {
     load();
     getCategories().then((c) => { setChart(c); setEditorChart(c); }).catch(() => {});
@@ -749,7 +795,8 @@ export default function Sheet({ onNavigate, menuRight }: {
   const menus: Menu[] = [
     { id: "file", label: t("sheet.mb.file"), items: [
       { label: t("sheet.mb.upload"), onClick: () => onNavigate?.("upload"), disabled: !onNavigate },
-      { label: t("sheet.mb.linkBank"), onClick: () => onNavigate?.("bank"), disabled: !onNavigate },
+      { label: t("sheet.mb.linkBank"), onClick: () => onNavigate?.("upload"), disabled: !onNavigate },
+      ...(bankConns.length ? [{ label: t("sheet.bank.update"), disabled: bankBusy, onClick: () => void syncAllBanks() }] : []),
       "sep",
       { label: t("sheet.mb.importRules"), onClick: () => withRules((c) => c.importRules()) },
       { label: t("sheet.mb.exportRules"), onClick: () => withRules((c) => c.exportRules()) },
@@ -821,7 +868,45 @@ export default function Sheet({ onNavigate, menuRight }: {
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 104px)", minHeight: 420 }}>
       <style>{MANUAL_CSS}</style>
       {rowCss && <style>{rowCss}</style>}
-      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={menuRight} />
+      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={<>
+        {bankConns.length > 0 && (
+          <>
+            <span style={{ fontSize: 11.5, color: "#8a958f" }}>
+              {!oldestSync ? t("sheet.bank.never")
+                : Date.now() - Date.parse(oldestSync + "Z") < 60_000 ? t("sheet.bank.justNow")
+                : t("sheet.bank.updatedAgo", { when: timeAgo(oldestSync, lang2) })}
+            </span>
+            <button onClick={() => void syncAllBanks()} disabled={bankBusy}
+              style={{ border: "1px solid #1A8754", color: "#1A8754", background: "#fff", borderRadius: 6,
+                       fontSize: 12, fontWeight: 600, padding: "2px 10px", cursor: bankBusy ? "wait" : "pointer",
+                       opacity: bankBusy ? 0.6 : 1 }}>
+              {bankBusy ? t("sheet.bank.updating") : t("sheet.bank.update")}
+            </button>
+          </>
+        )}
+        {menuRight}
+      </>} />
+      {bankNote && (
+        <div style={{ position: "relative", marginBottom: 8 }}>
+          {bankNote.sync && <SyncSummary s={bankNote.sync} />}
+          {bankNote.disconnected > 0 && (
+            <div className="alert text-sm bg-amber-50 text-amber-800 border-amber-200 mt-1">
+              <span>
+                {t("sheet.bank.disconnected", { count: bankNote.disconnected })}{" "}
+                <button onClick={() => onNavigate?.("upload")} className="underline font-semibold">
+                  {t("sheet.bank.goReconnect")}
+                </button>
+              </span>
+            </div>
+          )}
+          {bankNote.failed > 0 && (
+            <div className="alert alert-error text-sm mt-1">{t("sheet.bank.failed", { count: bankNote.failed })}</div>
+          )}
+          <button onClick={() => setBankNote(null)} aria-label={t("sheet.bank.close")} title={t("sheet.bank.close")}
+            style={{ position: "absolute", top: 6, insetInlineEnd: 10, border: 0, background: "transparent",
+                     cursor: "pointer", color: "#8a958f", fontSize: 16 }}>×</button>
+        </div>
+      )}
       {/* Barra de control: el filtro por cuenta que pidió Jose, arriba de la hoja. */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
         {/* Hoja / Pivote: el pivote es la MISMA verdad, agrupada — por eso vive aquí al lado

@@ -30,6 +30,43 @@ declare global {
   }
 }
 
+/** Suma los resúmenes de varias conexiones (la hoja sincroniza TODAS de una vez). */
+export function sumSyncs(list: BankSync[]): BankSync {
+  const n = (k: keyof BankSync) => list.reduce((acc, r) => acc + (Number(r[k]) || 0), 0);
+  return {
+    accounts: n("accounts"), fetched: n("fetched"), inserted: n("inserted"),
+    skipped_duplicates: n("skipped_duplicates"), held_pending: n("held_pending"), by_rule: n("by_rule"),
+    by_transfer: n("by_transfer"), pending: n("pending"), not_ready: list.length > 0 && list.every((r) => r.not_ready),
+    skipped_before_csv: n("skipped_before_csv"), modified_applied: n("modified_applied"),
+    modified_recategorized: n("modified_recategorized"), removed_marked: n("removed_marked"),
+    removed_ignored: n("removed_ignored"),
+  };
+}
+
+/** El resumen de un sync: "N nuevos · N ya estaban · …" + lo que el banco cambió o retiró. Lo usan
+ *  esta tarjeta y el botón "↻ Actualizar banco" de la hoja, para que digan lo mismo. */
+export function SyncSummary({ s, className = "" }: { s: BankSync; className?: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className={`alert text-sm bg-brand-green/5 text-slate-700 border-brand-green/20 ${className}`}>
+      <div>
+        {s.not_ready ? t("bank.notReady") : t("bank.synced", {
+          inserted: s.inserted, skipped: s.skipped_duplicates, held: s.held_pending, pending: s.pending,
+        })}
+        {!s.not_ready && ((s.skipped_before_csv ?? 0) > 0) && (
+          <div className="mt-1">{t("bank.beforeCsv", { count: s.skipped_before_csv })}</div>
+        )}
+        {!s.not_ready && ((s.modified_applied ?? 0) > 0) && (
+          <div className="mt-1">{t("bank.modified", { count: s.modified_applied, recat: s.modified_recategorized ?? 0 })}</div>
+        )}
+        {!s.not_ready && ((s.removed_marked ?? 0) > 0) && (
+          <div className="mt-1 text-amber-700">{t("bank.removed", { count: s.removed_marked })}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 let scriptPromise: Promise<void> | null = null;
 function loadPlaid(): Promise<void> {
   if (window.Plaid) return Promise.resolve();
@@ -167,23 +204,7 @@ export default function BankConnections() {
         </ul>
       )}
 
-      {last && (
-        <div className="alert mt-4 text-sm bg-brand-green/5 text-slate-700 border-brand-green/20">
-          {last.not_ready ? t("bank.notReady") : t("bank.synced", {
-            inserted: last.inserted, skipped: last.skipped_duplicates,
-            held: last.held_pending, pending: last.pending,
-          })}
-          {!last.not_ready && ((last.skipped_before_csv ?? 0) > 0) && (
-            <div className="mt-1">{t("bank.beforeCsv", { count: last.skipped_before_csv })}</div>
-          )}
-          {!last.not_ready && ((last.modified_applied ?? 0) > 0) && (
-            <div className="mt-1">{t("bank.modified", { count: last.modified_applied, recat: last.modified_recategorized ?? 0 })}</div>
-          )}
-          {!last.not_ready && ((last.removed_marked ?? 0) > 0) && (
-            <div className="mt-1 text-amber-700">{t("bank.removed", { count: last.removed_marked })}</div>
-          )}
-        </div>
-      )}
+      {last && <SyncSummary s={last} className="mt-4" />}
       {error && <div className="alert alert-error mt-4 text-sm">{error}</div>}
     </div>
   );

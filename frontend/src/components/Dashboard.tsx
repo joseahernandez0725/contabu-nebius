@@ -4,8 +4,7 @@ import { getIncomeStatement, getTransactions, money } from "../api";
 import { KPI, SECTION_LABEL } from "../accounting";
 import type { IncomeStatement as IS, Transaction } from "../types";
 
-type HubView = "transactions" | "audit" | "upload" | "pnl" | "settings";
-type View = HubView | "bank";
+type View = "transactions" | "audit" | "upload" | "pnl" | "settings";
 
 function Kpi({ label, value, tone }: { label: string; value: number; tone: "green" | "rose" }) {
   const color = tone === "green" ? "text-brand-green" : "text-rose-600";
@@ -35,10 +34,10 @@ function BreakdownBar({ label, value, total, color }: {
 }
 
 // Iconos de los atajos del hub.
-const HUB_ICON: Record<HubView, ReactNode> = {
+const HUB_ICON: Record<View, ReactNode> = {
   transactions: <path d="M8 7h12M8 12h12M8 17h12M4 7h.01M4 12h.01M4 17h.01" />,
   audit: <path d="M9 11l3 3 6-6M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" />,
-  upload: <path d="M12 16V4M7 9l5-5 5 5M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" />,
+  upload: <path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" />, // "Bancos"
   pnl: <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3" />,
   settings: <path d="M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h2M19 12h2M12 3v2M12 19v2" />,
 };
@@ -75,12 +74,12 @@ export default function Dashboard({ onNavigate }: {
         </div>
         <h2 className="text-xl font-bold text-slate-900 mt-4">{t("empty.welcome")}</h2>
         <p className="text-slate-500 mt-2 max-w-xs mx-auto">{t("empty.subtitle")}</p>
-        {/* Las dos entradas de un libro nuevo: el extracto (CSV) o el banco vinculado (Plaid). */}
+        {/* Las dos entradas de un libro nuevo; las dos viven en Bancos (banco vinculado arriba, CSV abajo). */}
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <button onClick={() => onNavigate("upload")} className="btn bg-brand-green text-white border-none hover:bg-brand-green-dark">
             {t("empty.cta")}
           </button>
-          <button onClick={() => onNavigate("bank")} className="btn bg-white text-brand-green border-brand-green hover:bg-brand-green/5">
+          <button onClick={() => onNavigate("upload")} className="btn bg-white text-brand-green border-brand-green hover:bg-brand-green/5">
             {t("empty.linkBank")}
           </button>
         </div>
@@ -90,8 +89,8 @@ export default function Dashboard({ onNavigate }: {
 
   const expenses = is.cogs + is.operating_expenses + is.other_expense;
   const positive = is.net_income >= 0;
-  const hub: HubView[] = ["pnl", "transactions", "audit", "upload", "settings"];
-  const hubLabel = (v: HubView) => (v === "pnl" ? t("nav.pnl", { defaultValue: "P&L" })
+  const hub: View[] = ["pnl", "transactions", "audit", "upload", "settings"];
+  const hubLabel = (v: View) => (v === "pnl" ? t("nav.pnl", { defaultValue: "P&L" })
     : v === "settings" ? t("settings.title") : t(`nav.${v}`));
 
   return (

@@ -7,9 +7,8 @@ import LanguageSwitcher from "./LanguageSwitcher";
 import type { Company } from "../types";
 
 // Las vistas de UN libro (la empresa abierta). Es la fuente del tipo `View` que usa App.tsx.
-// Las reglas NO tienen pestaña propia: viven dentro de Activity (Hoja · Pivote · Reglas). Jose, 30-sep.
-// "bank" (Vincular un banco) no está en la barra: se llega desde el Resumen y Archivo → Vincular un banco.
-export type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "settings" | "bank";
+// Las reglas NO tienen pestaña propia: viven dentro de Movimientos / Transactions (Bookkeeping · Reglas · Pivote). Jose, 30-sep.
+export type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "settings";
 
 // BARRA LATERAL (FASE 13). Dos niveles, que es como trabaja un bookkeeper — y como está el modelo:
 //   · ESTE LIBRO → la empresa que está abierta ahora (la capa `Company`)
@@ -30,8 +29,7 @@ const BOOK_ICONS: Record<View, ReactNode> = {
   transactions: ic(<><line x1="8" y1="7" x2="20" y2="7" /><line x1="8" y1="12" x2="20" y2="12" /><line x1="8" y1="17" x2="20" y2="17" /><circle cx="4" cy="7" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="17" r="1" /></>),
   audit: ic(<><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9z" /><path d="M9 13l2 2 4-4" /></>),
   pnl: ic(<><path d="M4 19V5M4 19h16" /><path d="M8 16v-5M12 16V8M16 16v-3" /></>),
-  upload: ic(<><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 17v2a1 1 0 001 1h14a1 1 0 001-1v-2" /></>),
-  bank: ic(<><path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" /></>),
+  upload: ic(<><path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" /></>), // "Bancos" (la clave sigue siendo upload)
   settings: ic(<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></>),
 };
 
@@ -39,7 +37,8 @@ const BOOK_ICONS: Record<View, ReactNode> = {
 // marcadores "Pronto" y el demo del concurso no puede llevar a páginas vacías (docs/DEMO Y ENTREGA.md).
 // No se construyen antes del 30-oct. Cuando exista la primera, vuelve aquí con su sección.
 
-const BOOK_ORDER: View[] = ["dashboard", "transactions", "audit", "pnl", "upload", "settings"];
+// Orden (Jose, 4-oct): Resumen → Bancos → Movimientos → Auditoría → P&L → Ajustes.
+const BOOK_ORDER: View[] = ["dashboard", "upload", "transactions", "audit", "pnl", "settings"];
 
 // Retardos del hover: abrir con una pausa corta evita que la barra salte cuando el mouse solo CRUZA
 // el borde camino a otra cosa; cerrar con otra pausa evita que se cierre por un temblor del mouse.
