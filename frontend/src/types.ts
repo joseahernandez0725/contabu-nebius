@@ -105,6 +105,20 @@ export interface CategoryAmount {
   amount: number;
 }
 
+// --- Entregables (FASE 12): lo PENDIENTE que el P&L tiene que declarar ---
+// Transacciones sin `account_type`: NO entran en ninguna suma del P&L, pero se muestran siempre.
+// Separado por la dirección real del banco porque sin sección no se sabe si suma o resta.
+export interface Uncategorized {
+  count: number;
+  count_in: number;
+  money_in: number;
+  count_out: number;
+  money_out: number;
+  count_unknown: number;   // el banco no dijo la dirección: su propio renglón, no se adivina
+  money_unknown: number;
+  net_cash: number;        // entradas − salidas: efecto en CAJA, no "la utilidad que falta"
+}
+
 export interface IncomeStatement {
   revenue: number;
   cogs: number;
@@ -116,4 +130,6 @@ export interface IncomeStatement {
   net_income: number;
   // Desglose por categoría de cada sección (clave = account_type: REVENUE, COGS, …).
   breakdown?: Record<string, CategoryAmount[]>;
+  // Opcional por compatibilidad: un reporte CERRADO antes de la FASE 12 no lo tiene.
+  uncategorized?: Uncategorized;
 }

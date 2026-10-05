@@ -89,6 +89,11 @@ export default function Dashboard({ onNavigate }: {
 
   const expenses = is.cogs + is.operating_expenses + is.other_expense;
   const positive = is.net_income >= 0;
+  // FASE 12: lo Pendiente (sin `account_type`) no entra en ninguna de estas sumas — se declara.
+  const u = is.uncategorized;
+  const pending = u?.count ?? 0;
+  // Un libro recién subido: hay movimientos, pero ninguno tiene sección todavía.
+  const nothingClassified = pending > 0 && is.revenue === 0 && expenses === 0 && is.other_income === 0;
   const hub: View[] = ["pnl", "transactions", "audit", "upload", "settings"];
   const hubLabel = (v: View) => (v === "pnl" ? t("nav.pnl", { defaultValue: "P&L" })
     : v === "settings" ? t("settings.title") : t(`nav.${v}`));
@@ -97,11 +102,26 @@ export default function Dashboard({ onNavigate }: {
     <div className="space-y-4">
       {/* Héroe (resumen, todo el periodo) */}
       <div className="text-white rounded-3xl shadow-md p-6" style={{ background: "linear-gradient(135deg, #15803d, #14532d)" }}>
-        <div className="text-sm opacity-80">{KPI.netIncome}</div>
+        <div className="text-sm opacity-80">
+          {KPI.netIncome}
+          {pending > 0 && <span className="ms-1 opacity-80">· {t("pnl.beforePending")}</span>}
+        </div>
         <div className="text-4xl font-bold tabular-nums mt-2">{money(is.net_income)}</div>
         <div className="text-sm mt-1 opacity-80">
-          {positive ? t("dashboard.profitPositive") : t("dashboard.profitNegative")}
+          {/* Sin NADA clasificado, el resultado es 0 por falta de datos, no por equilibrio: decir
+              "tu negocio está en ganancia" ahí sería celebrar un número vacío. */}
+          {nothingClassified
+            ? t("pnl.nothingClassified")
+            : positive ? t("dashboard.profitPositive") : t("dashboard.profitNegative")}
         </div>
+        {/* Lo Pendiente se declara también aquí: este número grande es el que más se mira, y sin
+            esta línea un libro 100% Pendiente muestra $0.00 como si estuviera cuadrado. */}
+        {pending > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-xl bg-black/20 px-3 py-2 text-xs">
+            <span className="size-2 rounded-full bg-amber-300 mt-1 shrink-0" aria-hidden />
+            <span>{t("pnl.pendingBadge", { count: pending })}</span>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -119,6 +139,14 @@ export default function Dashboard({ onNavigate }: {
         <BreakdownBar label={SECTION_LABEL.COGS} value={is.cogs} total={expenses} color="bg-rose-400" />
         <BreakdownBar label={SECTION_LABEL.OPERATING_EXPENSE} value={is.operating_expenses} total={expenses} color="bg-amber-400" />
         <BreakdownBar label={SECTION_LABEL.OTHER_EXPENSE} value={is.other_expense} total={expenses} color="bg-slate-400" />
+        {/* Los porcentajes de arriba son sobre lo YA clasificado. Lo que salió sin clasificar va
+            aparte: meterlo en una barra exigiría decidir a qué sección pertenece, y no se sabe. */}
+        {u && u.count_out > 0 && (
+          <div className="flex justify-between text-xs text-amber-700 border-t border-amber-100 pt-2">
+            <span>{t("pnl.pendingTitle")} · {t("pnl.pendingOut")} · {u.count_out}</span>
+            <span className="tabular-nums">{money(u.money_out)}</span>
+          </div>
+        )}
       </div>
 
       {/* Hub de atajos: ir a cada ventana de trabajo */}

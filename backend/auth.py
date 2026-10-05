@@ -26,9 +26,9 @@ AUTH_DEV_MODE = os.getenv("AUTH_DEV_MODE", "").lower() in {"1", "true", "yes"}
 _fb_ready = False
 
 
-def _verify_firebase_token(token: str) -> dict:
-    """Verifica un ID token de Firebase y devuelve el claims decodificado (uid, email…). Importa
-    firebase-admin de forma perezosa para que el modo dev funcione sin tener la dependencia instalada."""
+def firebase_auth():
+    """El módulo `firebase_admin.auth`, con la app inicializada una sola vez. Import perezoso: el modo dev
+    funciona sin la dependencia. Lo usan la verificación de tokens y la limpieza del demo (`demo.py`)."""
     global _fb_ready
     import firebase_admin
     from firebase_admin import auth as fb_auth
@@ -37,7 +37,19 @@ def _verify_firebase_token(token: str) -> dict:
         # Usa las credenciales por defecto del entorno (Cloud Run / GOOGLE_APPLICATION_CREDENTIALS).
         firebase_admin.initialize_app()
         _fb_ready = True
-    return fb_auth.verify_id_token(token)
+    return fb_auth
+
+
+def _verify_firebase_token(token: str) -> dict:
+    """Verifica un ID token de Firebase y devuelve el claims decodificado (uid, email…)."""
+    return firebase_auth().verify_id_token(token)
+
+
+def is_anonymous_token(decoded: dict) -> bool:
+    """¿El token es de una sesión ANÓNIMA de Firebase? El claim, verificado en la doc oficial (4-oct,
+    "Security Rules and Firebase Authentication"): `firebase.sign_in_provider`, que puede valer
+    custom · password · phone · **anonymous** · google.com · facebook.com · github.com · twitter.com."""
+    return (decoded.get("firebase") or {}).get("sign_in_provider") == "anonymous"
 
 
 def current_identity(
@@ -57,11 +69,21 @@ def current_identity(
     token = authorization.removeprefix("Bearer ").strip()
     try:
         decoded = _verify_firebase_token(token)
-        return {"uid": decoded["uid"], "email": decoded.get("email")}
-    except HTTPException:
-        raise
     except Exception:
         raise HTTPException(status_code=401, detail="invalid token")
+    # DEUDA #17 (4-oct): demo y producción comparten el proyecto de Firebase (`contabu-prod`) y el login
+    # ANÓNIMO está activo para el demo. Cualquiera saca un token anónimo con la API key pública del
+    # frontend; sin este filtro, entraría al backend de PRODUCCIÓN y le crearía una oficina en la base
+    # real que nunca se borra. Solo el servicio de demo (`DEMO_MODE`) los acepta.
+    if is_anonymous_token(decoded) and not _demo_mode():
+        raise HTTPException(status_code=401, detail="anonymous sessions are only allowed in the demo")
+    return {"uid": decoded["uid"], "email": decoded.get("email")}
+
+
+def _demo_mode() -> bool:
+    """`demo.DEMO_MODE`, leído en el momento (import perezoso: `demo` importa `models`, no `auth`)."""
+    import demo
+    return demo.DEMO_MODE
 
 
 def current_user(

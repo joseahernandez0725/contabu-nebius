@@ -1,18 +1,21 @@
 """
 ContaBu — pipeline de ingestión de archivos bancarios.
 
-CSV bancario desordenado → (IA mapea columnas) → parsea cada fila → (reglas → IA categoriza
-lo que no matchea) → crea Transaction. Pensado para datos reales (formatos variados).
+CSV bancario desordenado → (la IA SOLO mapea columnas) → parsea cada fila → regla → transferencia →
+Pendiente → crea Transaction. Pensado para datos reales (formatos variados).
 
-Convención: `amount` se guarda como MAGNITUD positiva; el signo (dirección entrada/salida)
-se le pasa a la IA para que clasifique bien.
+**La IA no categoriza, por ningún camino** (idea #15 de Jose, 27-sep; el camino entero se borró el
+4-oct, deuda #16): lo que ninguna regla ni transferencia cubre queda PENDIENTE y lo decide el
+bookkeeper — a mano (`✎`) o con una regla (`ƒ`).
+
+Convención: `amount` se guarda como MAGNITUD positiva; el signo (dirección entrada/salida) va en
+`is_inflow`.
 """
 
 import csv
 import io
 import re
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -20,42 +23,13 @@ from dateutil import parser as dateparser
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-import os
-
-from ai import categorize_transaction, map_columns
-
-# ─────────────────────────────────────────────────────────────────────────────────────────────
-# LA IA NO CATEGORIZA (idea #15 de Jose, decidida el 27-sep-2026).
-#
-# "Toda la categorización sale de la base de reglas; los agentes únicamente supervisan que todo
-# esté coherente." Lo que ninguna regla/transferencia cubre **NO se rellena con una
-# adivinanza**: queda como PENDIENTE (rojo en la hoja) y el bookkeeper decide — categoría a mano
-# (queda `✎`) o una regla nueva (queda `ƒ`). La IA pasa a dos trabajos: **proponer reglas** (a
-# pedido del usuario, `POST /rule-proposals`) y **auditar coherencia** (determinista, gratis).
-#
-# Se deja tras una bandera para poder volver atrás sin tocar código. Ver `IDEAS.md` #15.
-# ─────────────────────────────────────────────────────────────────────────────────────────────
-AI_CATEGORIZES = os.getenv("AI_CATEGORIZES", "").lower() in {"1", "true", "yes"}
-from company_profile import format_profile_facts
+from ai import map_columns
 from models import AccountType, CategoryRule, Company, Transaction
+from rules import check_number, classify_transfer, load_rules, match_rule
 
 # Ventana de asentamiento por defecto (días): cubre tarjeta/ACH normales (1-3 días hábiles) + un
 # fin de semana. Se retienen los movimientos recientes/pending hasta que liquidan (base caja).
 DEFAULT_SETTLEMENT_BUFFER_DAYS = 5
-
-# Categorización LÍNEA POR LÍNEA: una petición a Gemini por transacción (cada una aislada → es
-# IMPOSIBLE que los resultados se desalineen, a diferencia del batch). Para que no sea lento, se
-# lanzan en paralelo con un límite de concurrencia. Requiere tier de pago de Gemini (el free es
-# insuficiente para archivos grandes). Ver docs/FASE 6.F / NOTAS IMPORTANTES.
-AI_CONCURRENCY = 16
-
-# Movimientos intrínsecamente AMBIGUOS: la IA no puede saber su propósito solo del texto
-# (cheques, depósitos sin pagador claro, retiros, remesas, transferencias). Se fuerzan a revisión
-# humana en vez de adivinar (adivinar corrompe el P&L). Los cheques además ni se agrupan ni crean
-# regla (ver rules.is_check).
-_AMBIGUOUS_RE = re.compile(
-    r"\b(deposit|withdrawal|remitly|rmtly|wire|transfer)\b", re.IGNORECASE
-)
 
 # Palabras que indican que un movimiento aún NO liquidó (no debe entrar a los libros todavía).
 _PENDING_WORDS = ("pending", "hold", "authoriz", "processing", "unposted", "in process")
@@ -67,70 +41,6 @@ def is_pending(status: str | None) -> bool:
         return False
     s = status.strip().lower()
     return any(w in s for w in _PENDING_WORDS)
-from rules import check_number, classify_transfer, is_check, load_rules, match_rule
-
-
-def needs_human_review(description: str) -> bool:
-    """True si el movimiento es ambiguo por naturaleza (cheque/depósito/retiro/remesa/transferencia)
-    → forzar revisión humana en vez de que la IA adivine."""
-    return is_check(description) or bool(_AMBIGUOUS_RE.search(description or ""))
-
-
-# "Comercios" genéricos que NO representan una contraparte real (depósitos, pagadores desconocidos):
-# no se deben unificar entre sí (un "DEPOSIT" no es lo mismo que otro). Se comparan normalizados.
-_GENERIC_MERCHANTS = {
-    "UNKNOWN", "UNKNOWNPAYEE", "BANK", "BANKDEPOSIT", "DEPOSIT", "CASH", "CHECK", "OTHER", "NA",
-}
-
-
-def _merchant_key(subcategory: str | None) -> str | None:
-    """Clave normalizada del comercio para agrupar (solo alfanuméricos, MAYÚSCULAS).
-    Devuelve None si es vacío/corto o un 'comercio' genérico que no debe unificarse."""
-    if not subcategory:
-        return None
-    key = re.sub(r"[^A-Z0-9]", "", subcategory.upper())
-    if len(key) < 3 or key in _GENERIC_MERCHANTS:
-        return None
-    return key
-
-
-def unify_merchant_categorization(parsed: list[tuple], ai_cats: dict[int, object]) -> int:
-    """Consistencia INTRA-SUBIDA: el mismo comercio → la MISMA categorización en todo el archivo.
-
-    La IA categoriza fila por fila (aislada), así que el mismo comercio puede salir distinto
-    (ej. PAYROLL SERVICE como Direct Labor / Admin Wages / Legal & Professional). Aquí, para cada
-    comercio que aparece ≥2 veces, se toma la categorización de **mayor confianza** (su mejor
-    evidencia) y se aplica a TODAS sus apariciones (account_type, category, subcategory, confidence,
-    needs_review). Determinista, sin IA. Devuelve cuántas filas se ajustaron.
-
-    Se excluyen los movimientos ambiguos por naturaleza (cheques/depósitos/transferencias/remesas):
-    no son una contraparte recurrente y se resuelven en su propia capa de revisión."""
-    groups: dict[str, list[int]] = {}
-    for idx, cat in ai_cats.items():
-        if needs_human_review(parsed[idx][1]):
-            continue  # ambiguo por naturaleza → no se unifica
-        key = _merchant_key(getattr(cat, "subcategory", None))
-        if key:
-            groups.setdefault(key, []).append(idx)
-
-    adjusted = 0
-    for idxs in groups.values():
-        if len(idxs) < 2:
-            continue
-        canonical = max(idxs, key=lambda i: ai_cats[i].confidence or 0.0)
-        c = ai_cats[canonical]
-        for i in idxs:
-            cat = ai_cats[i]
-            if (cat.account_type, cat.category) != (c.account_type, c.category) \
-                    or cat.confidence != c.confidence:
-                adjusted += 1
-            cat.account_type = c.account_type
-            cat.category = c.category
-            cat.subcategory = c.subcategory
-            cat.confidence = c.confidence
-            cat.needs_review = c.needs_review
-            cat.review_question = c.review_question
-    return adjusted
 
 
 def parse_csv(content: bytes) -> tuple[list[str], list[list[str]]]:
@@ -239,13 +149,9 @@ def make_fingerprint(d: date, description: str, signed: Decimal, account: str | 
     return f"{d.isoformat()}|{desc}|{signed:.2f}|{acct}"
 
 
-def _apply_categorization(tx: Transaction, idx: int, description: str,
-                          rule_hits: dict, transfer_hits: dict,
-                          ai_cats: dict) -> "str | None":
-    """Aplica a `tx` lo que decidió el motor (regla → transferencia → IA) + los dos guardias
-    (revisión humana en ambiguos resueltos por IA, detector de signo). Compartido por la SUBIDA y
-    por `categorize_pending` (mismo cerebro en ambos caminos). Devuelve la fuente
-    ("rule"|"transfer"|"ai") o None si nada decidió → Pendiente.
+def _apply_categorization(tx: Transaction, idx: int, rule_hits: dict, transfer_hits: dict) -> "str | None":
+    """Aplica a `tx` lo que decidió el motor (regla → transferencia) + el detector de signo. Devuelve la
+    fuente ("rule"|"transfer") o None si nada decidió → Pendiente.
 
     Ya no hay banda de monto ni criterios que categoricen (decisión de Jose, 1-oct-2026): las filas
     viejas con `source="band"` se quedan como historia."""
@@ -273,31 +179,8 @@ def _apply_categorization(tx: Transaction, idx: int, description: str,
         tx.ai_categorized = False  # determinista, no IA
         tx.source = "transfer"
         source = "transfer"
-    elif idx in ai_cats:
-        cat = ai_cats[idx]
-        tx.account_type = cat.account_type
-        tx.category = cat.category
-        tx.subcategory = (cat.subcategory or "").upper() or None
-        tx.confidence = cat.confidence
-        tx.needs_review = cat.needs_review
-        tx.review_question = cat.review_question or None
-        tx.ai_categorized = True
-        tx.source = "ai"
-        # Predicción ORIGINAL de la IA (FASE 9 Paso 6): se congela aquí y NUNCA se toca al
-        # corregir → precisión online (comparar contra la categoría final, la verdad del dueño).
-        tx.ai_original_account_type = cat.account_type.value if cat.account_type else None
-        tx.ai_original_category = cat.category
-        source = "ai"
 
-    # Forzar revisión humana en movimientos AMBIGUOS por naturaleza (cheques, depósitos,
-    # retiros, remesas, transferencias) que resolvió la IA: no puede saber su propósito → que
-    # el dueño decida. Si ya había REGLA (source="rule"), el usuario ya decidió → NO re-preguntar.
-    if source == "ai" and needs_human_review(description):
-        tx.needs_review = True
-        if tx.confidence is None or tx.confidence > 0.5:
-            tx.confidence = 0.5
-
-    # Detector de SIGNO (vale para regla e IA): si la dirección del banco contradice la
+    # Detector de SIGNO (vale para regla y transferencia): si la dirección del banco contradice la
     # sección del P&L, casi seguro es un return/reembolso o un cobro mal clasificado → revisar.
     # Cubre el caso "return de Home Depot": entró plata pero la regla lo etiquetó como gasto
     # (COGS/Materials) → sin esto sumaría como gasto en vez de restarlo. NON_PL se exime
@@ -326,11 +209,8 @@ def ingest_csv(
     offset: int = 0,
     dry_run: bool = False,
     filename: str | None = None,
-    ai_limit: int | None = None,
-    profile: dict | None = None,
 ) -> dict:
-    """Pipeline completo. Acepta CSV o Excel (.xlsx). Devuelve un resumen (filas, mapeo, errores).
-    `profile`: la entrevista del dueño (`Company.profile`) — sus hechos viajan al prompt de la IA."""
+    """Pipeline completo. Acepta CSV o Excel (.xlsx). Devuelve un resumen (filas, mapeo, errores)."""
     headers, rows = parse_spreadsheet(content, filename)
     if not rows:
         return {"inserted": 0, "errors": 0, "mapping": None, "message": "archivo vacío"}
@@ -397,8 +277,7 @@ def ingest_csv(
         fp = make_fingerprint(d, description, signed, account)
         parsed.append((d, description, signed, account, fp))
 
-    core = ingest_parsed(session, company_id, sector, parsed, categorize=categorize,
-                         dry_run=dry_run, ai_limit=ai_limit, profile=profile)
+    core = ingest_parsed(session, company_id, sector, parsed, categorize=categorize, dry_run=dry_run)
     return {
         "inserted": core["inserted"],
         "errors": errors,
@@ -407,13 +286,7 @@ def ingest_csv(
         "offset": offset,
         "processed": len(to_process),
         "by_rule": core["by_rule"],
-        "by_band": 0,  # ya no hay banda de monto; la clave sigue para el frontend (Audit.tsx, api.ts)
         "by_transfer": core["by_transfer"],
-        # Transacciones que NO se categorizaron por exceder el cupo de IA (hay que subir de plan).
-        "quota_blocked": core["quota_blocked"],
-        "by_ai": core["by_ai"],
-        # Cuántas filas ajustó el pase de consistencia (mismo comercio → misma categoría).
-        "consistency_adjusted": core["consistency_adjusted"],
         "dry_run": dry_run,
         "mapping": mapping.model_dump(),
         "preview": core["preview"],
@@ -443,22 +316,20 @@ def ingest_parsed(
     *,
     categorize: bool = True,
     dry_run: bool = False,
-    ai_limit: int | None = None,
-    profile: dict | None = None,
+    commit: bool = True,
 ) -> dict:
     """EL MOTOR DE ENTRADA, común a toda fuente de movimientos (CSV/Excel y Teller, 3-oct-2026).
 
     Recibe filas ya parseadas y YA asentadas — `(fecha, descripción, monto CON signo, cuenta
     enmascarada, huella)` y, si vienen de un banco vinculado, un 6º elemento: el `transaction_id` de
     Plaid —; quien llama retiene lo pendiente y lo demasiado reciente — y hace lo mismo
-    para todas: deduplicación por huella → regla → transferencia → (IA apagada) → Pendiente, y crea
+    para todas: deduplicación (id de Plaid o huella) → regla → transferencia → Pendiente, y crea
     las transacciones. Así un movimiento de Teller y uno de un CSV pasan exactamente por el mismo
     camino."""
     # 1b) DEDUPLICACIÓN por huella (multiconjunto): omite las filas que YA existen en la BD de
     #     esta empresa, para no duplicar al re-subir el mismo archivo o un rango solapado.
     #     Se hace por CONTEO: si el archivo trae 2 movimientos idénticos y la BD ya tiene 2, se
     #     omiten los 2; si tiene 0, se insertan los 2 → conserva repeticiones legítimas.
-    #     Va ANTES de reglas/IA para no gastar cuota de Gemini en lo que no se va a insertar.
     skipped_duplicates = 0
     # 1a) Filas de un BANCO VINCULADO (traen el id de Plaid): se deduplican EXACTO por ese id, nunca
     #     por huella — dos cafés iguales el mismo día son dos ids distintos (4-oct-2026).
@@ -504,68 +375,29 @@ def ingest_parsed(
                 kept.append(row)
         parsed = kept
 
-    # 2) MOTOR DE REGLAS: lo que tiene regla (comercio conocido) se resuelve SIN IA.
+    # 2) MOTOR DE REGLAS: lo que tiene regla (comercio conocido) se resuelve aquí.
     #    Precedencia: regla explícita de empresa → transferencia entre cuentas → Pendiente.
     #    (Sin categorizar por monto: decisión de Jose, 1-oct-2026. El criterio del bookkeeper sobre
     #    montos pasa a las notas de la pestaña Auditoría, que reportan y nunca categorizan.)
     rules: list[CategoryRule] = load_rules(session, company_id, sector) if categorize else []
     rule_hits: dict[int, CategoryRule] = {}
     transfer_hits: dict[int, tuple] = {}  # idx -> (account_type, category) — transferencia entre cuentas
-    ai_indices: list[int] = []
     if categorize:
         for idx, row in enumerate(parsed):
             desc = row[1]
-            rule = match_rule(rules, desc)
+            rule = match_rule(rules, desc, row[0])  # la fecha: ventana de la regla
             if rule is not None:
                 rule_hits[idx] = rule
                 continue
             transfer = classify_transfer(desc)  # transferencia entre cuentas propias → NON_PL
             if transfer is not None:
                 transfer_hits[idx] = transfer
-                continue
-            ai_indices.append(idx)
+    # Lo que ninguna regla ni transferencia cubrió queda PENDIENTE: la IA no categoriza.
 
-    # La IA no categoriza (ver AI_CATEGORIZES arriba): lo que ninguna regla cubrió queda PENDIENTE.
-    if not AI_CATEGORIZES:
-        ai_indices = []
-
-    # Cupo de IA: lo que excede el `ai_limit` NO se categoriza con IA (se inserta sin categorizar).
-    # El usuario debe suscribirse/subir de tier para cubrirlas. `quota_blocked` = cuántas se bloquearon.
-    quota_blocked = 0
-    if ai_limit is not None and len(ai_indices) > max(0, ai_limit):
-        keep = max(0, ai_limit)
-        quota_blocked = len(ai_indices) - keep
-        ai_indices = ai_indices[:keep]
-
-    # 3) Categorizar con la IA SOLO lo que no matcheó regla, LÍNEA POR LÍNEA (una petición por
-    #    transacción), en PARALELO con un límite de concurrencia. Cada llamada es independiente →
-    #    no hay forma de desalinear resultados. Si una falla tras los reintentos, queda sin
-    #    categorizar (no rompe la subida; aparecerá para revisión).
-    ai_cats: dict[int, object] = {}
-    profile_facts = format_profile_facts(profile)  # hechos de la entrevista → prompt
-
-    def _categorize_one(idx: int):
-        try:
-            cat = categorize_transaction(parsed[idx][1], float(parsed[idx][2]), sector, profile_facts)
-            return idx, cat
-        except Exception:
-            return idx, None
-
-    if ai_indices:
-        with ThreadPoolExecutor(max_workers=AI_CONCURRENCY) as pool:
-            for idx, cat in pool.map(_categorize_one, ai_indices):
-                if cat is not None:
-                    ai_cats[idx] = cat
-
-    # 3b) CONSISTENCIA intra-subida: el mismo comercio → la misma categorización (la de mayor
-    #     confianza) en todo el archivo. Corrige la incoherencia de categorizar fila por fila.
-    consistency_adjusted = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
-
-    # 4) Crear las transacciones (monto = magnitud positiva).
+    # 3) Crear las transacciones (monto = magnitud positiva).
     inserted = 0
     by_rule = 0
     by_transfer = 0
-    by_ai = 0
     preview: list[dict] = []
     created: list[Transaction] = []
     any_account = False
@@ -578,13 +410,11 @@ def ingest_parsed(
                          plaid_transaction_id=(row[5] if len(row) > 5 else None) or None)
         if account:
             any_account = True
-        source = _apply_categorization(tx, idx, description, rule_hits, transfer_hits, ai_cats)
+        source = _apply_categorization(tx, idx, rule_hits, transfer_hits)
         if source == "rule":
             by_rule += 1
         elif source == "transfer":
             by_transfer += 1
-        elif source == "ai":
-            by_ai += 1
 
         if source is not None:
             preview.append({
@@ -606,117 +436,15 @@ def ingest_parsed(
     else:
         session.flush()  # asigna los IDs antes de cerrar la transacción
         transaction_ids = [tx.id for tx in created]
-        session.commit()
+        if commit:  # el generador del demo pide solo flush: Firm hace el commit (oficina + libros juntos)
+            session.commit()
 
     return {
         "inserted": inserted,
         "by_rule": by_rule,
         "by_transfer": by_transfer,
-        "by_ai": by_ai,
-        "quota_blocked": quota_blocked,
-        "consistency_adjusted": consistency_adjusted,
         "preview": preview,
         "skipped_duplicates": skipped_duplicates,
         "account_detected": any_account,
         "transaction_ids": transaction_ids,
     }
-
-
-def categorize_pending(session: Session, company: Company, ai_limit: "int | None" = None) -> dict:
-    """Re-corre el MOTOR sobre las transacciones SIN categorizar de la empresa — las que quedaron
-    fuera por el cupo de IA (`quota_blocked`) o porque la IA falló. Es la otra mitad de la promesa
-    "sube de plan para categorizarlas": tras pagar (o al liberarse cupo el mes siguiente), esto las
-    resuelve SIN re-subir el archivo. Mismo orden y semántica que la subida: regla →
-    transferencia → IA (hasta `ai_limit`, hoy apagada); congela `ai_original_*`."""
-    sector = company.sector
-    txs = list(session.exec(
-        select(Transaction)
-        .where(Transaction.company_id == company.id)
-        .where(Transaction.account_type == None)  # noqa: E711 — SQL "IS NULL"
-        .order_by(Transaction.date, Transaction.id)
-    ).all())
-    result = {"pending": len(txs), "by_rule": 0, "by_band": 0, "by_transfer": 0, "by_ai": 0,
-              "quota_blocked": 0, "consistency_adjusted": 0, "still_uncategorized": 0}
-    if not txs:
-        return result
-
-    # La misma forma (fecha, descripción, monto CON signo, cuenta, huella) que usa el pipeline.
-    parsed = [
-        (tx.date, tx.description,
-         Decimal(tx.amount) if tx.is_inflow else -Decimal(tx.amount),
-         tx.bank_account, tx.fingerprint)
-        for tx in txs
-    ]
-
-    rules = load_rules(session, company.id, sector)
-    rule_hits: dict[int, CategoryRule] = {}
-    transfer_hits: dict[int, tuple] = {}
-    ai_indices: list[int] = []
-    for idx, (_, desc, signed, _account, _fp) in enumerate(parsed):
-        rule = match_rule(rules, desc)
-        if rule is not None:
-            rule_hits[idx] = rule
-            continue
-        transfer = classify_transfer(desc)
-        if transfer is not None:
-            transfer_hits[idx] = transfer
-            continue
-        ai_indices.append(idx)
-
-    # Cupo de IA: igual que en la subida — lo que excede queda sin categorizar (otro intento
-    # cuando haya cupo; el saldo lo reporta `quota_blocked`).
-    if ai_limit is not None and len(ai_indices) > max(0, ai_limit):
-        keep = max(0, ai_limit)
-        result["quota_blocked"] = len(ai_indices) - keep
-        ai_indices = ai_indices[:keep]
-
-    profile_facts = format_profile_facts(company.profile)
-
-    def _categorize_one(idx: int):
-        try:
-            return idx, categorize_transaction(parsed[idx][1], float(parsed[idx][2]),
-                                               sector, profile_facts)
-        except Exception:
-            return idx, None
-
-    ai_cats: dict[int, object] = {}
-    if ai_indices and AI_CATEGORIZES:   # la IA no categoriza: quedan pendientes
-        with ThreadPoolExecutor(max_workers=AI_CONCURRENCY) as pool:
-            for idx, cat in pool.map(_categorize_one, ai_indices):
-                if cat is not None:
-                    ai_cats[idx] = cat
-
-    result["consistency_adjusted"] = unify_merchant_categorization(parsed, ai_cats) if ai_cats else 0
-
-    for idx, tx in enumerate(txs):
-        source = _apply_categorization(tx, idx, parsed[idx][1], rule_hits, transfer_hits, ai_cats)
-        if source is not None:
-            result[f"by_{source}"] += 1
-            session.add(tx)
-    session.commit()
-    done = result["by_rule"] + result["by_band"] + result["by_transfer"] + result["by_ai"]
-    result["still_uncategorized"] = len(txs) - done
-    return result
-
-
-if __name__ == "__main__":
-    # Prueba rápida (dry-run, no persiste):  python ingestion.py sample_bank.csv
-    import json
-    import sys
-
-    from db import engine
-
-    # Uso:  python ingestion.py <archivo> [limite] [sector]
-    path = sys.argv[1] if len(sys.argv) > 1 else "sample_bank.csv"
-    limit = int(sys.argv[2]) if len(sys.argv) > 2 else 8
-    sector = sys.argv[3] if len(sys.argv) > 3 else "construction"
-
-    with open(path, "rb") as fh:
-        content = fh.read()
-
-    with Session(engine) as session:
-        result = ingest_csv(
-            session, company_id=1, sector=sector, content=content,
-            limit=limit, dry_run=True,
-        )
-    print(json.dumps(result, indent=2, ensure_ascii=False))

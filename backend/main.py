@@ -21,18 +21,18 @@ from sqlmodel import Session, delete, select
 
 from ai import RuleColumnMapping, map_rule_columns, propose_rules
 from audit import audit_categorization
-from billing import ai_quota_status, apply_session, create_checkout_session, handle_event
+from billing import apply_session, create_checkout_session, handle_event
 # `effective_role` es la única fuente de verdad del acceso (FASE 13); los helpers dicen la
 # INTENCIÓN de cada endpoint: leer · escribir como consola · escribir como cliente · ser dueño.
 from auth import (current_user, effective_role, owned_company, owner_company, owned_transaction,
                   client_writable_company, console_company, user_firm)
 from categories import categories_for, categories_for_company
 from company_profile import format_profile_facts
-from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_UPDATE, last_change, record_change,
+from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_PRECEDENCE, VIA_RULE_UPDATE, last_change, record_change,
                          snapshot, undo_change)
 from db import get_session
 import demo  # FASE 13 — despliegue de demo (no hace nada si DEMO_MODE está apagado)
-from ingestion import categorize_pending, ingest_csv, mask_account, parse_spreadsheet
+from ingestion import ingest_csv, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
     Transaction, User,
@@ -46,8 +46,8 @@ from reports import pivot, pivot_leaves, income_statement
 import bank
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
-    is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
-    reapply_rule_precedence, suggest_keyword, normalize,
+    in_window, is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
+    reapply_rule_precedence, redecide_transaction, suggest_keyword, normalize,
 )
 
 
@@ -127,6 +127,8 @@ class RuleUpdate(BaseModel):
     subcategory: Optional[str] = None  # comercio presentable que asigna la regla ("" → limpiar)
     priority: Optional[int] = None     # prioridad manual (1 = primero); null → orden automático
     style: Optional[dict] = None       # resaltado de la fila en la hoja de Reglas: {bg, bold, italic}
+    valid_from: Optional[date] = None  # ventana de fechas, INCLUSIVA (null = sin límite por ese lado)
+    valid_to: Optional[date] = None
 
 
 class RuleCreate(BaseModel):
@@ -137,6 +139,26 @@ class RuleCreate(BaseModel):
     category: str
     subcategory: Optional[str] = None
     priority: Optional[int] = None
+    valid_from: Optional[date] = None  # ventana de fechas (4-oct, "la fórmula del libro")
+    valid_to: Optional[date] = None
+
+
+def _valid_window(valid_from: Optional[date], valid_to: Optional[date]) -> None:
+    """Una ventana de fechas al revés no caza nada: se rechaza en vez de guardarla."""
+    if valid_from is not None and valid_to is not None and valid_from > valid_to:
+        raise HTTPException(status_code=422, detail="la fecha de inicio va después de la de fin")
+
+
+def _same_rule(r: CategoryRule, match_text: str, valid_from: Optional[date], valid_to: Optional[date]) -> bool:
+    """Dos reglas son la MISMA si tienen la misma palabra clave y la misma ventana de fechas: así
+    conviven "STARBUCKS" y "STARBUCKS del 3 al 17-ago"."""
+    return (normalize(r.match_text) == normalize(match_text)
+            and (r.valid_from, r.valid_to) == (valid_from, valid_to))
+
+
+def _rule_out(r: CategoryRule) -> dict:
+    return {"valid_from": r.valid_from.isoformat() if r.valid_from else None,
+            "valid_to": r.valid_to.isoformat() if r.valid_to else None}
 
 
 class PnlReportCreate(BaseModel):
@@ -354,12 +376,10 @@ async def upload_transactions(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Sube un CSV bancario y dispara el pipeline (mapeo IA → parse → categoriza → guarda).
+    """Sube un CSV bancario y dispara el pipeline: la IA SOLO mapea las columnas → parse → regla →
+    transferencia → Pendiente → guarda. La IA no categoriza (deuda #16, 4-oct).
 
-    La IA categoriza en LOTES de 50 (cada lote = 1 petición a Gemini), así que el archivo se
-    importa completo. `limit=1000` es solo un **tope de seguridad** por subida en dev (evita
-    disparar la cuota gratis por accidente); el bulk asíncrono real queda para post-deploy
-    (deuda técnica #8).
+    `limit=1000` es solo un **tope de seguridad** por subida; el frontend sube por lotes (`chunk`).
     """
     # LISTA BLANCA DEL CLIENTE (FASE 13 Paso 3): subir el extracto es lo que el cliente APORTA,
     # no una edición del libro → `client_writable_company` en vez de la puerta de la consola.
@@ -367,52 +387,14 @@ async def upload_transactions(
     content = await file.read()
     # chunk>0 → subida por LOTES (cada lote bajo el límite del navegador); si no, tope de seguridad.
     limit = chunk if chunk > 0 else 1000
-    # Cupo de IA: lo que exceda el restante NO se categoriza (hay que subir de plan). Se recalcula por
-    # lote (las ya insertadas este mes cuentan), así el tope vale en toda la subida troceada.
-    quota = ai_quota_status(session, company)
-    result = ingest_csv(
-        session, company_id, company.sector, content,
-        limit=limit, offset=offset, filename=file.filename, ai_limit=quota["remaining"],
-        profile=company.profile,  # los hechos de la entrevista viajan al prompt (FASE 9 Paso 5)
-    )
-    result["quota"] = quota  # used / limit / remaining / monthly → el frontend lo muestra
+    result = ingest_csv(session, company_id, company.sector, content,
+                        limit=limit, offset=offset, filename=file.filename)
     # AUDITOR AUTOMÁTICO (FASE 9 Paso 4): al terminar la subida (último lote), el agente revisa los
     # libros solo — sin que el dueño lo pida — y el frontend muestra el badge con los hallazgos.
     # Solo en el último lote (correr por lote sería redundante); determinista y gratis (sin IA).
     is_last_chunk = result.get("offset", 0) + result.get("processed", 0) >= result.get("total", 0)
     if is_last_chunk:
         result["audit_findings"] = len(_company_audit(session, company_id))
-    return result
-
-
-@app.get("/api/companies/{company_id}/quota")
-def get_quota(
-    company_id: int,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Cupo de IA vigente (used/limit/remaining/monthly). El frontend decide con esto qué ofrecer:
-    con cupo → "categorizar ahora"; sin cupo → mandar a suscribirse (Billing)."""
-    company = console_company(company_id, user, session)
-    return ai_quota_status(session, company)
-
-
-@app.post("/api/companies/{company_id}/transactions/categorize-pending")
-def categorize_pending_endpoint(
-    company_id: int,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Categoriza las transacciones que quedaron SIN categorizar (bloqueadas por el cupo de IA en
-    una subida, o fallo puntual de la IA). Es el cobro de la promesa "sube de plan para
-    categorizarlas": tras suscribirse (o al renovarse el cupo mensual), un toque las resuelve sin
-    re-subir el archivo. Respeta el cupo vigente y re-corre el auditor al final."""
-    company = owned_company(company_id, user, session, write=True)
-    quota = ai_quota_status(session, company)
-    result = categorize_pending(session, company, ai_limit=quota["remaining"])
-    result["quota"] = ai_quota_status(session, company)  # estado DESPUÉS (lo que quedó de cupo)
-    # Igual que la subida: el auditor revisa solo y el frontend refresca el badge.
-    result["audit_findings"] = len(_company_audit(session, company_id))
     return result
 
 
@@ -913,7 +895,7 @@ def list_rules(
     for r in rules:
         # Lo escrito a mano NO cuenta: está desconectado de las reglas (Jose, 3-oct).
         hit = [t for t in txs if t.source != "manual"
-               and match_rule([r], matchable_text(t.description, t.description_extra)) is not None]
+               and match_rule([r], matchable_text(t.description, t.description_extra), t.date) is not None]
         matches = len(hit)
         inflow = sum(1 for t in hit if t.is_inflow)
         # Hacia dónde va el dinero de lo que caza: así el editor de categorías ofrece primero las
@@ -924,7 +906,7 @@ def list_rules(
             "account_type": r.account_type.value if r.account_type else None,
             "category": r.category, "subcategory": r.subcategory, "matches": matches,
             "direction": direction,
-            "priority": r.priority, "style": r.style,
+            "priority": r.priority, "style": r.style, **_rule_out(r),
             # `scope`/`sector`: si la regla es de ESTE libro o de todo un sector (la hoja de reglas
             # los muestra como una sola columna "Sector": "This book" o el nombre del sector).
             "scope": r.scope.value, "sector": r.sector,
@@ -937,6 +919,8 @@ class RulePreviewIn(BaseModel):
     """Vista previa de una regla ANTES de crearla. Sin `keyword`, se sugiere a partir de la fila."""
     keyword: Optional[str] = None
     transaction_id: Optional[int] = None
+    valid_from: Optional[date] = None  # con ventana: qué cazaría SOLO entre esas fechas
+    valid_to: Optional[date] = None
 
 
 @app.post("/api/companies/{company_id}/rules/preview")
@@ -966,10 +950,12 @@ def preview_rule(
            "examples": [], "duplicate": None, "seed_matched": None}
     if len(normalize(keyword)) < 2:
         return out
+    _valid_window(payload.valid_from, payload.valid_to)
     probe = CategoryRule(id=-1, scope=RuleScope.COMPANY, company_id=company_id, match_text=keyword,
-                         account_type=AccountType.OPERATING_EXPENSE, category="-")
+                         account_type=AccountType.OPERATING_EXPENSE, category="-",
+                         valid_from=payload.valid_from, valid_to=payload.valid_to)
     for t in txs:
-        if match_rule([probe], matchable_text(t.description, t.description_extra)) is None:
+        if match_rule([probe], matchable_text(t.description, t.description_extra), t.date) is None:
             continue
         out["matches"] += 1
         out["pending"] += t.category is None
@@ -980,11 +966,12 @@ def preview_rule(
                                     "amount": float(t.amount), "is_inflow": bool(t.is_inflow),
                                     "category": t.category, "source": t.source})
     if seed is not None:
-        out["seed_matched"] = match_rule([probe], matchable_text(seed.description, seed.description_extra)) is not None
+        out["seed_matched"] = match_rule([probe], matchable_text(seed.description, seed.description_extra),
+                                          seed.date) is not None
     dup = session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
                        .where(CategoryRule.scope == RuleScope.COMPANY)).all()
     for r in dup:
-        if normalize(r.match_text) == normalize(keyword):
+        if _same_rule(r, keyword, payload.valid_from, payload.valid_to):
             out["duplicate"] = {"id": r.id, "match_text": r.match_text, "category": r.category}
             break
     return out
@@ -1003,14 +990,15 @@ def create_rule(
     match_text = payload.match_text.strip().upper()
     if len(match_text) < 2:
         raise HTTPException(status_code=422, detail="keyword demasiado corto")
-    dup = session.exec(
+    _valid_window(payload.valid_from, payload.valid_to)
+    same = session.exec(
         select(CategoryRule)
         .where(CategoryRule.scope == RuleScope.COMPANY)
         .where(CategoryRule.company_id == company_id)
         .where(CategoryRule.match_text == match_text)
-    ).first()
-    if dup:
-        raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword")
+    ).all()
+    if any(_same_rule(r, match_text, payload.valid_from, payload.valid_to) for r in same):
+        raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas fechas")
     chart = categories_for_company(session, company_id, company.sector)  # sector + propias
     if payload.category not in (chart.get(payload.account_type.value) or []):
         raise HTTPException(status_code=422, detail="categoría fuera del plan de cuentas")
@@ -1019,6 +1007,7 @@ def create_rule(
         account_type=payload.account_type, category=payload.category,
         subcategory=(payload.subcategory or "").strip() or None,
         priority=_valid_priority(payload.priority),
+        valid_from=payload.valid_from, valid_to=payload.valid_to,
     )
     session.add(rule)
     applied = apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
@@ -1028,7 +1017,7 @@ def create_rule(
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
             "account_type": rule.account_type.value, "category": rule.category,
-            "subcategory": rule.subcategory, "priority": rule.priority,
+            "subcategory": rule.subcategory, "priority": rule.priority, **_rule_out(rule),
             "applied": applied, "reassigned": reassigned}
 
 
@@ -1064,10 +1053,32 @@ def update_rule(
         clean = {"bg": bg if isinstance(bg, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", bg) else None,
                  "bold": bool(st.get("bold")), "italic": bool(st.get("italic"))}
         data["style"] = clean if (clean["bg"] or clean["bold"] or clean["italic"]) else None
+    if "valid_from" in data or "valid_to" in data:
+        vf = data.get("valid_from", rule.valid_from)
+        vt = data.get("valid_to", rule.valid_to)
+        _valid_window(vf, vt)
+        others = session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
+                              .where(CategoryRule.id != rule.id)).all()
+        if any(_same_rule(r, rule.match_text, vf, vt) for r in others):
+            raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas fechas")
+        # Cambiar la ventana puede SOLTAR filas que ya no caen en ella: vuelven al motor (otra regla,
+        # transferencia o Pendiente). Lo manual no se toca.
+        released = [t for t in session.exec(select(Transaction).where(Transaction.company_id == company_id)
+                                            .where(Transaction.matched_rule_id == rule.id)).all()
+                    if t.source != "manual" and not in_window(CategoryRule(match_text=rule.match_text, category="-", scope=RuleScope.COMPANY,
+                                                  valid_from=vf, valid_to=vt), t.date)]
+    else:
+        released = []
     for field, value in data.items():
         setattr(rule, field, value)
     session.add(rule)
     session.flush()
+    ranked = load_rules(session, company_id, "") if released else []
+    for t in released:
+        before = snapshot(t)
+        redecide_transaction(t, ranked)
+        session.add(t)
+        record_change(session, t, before, via=VIA_RULE_PRECEDENCE, user_id=user.id)
     # Cambiar SOLO la prioridad no re-aplica la regla a todo lo que matchea (eso pisaría lo que
     # otra regla o el bookkeeper decidieron): solo se re-decide qué regla gana.
     # Cambiar SOLO cómo se ve (style) no toca ninguna transacción.
@@ -1080,7 +1091,8 @@ def update_rule(
     return {"id": rule.id, "match_text": rule.match_text,
             "account_type": rule.account_type.value if rule.account_type else None,
             "category": rule.category, "subcategory": rule.subcategory,
-            "priority": rule.priority, "style": rule.style, "applied": applied, "reassigned": reassigned}
+            "priority": rule.priority, "style": rule.style, **_rule_out(rule),
+            "applied": applied, "reassigned": reassigned, "released": len(released)}
 
 
 @app.delete("/api/companies/{company_id}/rules/{rule_id}")
@@ -1421,6 +1433,8 @@ class RuleProposalApply(BaseModel):
     category: str
     subcategory: Optional[str] = None  # la trae el import; el proponedor no
     priority: Optional[int] = None     # ídem (columna "Priority" de la exportación)
+    valid_from: Optional[date] = None  # ventana de fechas (columnas "From"/"To" de la exportación)
+    valid_to: Optional[date] = None
 
 
 class RuleProposalsApply(BaseModel):
@@ -1442,9 +1456,12 @@ def apply_rule_proposals(
     created = 0
     applied = 0
     for p in payload.rules:
+        if p.valid_from and p.valid_to and p.valid_from > p.valid_to:
+            continue  # ventana al revés: no caza nada
         rule = create_company_rule(session, company_id, sector, p.keyword, p.account_type, p.category,
                                    (p.subcategory or "").strip() or None,
-                                   p.priority if p.priority and p.priority >= 1 else None)
+                                   p.priority if p.priority and p.priority >= 1 else None,
+                                   p.valid_from, p.valid_to)
         if rule is not None:
             created += 1
             session.flush()  # asigna id para apply_rule_to_transactions
@@ -1494,10 +1511,14 @@ async def import_rules_preview(
     mapping = _own_rule_columns(headers) or map_rule_columns(headers, rows[:5])
     # "Priority" sale de nuestra exportación; se lee por nombre (la IA no la mapea).
     priority_col = next((h for h in headers if h.strip().lower() == "priority"), "")
-    existing = [r.match_text for r in load_rules(session, company_id, sector)]
+    # "From"/"To" (la ventana de fechas) también salen de nuestra exportación y se leen por nombre.
+    from_col = next((h for h in headers if h.strip().lower() in ("from", "valid from")), "")
+    to_col = next((h for h in headers if h.strip().lower() in ("to", "valid to")), "")
+    existing = [(r.match_text, r.valid_from, r.valid_to) for r in load_rules(session, company_id, sector)]
     preview = build_import_rules(
         headers, rows, mapping.keyword_column, mapping.category_column,
         mapping.account_type_column, sector, existing, mapping.subcategory_column, priority_col,
+        from_col, to_col,
     )
     return {
         "mapping": {
@@ -1527,7 +1548,7 @@ def cleanup_rules(
     ).all()
     removed = 0
     for r in rules:
-        if not any(match_rule([r], matchable_text(t.description, t.description_extra)) is not None for t in txs):
+        if not any(match_rule([r], matchable_text(t.description, t.description_extra), t.date) is not None for t in txs):
             session.delete(r)
             removed += 1
     session.commit()
@@ -1537,10 +1558,16 @@ def cleanup_rules(
 # --- P&L como PROYECTOS guardados (draft = recalcula en vivo · closed = congelado) ---
 
 def _pnl_jsonable(pnl: dict) -> dict:
-    """Convierte el P&L (con Decimals + breakdown) a JSON-serializable (Decimal → float)."""
+    """Convierte el P&L (con Decimals + breakdown) a JSON-serializable (Decimal → float).
+
+    `uncategorized` (lo Pendiente, FASE 12) es un dict de conteos + Decimals: se convierte campo
+    por campo. Si se congela un reporte SIN esta clave, el snapshot callaría lo Pendiente.
+    """
     out: dict = {}
     for k, v in pnl.items():
-        if k == "breakdown":
+        if k == "uncategorized":
+            out[k] = {kk: (float(vv) if isinstance(vv, Decimal) else vv) for kk, vv in v.items()}
+        elif k == "breakdown":
             out[k] = {
                 sec: [{"category": r["category"], "amount": float(r["amount"])} for r in rows]
                 for sec, rows in v.items()
@@ -1829,7 +1856,7 @@ def update_transaction(
     if rule_action == "follow_rule":
         company = session.get(Company, tx.company_id)
         rules = load_rules(session, tx.company_id, company.sector if company else "")
-        rule = match_rule(rules, matchable_text(tx.description, tx.description_extra))
+        rule = match_rule(rules, matchable_text(tx.description, tx.description_extra), tx.date)
         if rule is None:
             raise HTTPException(
                 status_code=404,

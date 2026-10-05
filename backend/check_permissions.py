@@ -199,6 +199,152 @@ def drop_fixtures(s: Session) -> None:
     s.commit()
 
 
+ANON_UID = "__permcheck_anonymous__"
+
+
+def check_anonymous_tokens(client: TestClient) -> list[str]:
+    """DEUDA #17 (4-oct): un token ANÓNIMO de Firebase solo entra en el demo. Demo y producción comparten
+    el proyecto de Firebase, y cualquiera saca un token anónimo con la API key pública del frontend.
+
+    Se apaga `AUTH_DEV_MODE` y se reemplaza la verificación de Firebase por una de mentira (sin red) que
+    decodifica tokens inventados — así se prueba el camino REAL de producción (`Authorization: Bearer`)."""
+    import auth
+    import demo
+    print("\n  --- tokens anónimos de Firebase (DEUDA #17) ---")
+    fake_claims = {
+        "anon": {"uid": ANON_UID, "firebase": {"sign_in_provider": "anonymous"}},
+        "google": {"uid": "__permcheck_google__", "email": "g@test.local", "firebase": {"sign_in_provider": "google.com"}},
+    }
+    def fake_verify(token: str) -> dict:
+        if token not in fake_claims:
+            raise ValueError("firma inválida")
+        return fake_claims[token]
+    saved = (auth.AUTH_DEV_MODE, auth._verify_firebase_token, demo.DEMO_MODE)
+    fails: list[str] = []
+    def expect(label: str, ok: bool, got) -> None:
+        print(f"  {'✅' if ok else '❌'} {label} → {got}")
+        if not ok:
+            fails.append(f"DEUDA #17: {label} → {got}")
+    try:
+        auth.AUTH_DEV_MODE, auth._verify_firebase_token, demo.DEMO_MODE = False, fake_verify, False
+        # 1) Producción, por HTTP: 401 y NINGÚN usuario creado en la base.
+        r = client.get("/api/me", headers={"Authorization": "Bearer anon"})
+        with Session(engine) as s:
+            created = s.exec(select(User).where(User.firebase_uid == ANON_UID)).first() is not None
+        expect("fuera del demo, token anónimo en /api/me", r.status_code == 401 and not created,
+               f"{r.status_code} · usuario creado: {created}")
+        # 2) Producción: un token de Google sí pasa (no se rompió el login normal).
+        ident = auth.current_identity(authorization="Bearer google", x_dev_uid=None, x_dev_email=None)
+        expect("fuera del demo, token de Google", ident["uid"] == "__permcheck_google__", ident["uid"])
+        # 3) Un token inválido sigue siendo 401.
+        try:
+            auth.current_identity(authorization="Bearer basura", x_dev_uid=None, x_dev_email=None)
+            expect("token inválido", False, "entró")
+        except Exception as e:
+            expect("token inválido", getattr(e, "status_code", None) == 401, getattr(e, "detail", e))
+        # 4) En el demo, el anónimo SÍ entra (sin pasar por la base: no se siembra nada aquí).
+        demo.DEMO_MODE = True
+        ident = auth.current_identity(authorization="Bearer anon", x_dev_uid=None, x_dev_email=None)
+        expect("en el demo, token anónimo", ident["uid"] == ANON_UID, ident["uid"])
+    finally:
+        auth.AUTH_DEV_MODE, auth._verify_firebase_token, demo.DEMO_MODE = saved
+        with Session(engine) as s:   # por si una regresión llegó a crearlo
+            u = s.exec(select(User).where(User.firebase_uid == ANON_UID)).first()
+            if u:
+                import demo as _d
+                _d._delete(s.connection(), "user", [u.id], {}); s.commit()
+    return fails
+
+
+DEMO_UIDS = {"anon": "__permcheck_demo_anon__", "google": "__permcheck_demo_google__",
+             "broken": "__permcheck_demo_broken__"}
+
+
+def check_demo_cleanup_firebase() -> list[str]:
+    """DEUDA #18 (4-oct): la limpieza de 7 días borra también el usuario ANÓNIMO de Firebase, nunca uno
+    de Google (demo y producción comparten el proyecto), y un fallo de Firebase no deja la base a medias.
+
+    Firebase se reemplaza por uno de mentira (sin red). Las oficinas de prueba vencen en el año 2000 y la
+    limpieza corre con `now` = 2-ene-2000: así SOLO toca estas, nunca una oficina de demo real de la base."""
+    from datetime import datetime
+    from types import SimpleNamespace
+    import demo
+    print("\n  --- limpieza del demo y usuarios de Firebase (DEUDA #18) ---")
+    fails: list[str] = []
+    def expect(label: str, ok: bool, got) -> None:
+        print(f"  {'✅' if ok else '❌'} {label} → {got}")
+        if not ok:
+            fails.append(f"DEUDA #18: {label} → {got}")
+
+    class FakeFirebase:
+        def __init__(self): self.deleted: list[str] = []
+        def get_user(self, uid):
+            if uid == DEMO_UIDS["broken"]:
+                raise ConnectionError("Firebase caído")
+            if uid == DEMO_UIDS["google"]:
+                return SimpleNamespace(provider_data=[object()], email="g@test.local", phone_number=None)
+            return SimpleNamespace(provider_data=[], email=None, phone_number=None)
+        def delete_user(self, uid): self.deleted.append(uid)
+
+    def plant(s: Session) -> None:
+        for uid in DEMO_UIDS.values():
+            u = User(firebase_uid=uid); s.add(u); s.commit(); s.refresh(u)
+            f = Firm(name="PERMCHECK DEMO", owner_user_id=u.id, demo_expires_at=datetime(2000, 1, 1))
+            s.add(f); s.commit(); s.refresh(f)
+            s.add(FirmMember(firm_id=f.id, user_id=u.id, email="", role=FirmRole.OWNER))
+            s.add(Company(name="PERMCHECK DEMO BOOK", sector="construction", firm_id=f.id, user_id=u.id))
+            s.commit()
+
+    def leftovers(s: Session) -> int:
+        return len(s.exec(select(User).where(User.firebase_uid.in_(list(DEMO_UIDS.values())))).all())
+
+    def drop(s: Session) -> None:
+        fids = list(s.exec(select(Firm.id).where(Firm.name == "PERMCHECK DEMO")).all())
+        uids = list(s.exec(select(User.id).where(User.firebase_uid.in_(list(DEMO_UIDS.values())))).all())
+        conn = s.connection()
+        demo._delete(conn, "firm", fids, {}); demo._delete(conn, "user", uids, {}); s.commit()
+
+    saved = (demo.DEMO_MODE, demo._firebase)
+    try:
+        # 1) Firebase responde: borra SOLO el anónimo; el de Google se queda; el que falla se cuenta.
+        fake = FakeFirebase()
+        demo.DEMO_MODE, demo._firebase = True, (lambda: fake)
+        with Session(engine) as s:
+            drop(s); plant(s)
+            counts = demo.cleanup_expired_offices(s, now=datetime(2000, 1, 2))
+            left = leftovers(s)
+        expect("borra en Firebase solo el anónimo", fake.deleted == [DEMO_UIDS["anon"]], fake.deleted)
+        expect("no borra la cuenta de Google ni oculta el fallo",
+               counts.get("firebase_kept_not_anonymous") == 1 and counts.get("firebase_errors") == 1,
+               {k: v for k, v in counts.items() if k.startswith("firebase")})
+        expect("la base quedó limpia (3 oficinas y sus dueños)", left == 0, f"{left} usuarios quedan")
+        # 2) firebase-admin ni arranca: la limpieza de la base igual termina.
+        def broken():
+            raise RuntimeError("sin credenciales")
+        demo._firebase = broken
+        with Session(engine) as s:
+            plant(s)
+            try:
+                counts = demo.cleanup_expired_offices(s, now=datetime(2000, 1, 2)); err = None
+            except Exception as e:
+                err = e
+            left = leftovers(s)
+        expect("Firebase caído no rompe la limpieza de la base", err is None and left == 0,
+               f"error: {err} · usuarios quedan: {left}")
+        # 3) Fuera del demo nunca se llama a Firebase (las pruebas y la producción no lo tocan).
+        fake = FakeFirebase()
+        demo.DEMO_MODE, demo._firebase = False, (lambda: fake)
+        with Session(engine) as s:
+            plant(s)
+            demo.cleanup_expired_offices(s, now=datetime(2000, 1, 2))
+        expect("fuera del demo no se toca Firebase", fake.deleted == [], fake.deleted)
+    finally:
+        demo.DEMO_MODE, demo._firebase = saved
+        with Session(engine) as s:
+            drop(s)
+    return fails
+
+
 def main() -> int:
     with Session(engine) as s:
         drop_fixtures(s)              # por si una corrida anterior murió a medias
@@ -313,6 +459,9 @@ def main() -> int:
         with Session(engine) as s:
             drop_fixtures(s)
     leaks.extend(blocked)
+
+    leaks.extend(check_anonymous_tokens(client))
+    leaks.extend(check_demo_cleanup_firebase())
 
     print(f"\n  Rutas comprobadas: {checked}  ·  permitidas al cliente: {len(CLIENT_ALLOWED)}")
     if BLOCKED:

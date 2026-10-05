@@ -171,11 +171,58 @@ def cleanup_expired_offices(session: Session, now: Optional[datetime] = None) ->
     conn = session.connection()
     _delete(conn, "firm", firm_ids, counts)
     orphans = [u for u in owners if _user_is_orphan(conn, u)]
+    firebase_uids: list[str] = []
     if orphans:
+        firebase_uids = [r[0] for r in conn.execute(
+            text('SELECT firebase_uid FROM "user" WHERE id = ANY(:ids)'), {"ids": orphans})]
         _delete(conn, "user", orphans, counts)
-    session.commit()
+    session.commit()   # la BASE primero: un fallo de Firebase nunca deja la limpieza a medias
+    if firebase_uids and DEMO_MODE:
+        counts.update(delete_anonymous_firebase_users(firebase_uids))
     log.info("demo: limpieza de %d oficinas vencidas → %s", len(firm_ids), counts)
     return counts
+
+
+def _firebase():
+    """`firebase_admin.auth` ya inicializado (de `auth.py`). Aparte para poder reemplazarlo en pruebas."""
+    import auth
+    return auth.firebase_auth()
+
+
+def delete_anonymous_firebase_users(uids: list[str]) -> dict[str, int]:
+    """DEUDA #18 (4-oct): borra en FIREBASE los usuarios de las oficinas de demo vencidas.
+
+    🔴 Demo y producción comparten el proyecto de Firebase (`contabu-prod`). Un visitante que entró al
+    demo con GOOGLE usa su cuenta real: borrarla le quitaría el acceso a producción. Por eso se borra un
+    usuario de Firebase SOLO si no tiene NINGUNA identidad vinculada (`provider_data` vacío — "the list
+    may be empty", doc oficial del Admin SDK), ni correo, ni teléfono. Un usuario así no puede volver a
+    entrar por ningún camino: es una sesión anónima abandonada. La regla no depende de suponer cómo
+    Firebase marca a los anónimos; depende de que borrarlo no le quite el acceso a nadie.
+
+    Va DESPUÉS del commit de la base y cada usuario en su propio try: un fallo de Firebase (red, permiso
+    de la cuenta de servicio, usuario ya borrado) se anota en el log y NO rompe la limpieza.
+    """
+    out = {"firebase_deleted": 0, "firebase_kept_not_anonymous": 0, "firebase_errors": 0}
+    try:
+        fb = _firebase()
+    except Exception:
+        log.exception("demo: no se pudo iniciar firebase-admin; usuarios de Firebase sin borrar")
+        out["firebase_errors"] = len(uids)
+        return out
+    for uid in uids:
+        try:
+            u = fb.get_user(uid)
+            if u.provider_data or u.email or u.phone_number:
+                out["firebase_kept_not_anonymous"] += 1     # p. ej. entró al demo con Google
+                continue
+            fb.delete_user(uid)
+            out["firebase_deleted"] += 1
+        except Exception as e:
+            if type(e).__name__ == "UserNotFoundError":    # ya no existe: nada que borrar
+                continue
+            log.warning("demo: no se pudo borrar el usuario de Firebase %s: %s", uid, e)
+            out["firebase_errors"] += 1
+    return out
 
 
 def cleanup_quietly(session: Session) -> None:

@@ -2,7 +2,7 @@
 """Genera un extracto bancario SINTÉTICO y realista por sector.
 
 Default: cleaning, 2 meses. Salida (en backend/private/, gitignored):
-  - synthetic_<sector>_gold.csv : formato del SET DE ORO (etiquetado) -> enchufa a eval_engine.py --gold
+  - synthetic_<sector>_gold.csv : formato del SET DE ORO (etiquetado; el harness eval_engine.py se borró el 4-oct)
   - synthetic_<sector>_raw.csv  : formato banco crudo (date/desc/amount/type) -> probar la ingestión/app
 
 Datos 100% inventados (nombres, comercios, montos). NO son reales.

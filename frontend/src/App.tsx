@@ -235,7 +235,6 @@ function App() {
                 <Audit
                   onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
                   onCount={setAuditCount}
-                  onUpgrade={() => setView("settings")}
                 />
                 <Review items={reviewTxs} reload={reloadReview} />
               </div>

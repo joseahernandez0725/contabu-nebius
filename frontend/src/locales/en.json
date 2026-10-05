@@ -56,7 +56,7 @@
     "checkLabel": "Check",
     "confirm": "Confirm",
     "empty": "Nothing to review",
-    "emptyHint": "When the AI is unsure about a transaction, it appears here.",
+    "emptyHint": "When a transaction needs a second look (for example, money in labeled as an expense), it appears here.",
     "intro": "{{count}} transactions need your confirmation.",
     "answerPlaceholder": "Tell us in your own words (e.g. \"plumbing subcontractor\", \"rent\")"
   },
@@ -100,7 +100,33 @@
     "operatingIncome": "Operating income",
     "otherIncome": "+ Other income",
     "otherExpense": "− Other expenses",
-    "netIncome": "Net income"
+    "netIncome": "Net income",
+    "beforePending": "before pending",
+    "pendingTitle": "Pending — not classified yet",
+    "pendingLead_one": "1 movement is not included in the result above.",
+    "pendingLead_other": "{{count}} movements are not included in the result above.",
+    "pendingWhy": "They have no P&L section yet, so there is no way to tell whether they add to or subtract from the result. They are shown here as cash in and out.",
+    "pendingIn": "Money in",
+    "pendingOut": "Money out",
+    "pendingUnknown": "Direction not reported by the bank",
+    "pendingNetCash": "Net effect on cash",
+    "pendingHint": "Classify them in the sheet — with a rule or by hand — and this block disappears.",
+    "pendingBadge_one": "{{count}} pending movement is not in this number",
+    "pendingBadge_other": "{{count}} pending movements are not in this number",
+    "nothingClassified": "Nothing in this book is classified yet.",
+    "back": "Back",
+    "cancel": "Cancel",
+    "close": "Close period (freeze)",
+    "closed": "Closed",
+    "confirmDelete": "Delete this project?",
+    "delete": "Delete project",
+    "draft": "Draft",
+    "pdf": "Export PDF",
+    "projectName": "Project name (e.g. Q1 2026)",
+    "reopen": "Reopen (draft)",
+    "save": "Save",
+    "saved": "Saved projects",
+    "saveProject": "Save as project"
   },
   "tx": {
     "title": "Transactions",
@@ -114,7 +140,7 @@
       "ai": "AI",
       "manual": "You"
     },
-    "confidence": "AI confidence",
+    "confidence": "Confidence",
     "cols": {
       "date": "Date",
       "movement": "Movement",
@@ -148,7 +174,7 @@
     "choose": "Tap to choose your CSV file",
     "submit": "Upload and categorize",
     "done": "Done!",
-    "result": "{{count}} transactions categorized",
+    "result": "{{count}} transactions added",
     "seeSummary": "See my summary →",
     "held": "{{count}} recent transactions held until they clear",
     "skipped": "{{count}} duplicates skipped (already imported)",
@@ -163,10 +189,7 @@
       "saving": "Saving…"
     },
     "progress": "Categorizing {{done}} / {{total}}…",
-    "quotaBlocked": "{{count}} transactions weren't categorized — you've hit your AI quota. Upgrade your plan to categorize them.",
     "audit": "The auditor checked your books and found {{count}} things to look at — see the Audit tab.",
-    "proposeHint": "The AI categorized {{count}} transactions. Turn what it learned into rules you approve — next time they won't need AI.",
-    "proposeCta": "Create my rules",
     "orCsv": "or upload a statement (CSV)"
   },
   "bank": {
@@ -280,19 +303,13 @@
     "out": "out",
     "goToTx": "Open this transaction",
     "fixRule": "Fix → back to the rule ({{s}})",
-    "pendingAi": "{{n}} transactions have no category yet (they hit your AI limit when uploaded).",
-    "categorizePending": "Categorize them now",
-    "pendingRunning": "Categorizing…",
-    "pendingDone": "All {{done}} categorized. ✅",
-    "pendingBlocked": "{{done}} categorized; {{left}} still need AI quota.",
-    "pendingNoQuota": "{{n}} transactions have no category yet and you're out of AI quota — upgrade your plan to categorize them.",
-    "upgradeCta": "Upgrade my plan",
-    "rulesOnly": "Apply my rules only (free)"
+    "pendingInfo_one": "{{count}} transaction has no category yet. Set it below, or create a rule in Transactions.",
+    "pendingInfo_other": "{{count}} transactions have no category yet. Set them below, or create a rule in Transactions."
   },
   "billing": {
     "title": "Plan",
     "current": "Active plan: {{n}} transactions/month.",
-    "free": "Free plan (manual only). Subscribe to unlock AI categorization.",
+    "free": "Free plan. Subscribe to raise your monthly transaction limit.",
     "txMonth": "{{n}} transactions/mo",
     "yourPlan": "Your plan",
     "choose": "Choose",
@@ -361,7 +378,7 @@
     "subcategoryPlaceholder": "e.g. Home Depot",
     "create": "Create rule",
     "created": "Rule created — applied to {{count}} transactions.",
-    "dup": "There is already a rule with that keyword.",
+    "dup": "There is already a rule with that keyword and those dates.",
     "createError": "Couldn't create the rule.",
     "anySector": "Sector",
     "thisBook": "This book",
@@ -388,7 +405,8 @@
     "importStatus": {
       "exists": "already exists",
       "duplicate": "repeated in file",
-      "needs_section": "pick a category"
+      "needs_section": "pick a category",
+      "bad_date": "bad date"
     },
     "undoCreate": "create rule {{k}}",
     "undoPriority": "priority of {{k}}",
@@ -430,7 +448,17 @@
       "needSub": "Write the subcategory"
     },
     "undoStyle_one": "highlight {{count}} rule",
-    "undoStyle_other": "highlight {{count}} rules"
+    "undoStyle_other": "highlight {{count}} rules",
+    "validFrom": "From",
+    "validTo": "To",
+    "window": "Dates",
+    "windowAny": "any date",
+    "windowHint": "The rule only applies to transactions dated between these days (inclusive). Blank = no limit.",
+    "dateInvalid": "Write the date as YYYY-MM-DD (e.g. 2026-08-03), or leave it blank.",
+    "windowBackwards": "The start date is after the end date.",
+    "undoWindow": "dates of {{k}}",
+    "released_one": "{{count}} transaction fell outside the new dates and went back to the other rules.",
+    "released_other": "{{count}} transactions fell outside the new dates and went back to the other rules."
   },
   "verify": {
     "title": "Verify your email — we sent a link to {{email}}.",
@@ -659,7 +687,7 @@
         },
         "s6": {
           "t": "Link a bank",
-          "d": "Teller sandbox (user username, password password). New transactions come in and the rules categorize them."
+          "d": "Plaid sandbox (user_good / pass_good), in Bank feeds. New transactions come in and the rules categorize them."
         },
         "s7": {
           "t": "Open Casa Lupita",

@@ -11,9 +11,9 @@ cliente, por sus respuestas a las preguntas sobre transferencias.
 
 Se CONSERVA, a propósito:
 - `format_profile_facts()`: los hechos YA guardados en `Company.profile` (la columna se queda, sin
-  migración) se siguen inyectando a los prompts, y el harness de medición (`eval_engine.py`) la usa.
+  migración) se siguen inyectando al prompt del proponedor de reglas (`ai.propose_rules`).
 - `p2p_counterparty()`: saca el nombre de la persona de un Zelle/Venmo/… → es la llave de la memoria
-  del libro (preguntas al cliente) y la usa el harness.
+  del libro (preguntas al cliente).
 Todo en inglés (Regla de Oro).
 """
 

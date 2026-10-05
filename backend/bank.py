@@ -45,7 +45,7 @@ from sqlmodel import Session, select
 from corrections import VIA_BANK_MODIFIED, record_change, snapshot
 from ingestion import ingest_parsed, make_fingerprint, mask_account
 from models import BankConnection, Company, Transaction
-from rules import check_number, classify_transfer, load_rules, match_rule, matchable_text
+from rules import check_number, load_rules, redecide_transaction
 
 ENVIRONMENTS = {"sandbox": "https://sandbox.plaid.com", "production": "https://production.plaid.com"}
 # Errores que significan "el banco cortó / ya no hay acceso": la conexión pasa a `disconnected`.
@@ -280,25 +280,6 @@ def _drop_before_csv(parsed: list[tuple], cut: dict, edge: Counter) -> tuple[lis
 
 # ── Avisos del banco: modificado / retirado ─────────────────────────────────────────────────────
 
-def _redecide(session: Session, company: Company, tx: Transaction, rules: list) -> None:
-    """El motor vuelve a decidir la categoría de una fila que el banco cambió: regla → transferencia →
-    Pendiente (el mismo orden que al entrar)."""
-    rule = match_rule(rules, matchable_text(tx.description, tx.description_extra))
-    if rule is not None:
-        tx.account_type, tx.category = rule.account_type, rule.category
-        tx.subcategory = (rule.subcategory or rule.match_text).upper()
-        tx.source, tx.matched_rule_id = "rule", rule.id
-        return
-    transfer = classify_transfer(tx.description)
-    tx.matched_rule_id = None
-    if transfer is not None:
-        tx.account_type, tx.category = transfer
-        tx.source = "transfer"
-        return
-    tx.account_type = tx.category = tx.subcategory = None
-    tx.source = None
-
-
 def apply_modified(session: Session, company: Company, tx: Transaction, row: tuple, rules: list) -> bool:
     """Aviso `modified` sobre una fila ya registrada: se actualizan los datos DEL BANCO (fecha, monto,
     descripción, cuenta). La categoría se vuelve a decidir SOLO si la decidió el motor (una regla o
@@ -316,7 +297,7 @@ def apply_modified(session: Session, company: Company, tx: Transaction, row: tup
     if tx.source == "manual" or not (tx.source in ("rule", "transfer") or tx.category is None):
         return False
     before = snapshot(tx)
-    _redecide(session, company, tx, rules)
+    redecide_transaction(tx, rules)
     return record_change(session, tx, before, via=VIA_BANK_MODIFIED) is not None
 
 
@@ -399,9 +380,9 @@ def sync(session: Session, conn: BankConnection, company: Company) -> dict:
                       "type": a.get("type"), "subtype": a.get("subtype")} for a in accounts]
     conn.next_cursor = cursor or conn.next_cursor
     session.add(conn)
-    # Plaid nunca categoriza (ai_limit=0, y su categoría no se usa): regla → transferencia → Pendiente.
+    # La categoría de Plaid nunca se usa: regla → transferencia → Pendiente, como un CSV.
     # `ingest_parsed` hace el commit de TODO (filas nuevas, avisos aplicados y el cursor).
-    core = ingest_parsed(session, company.id, company.sector or "", new_rows, ai_limit=0)
+    core = ingest_parsed(session, company.id, company.sector or "", new_rows)
     return {
         "accounts": len(accounts),
         "fetched": len(added),
@@ -416,7 +397,7 @@ def sync(session: Session, conn: BankConnection, company: Company) -> dict:
         "errors": errors,
         "by_rule": core["by_rule"],
         "by_transfer": core["by_transfer"],
-        "pending": core["inserted"] - core["by_rule"] - core["by_transfer"] - core["by_ai"],
+        "pending": core["inserted"] - core["by_rule"] - core["by_transfer"],
         "not_ready": status == "NOT_READY" and not added,
         "update_status": status,  # p. ej. HISTORICAL_UPDATE_COMPLETE: Plaid ya trajo todo el historial
     }

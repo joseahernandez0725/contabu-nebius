@@ -92,6 +92,55 @@ def _category_breakdown(
     return out
 
 
+def _uncategorized(
+    session: Session,
+    company_id: int,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+) -> dict[str, object]:
+    """Lo **PENDIENTE**: transacciones sin `account_type`. Un solo `GROUP BY` en SQL.
+
+    REGLA: *lo Pendiente se declara, nunca se omite* (`CLAUDE.md`). El P&L solo puede sumar lo que
+    tiene sección, así que estas filas **no entran al resultado** — pero tienen que SALIR en el
+    reporte, o el total se ve perfecto y está incompleto.
+
+    Se separa por `is_inflow` (la dirección REAL del banco, hecho objetivo) y **no se adivina el
+    signo contable**: sin `account_type` no se sabe si una entrada es ingreso o un aporte del dueño,
+    ni si una salida es gasto, pago de tarjeta o retiro. Por eso aquí hay **caja**, no resultado.
+
+    `is_inflow IS NULL` (dirección desconocida) va a su propio renglón en vez de caer en uno de los
+    otros dos: redondear eso hacia cualquier lado sería inventar.
+    """
+    stmt = (
+        select(Transaction.is_inflow, func.count(Transaction.id), func.sum(Transaction.amount))
+        .where(Transaction.company_id == company_id, Transaction.account_type.is_(None))
+        .group_by(Transaction.is_inflow)
+    )
+    if start is not None:
+        stmt = stmt.where(Transaction.date >= start)
+    if end is not None:
+        stmt = stmt.where(Transaction.date <= end)
+
+    out = {
+        "count": 0,
+        "count_in": 0, "money_in": ZERO,          # entró plata (crédito/depósito)
+        "count_out": 0, "money_out": ZERO,        # salió plata (débito/pago)
+        "count_unknown": 0, "money_unknown": ZERO,  # el banco no dijo la dirección
+    }
+    for is_inflow, n, total in session.exec(stmt).all():
+        n = n or 0
+        total = total or ZERO
+        suffix = "in" if is_inflow is True else "out" if is_inflow is False else "unknown"
+        out[f"count_{suffix}"] = n
+        out[f"money_{suffix}"] = total
+        out["count"] += n
+
+    # Efecto en CAJA de lo pendiente (entradas − salidas). NO es "la utilidad que falta": a dónde
+    # va cada fila lo decide su `account_type`, y justamente eso es lo que todavía no existe.
+    out["net_cash"] = out["money_in"] - out["money_out"]
+    return out
+
+
 def income_statement(
     session: Session,
     company_id: int,
@@ -99,7 +148,10 @@ def income_statement(
     end: Optional[date] = None,
 ) -> dict[str, object]:
     """Construye el P&L con la aritmética estándar + el desglose por categoría de cada sección.
-    NON_PL se ignora. Opcional: rango de fechas."""
+    NON_PL se ignora. Opcional: rango de fechas.
+
+    `uncategorized` NO entra en ninguna suma: viaja aparte para que la pantalla, el PDF y el Excel
+    lo **declaren**. Un consumidor que lo ignore muestra un número incompleto."""
     t = _section_totals(session, company_id, start, end)
 
     revenue = t.get(AccountType.REVENUE, ZERO)
@@ -124,6 +176,8 @@ def income_statement(
         "net_income": net_income,
         # Desglose por categoría de cada sección (para el P&L detallado).
         "breakdown": _category_breakdown(session, company_id, start, end),
+        # PENDIENTE: lo que no tiene sección. Fuera de la aritmética, pero visible en el reporte.
+        "uncategorized": _uncategorized(session, company_id, start, end),
     }
 
 
@@ -161,7 +215,18 @@ if __name__ == "__main__":
         print(f"= Operating Income       {money(pnl['operating_income'])}")
         print(f"+ Other Income           {money(pnl['other_income'])}")
         print(f"- Other Expense          {money(pnl['other_expense'])}")
-        print(f"= Net Income             {money(pnl['net_income'])}")
+        u = pnl["uncategorized"]
+        label = "= Net Income" if u["count"] == 0 else "= Net Income (before pending)"
+        print(f"{label:24}{money(pnl['net_income'])}")
+
+        # Lo Pendiente se declara SIEMPRE que exista, también en la salida de consola.
+        if u["count"]:
+            print(f"\n  PENDING — not classified yet ({u['count']} movements, NOT in the result above)")
+            print(f"    Money in   ({u['count_in']:>3})      {money(u['money_in'])}")
+            print(f"    Money out  ({u['count_out']:>3})      {money(u['money_out'])}")
+            if u["count_unknown"]:
+                print(f"    Unknown direction ({u['count_unknown']})  {money(u['money_unknown'])}")
+            print(f"    Net effect on cash     {money(u['net_cash'])}")
 
         count = monthly_transaction_count(session, company.id, 2026, 3)
         print(f"\nTransacciones en 2026-03: {count}  (gate Free: ≤ 50/mes)")

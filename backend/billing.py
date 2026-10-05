@@ -14,13 +14,9 @@ import os
 from datetime import datetime, timezone
 
 import stripe
-from sqlalchemy import func
 from sqlmodel import Session, select
 
-from models import Company, Transaction
-
-# Transacciones con IA gratis (prueba, DE POR VIDA) para una empresa sin suscripción (modelo M5).
-FREE_TRIAL_AI = 100
+from models import Company
 
 logger = logging.getLogger("contabu.billing")
 
@@ -39,30 +35,8 @@ PRICE_BY_QUOTA: dict[int, str] = {
 QUOTA_BY_PRICE: dict[str, int] = {pid: q for q, pid in PRICE_BY_QUOTA.items() if pid}
 
 
-def ai_quota_status(session: Session, company: Company) -> dict:
-    """Cupo de categorizaciones con IA. Suscrito: **mensual** (`tx_quota`/mes). Sin suscripción:
-    **prueba de por vida** (`FREE_TRIAL_AI`). Cuenta solo transacciones `ai_categorized=True`
-    (la entrada manual es gratis e ilimitada). Devuelve used/limit/remaining/monthly."""
-    active = company.subscription_status == "active" and bool(company.tx_quota)
-    q = select(func.count()).select_from(Transaction).where(
-        Transaction.company_id == company.id, Transaction.ai_categorized == True  # noqa: E712
-    )
-    if active:
-        start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        # El mes del cupo arranca en lo que sea MÁS reciente: el mes calendario o el inicio de la
-        # suscripción. Así lo consumido antes de pagar (prueba gratis de 100) NO cuenta contra el
-        # primer mes pagado; de ahí en adelante, mes calendario normal.
-        started = company.subscription_started_at
-        if started is not None:
-            if started.tzinfo is None:  # la DB puede devolverlo naive (columna sin tz) — es UTC
-                started = started.replace(tzinfo=timezone.utc)
-            start = max(start, started)
-        used = session.exec(q.where(Transaction.created_at >= start)).one()
-        limit = company.tx_quota or 0
-    else:
-        used = session.exec(q).one()  # de por vida
-        limit = FREE_TRIAL_AI
-    return {"used": used, "limit": limit, "remaining": max(0, limit - used), "monthly": active}
+# 🔄 4-oct-2026 (deuda #16): se borró `ai_quota_status` (el cupo de categorizaciones con IA). La IA ya no
+# categoriza, así que el cupo medía algo que no existe; el medidor de cobro queda abierto (FASE 10.D).
 
 
 def create_checkout_session(session: Session, company: Company, quota: int, email: str | None) -> str:

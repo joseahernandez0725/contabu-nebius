@@ -229,6 +229,11 @@ class CategoryRule(SQLModel, table=True):
     priority: Optional[int] = Field(default=None)
     # Cómo se VE su fila en la hoja de Reglas: {bg, bold, italic} (4-oct). Solo presentación.
     style: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    # VENTANA DE FECHAS (4-oct, "la fórmula del libro"): la regla vale solo para movimientos con fecha
+    # entre estas dos, INCLUSIVAS. None = sin límite por ese lado. Con ventana, a igual palabra clave
+    # gana la regla con ventana (es la excepción: "STARBUCKS del 3 al 17-ago → Owner Draw").
+    valid_from: Optional[date] = Field(default=None)
+    valid_to: Optional[date] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
 
 

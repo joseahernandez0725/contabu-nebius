@@ -2,7 +2,7 @@
 ContaBu — AGENTE AUDITOR de categorización (idea #18, ver `docs/IDEAS.md` y `PROPUESTA DE REGLAS.md`).
 
 Escanea las transacciones YA categorizadas del usuario y marca **sospechosos** reusando la lógica del
-boletín de la Fase 8 (`eval_engine.py`) pero sobre los **datos vivos** del cliente. Determinista, sin IA
+boletín de la Fase 8 (`eval_engine.py`, borrado el 4-oct) pero sobre los **datos vivos** del cliente. Determinista, sin IA
 → 1 click, rápido y gratis. La capa de IA (juicio fino "¿esto es realmente raro?") queda para después.
 
 Es **aditivo** a la cola de revisión: atrapa lo que `needs_review` NO ve — sobre todo **inconsistencias

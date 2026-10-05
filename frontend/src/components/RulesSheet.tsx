@@ -58,17 +58,34 @@ const styleClass = (st?: RuleStyle | null) => st && (st.bg || st.bold || st.ital
 type ImportRow = {
   keyword: string; category: string; subcategory: string; account_type: string;
   priority: number | null; status: string; approved: boolean;
+  valid_from?: string | null; valid_to?: string | null;
 };
 
 // EXPORTAR: CSV con los mismos encabezados que el import reconoce sin IA (`_own_rule_columns` en
 // main.py) — lo que sale de aquí vuelve a entrar idéntico. BOM para que Excel lea bien el UTF-8.
-const EXPORT_HEADERS = ["Keyword", "Category", "Subcategory", "Section", "Priority"];
+const EXPORT_HEADERS = ["Keyword", "Category", "Subcategory", "Section", "Priority", "From", "To"];
+
+/** Fecha de la ventana escrita por el bookkeeper → "YYYY-MM-DD". Acepta 2026-08-03 y 8/3/2026 (como
+ *  la escribe un bookkeeper en EE. UU.). "" → null (sin límite). Ilegible → undefined. */
+function parseDay(v: string): string | null | undefined {
+  const s = v.trim();
+  if (!s) return null;
+  let y: number, m: number, d: number;
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (iso) [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  else if (us) [y, m, d] = [Number(us[3]), Number(us[1]), Number(us[2])];
+  else return undefined;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return undefined;
+  return dt.toISOString().slice(0, 10);
+}
 const csvCell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
 
 function downloadRulesCsv(rules: Rule[]) {
   const lines = [EXPORT_HEADERS, ...rules.map((r) => [
     r.match_text, r.category ?? "", r.subcategory ?? "", r.account_type ?? "",
-    r.priority != null ? String(r.priority) : "",
+    r.priority != null ? String(r.priority) : "", r.valid_from ?? "", r.valid_to ?? "",
   ])];
   const csv = "\uFEFF" + lines.map((l) => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -119,7 +136,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   // FILA BORRADOR (idea de Jose): "+ Nueva regla" no abre un formulario aparte — agrega una FILA
   // en blanco arriba de la grilla y ahí se escribe, como agregar un renglón en Excel. La fila vive
   // solo en el frontend hasta tener palabra clave Y categoría; ahí se crea de verdad.
-  const [draft, setDraft] = useState<{ match_text: string; category: string; subcategory: string } | null>(null);
+  const [draft, setDraft] = useState<{ match_text: string; category: string; subcategory: string;
+                                       valid_from?: string | null; valid_to?: string | null } | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
   useEffect(() => { getCategories().then((c) => { setChart(c); setEditorChart(c); }).catch(() => {}); }, []);
   const allCats = useMemo(
@@ -158,6 +176,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       id: -1, match_text: draft.match_text, category: draft.category,
       subcategory: draft.subcategory || null, account_type: sectionOfCategory(draft.category),
       priority: null, matches: 0, scope: "COMPANY" as const, sector: null,
+      valid_from: draft.valid_from ?? null, valid_to: draft.valid_to ?? null,
       _scopeLabel: t("rules.thisBook", { defaultValue: "This book" }),
       _draft: true,
     } as Row] : []),
@@ -179,11 +198,26 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
    *  Devuelve false si no guardó nada. `reload=false` cuando son varias celdas (rango). */
   const saveCell = useCallback(async (model: any, prop: string, raw: unknown, reload = true): Promise<boolean> => {
     if (!model?.id) return false;
-    if (!["match_text", "category", "subcategory", "priority"].includes(prop)) return false;
+    if (!["match_text", "category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop)) return false;
     const value = String(raw ?? "").trim();
     // FILA BORRADOR: se va llenando en memoria y se crea sola al tener palabra clave + categoría.
     if (model.id === -1) {
-      const next = { ...draftRef.current!, [prop]: value };
+      // Las fechas de la ventana se ponen ANTES de la categoría: la regla se crea sola al tener
+      // palabra clave + categoría, y "STARBUCKS" sin fechas chocaría con la general.
+      let cell: string | null = value;
+      if (prop === "valid_from" || prop === "valid_to") {
+        const day = parseDay(value);
+        if (day === undefined) {
+          setError(t("rules.dateInvalid", { defaultValue: "Write the date as YYYY-MM-DD (e.g. 2026-08-03), or leave it blank." }));
+          return false;
+        }
+        cell = day;
+      }
+      const next = { ...draftRef.current!, [prop]: cell };
+      if (next.valid_from && next.valid_to && next.valid_from > next.valid_to) {
+        setError(t("rules.windowBackwards", { defaultValue: "The start date is after the end date." }));
+        return false;
+      }
       setDraft(next);
       draftRef.current = next;
       const section = sectionOfCategory(next.category);
@@ -194,6 +228,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
             match_text: next.match_text.trim(), account_type: section,
             // La subcategoría no queda vacía (Jose, 4-oct): sin escribirla, la sugerencia en gris.
             category: next.category, subcategory: next.subcategory.trim() || next.match_text.trim(),
+            valid_from: next.valid_from ?? null, valid_to: next.valid_to ?? null,
           });
           // Deshacer la creación = borrar la regla Y devolver lo que movió a como estaba.
           pushUndo({ label: t("rules.undoCreate", { defaultValue: "create rule {{k}}", k: next.match_text.trim() }),
@@ -237,6 +272,43 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         if (reload) load();
       } catch (err) {
         setError(String((err as Error)?.message ?? err));
+        load();
+      } finally { setSaving(null); }
+      return true;
+    }
+
+    // VENTANA DE FECHAS (4-oct): la regla solo vale entre estos días (inclusivos). Vacía = sin límite.
+    if (prop === "valid_from" || prop === "valid_to") {
+      const day = parseDay(value);
+      if (day === undefined) {
+        setError(t("rules.dateInvalid", { defaultValue: "Write the date as YYYY-MM-DD (e.g. 2026-08-03), or leave it blank." }));
+        load();
+        return false;
+      }
+      if (day === (before[prop] ?? null)) return false;
+      const from = prop === "valid_from" ? day : (before.valid_from ?? null);
+      const to = prop === "valid_to" ? day : (before.valid_to ?? null);
+      if (from && to && from > to) {
+        setError(t("rules.windowBackwards", { defaultValue: "The start date is after the end date." }));
+        load();
+        return false;
+      }
+      setSaving(t("rules.saving", { defaultValue: "Saving…" }));
+      setError(null);
+      try {
+        const res = await updateRule(model.id, { [prop]: day });
+        const prev = before[prop] ?? null;
+        pushUndo({ label: t("rules.undoWindow", { defaultValue: "dates of {{k}}", k: before.match_text }),
+                   run: async () => { await updateRule(model.id, { [prop]: prev }); load(); } });
+        setNote(res.released
+          ? t("rules.released", { defaultValue: "{{count}} transactions fell outside the new dates and went back to the other rules.",
+                                  count: res.released })
+          : null);
+        if (reload) load();
+      } catch (err) {
+        setError((err as Error).message === "dup"
+          ? t("rules.dup", { defaultValue: "There is already a rule with that keyword and those dates." })
+          : String((err as Error)?.message ?? err));
         load();
       } finally { setSaving(null); }
       return true;
@@ -408,8 +480,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     prop === "subcategory" ? (m.subcategory ?? "") : prop === "account_type"
       ? (m.account_type ?? "") : (m[prop] ?? ""));
   const editable = (m: any, prop: string) => m?._draft
-    ? ["match_text", "category", "subcategory"].includes(prop)
-    : ["category", "subcategory", "priority"].includes(prop) && m?.scope === "COMPANY";
+    ? ["match_text", "category", "subcategory", "valid_from", "valid_to"].includes(prop)
+    : ["category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop) && m?.scope === "COMPANY";
   const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
     const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
     const items: MenuItem[] = [
@@ -476,6 +548,18 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
             defaultValue: "Suggestion (the keyword). Press Tab to use it." }),
           style: p.model.subcategory ? {} : { color: "#b9b2a2", fontStyle: "italic" } },
         applyCase(p.model.subcategory || p.model.match_text || "", caseStyle)) },
+    // VENTANA DE FECHAS: vacía = sin límite (la regla de siempre). Gris "—" si no hay.
+    ...(["valid_from", "valid_to"] as const).map((k) => ({
+      prop: k, name: k === "valid_from" ? t("rules.validFrom", { defaultValue: "From" }) : t("rules.validTo", { defaultValue: "To" }),
+      size: 108, sortable: true, editor: TEXT_EDITOR,
+      readonly: (p: any) => !p.model?._draft && p.model?.scope !== "COMPANY",
+      cellTemplate: (h: any, p: any) => h("span", {
+        title: t("rules.windowHint", { defaultValue: "The rule only applies to transactions dated between these days (inclusive). Blank = no limit." }),
+        style: p.model[k]
+          ? { display: "block", textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 600 }
+          : { display: "block", textAlign: "center", color: "#b9b2a2" },
+      }, p.model[k] ?? (p.model._draft ? "" : "—")),
+    })),
     { prop: "_scopeLabel", name: t("rules.scope", { defaultValue: "Sector" }), size: 150,
       sortable: true, readonly: true,
       cellTemplate: (h: any, p: any) => h("span", {
@@ -559,6 +643,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       const res = await applyRuleProposals(applicable.map((r) => ({
         keyword: r.keyword, account_type: r.account_type, category: r.category,
         subcategory: r.subcategory || undefined, priority: r.priority ?? undefined,
+        valid_from: r.valid_from ?? null, valid_to: r.valid_to ?? null,
       })));
       setNote(t("rules.imported", {
         defaultValue: "Imported {{c}} rules and aligned {{a}} transactions.", c: res.created, a: res.applied,
@@ -735,6 +820,7 @@ function ImportPreview({ rows, chart, allCats, onRow, applicable, busy, onCancel
               <th style={th}>{t("rules.subcategory", { defaultValue: "Subcategory" })}</th>
               <th style={th}>{t("rules.section", { defaultValue: "P&L section" })}</th>
               <th style={th}>{t("rules.priority", { defaultValue: "Priority" })}</th>
+              <th style={th}>{t("rules.window", { defaultValue: "Dates" })}</th>
               <th style={th} />
             </tr>
           </thead>
@@ -778,6 +864,11 @@ function ImportPreview({ rows, chart, allCats, onRow, applicable, busy, onCancel
                 </td>
                 <td style={{ ...td, textAlign: "center", color: r.priority != null ? undefined : "#b9b2a2" }}>
                   {r.priority ?? t("rules.priorityAuto", { defaultValue: "auto" })}
+                </td>
+                <td style={{ ...td, fontSize: 12.5, whiteSpace: "nowrap", color: r.valid_from || r.valid_to ? undefined : "#b9b2a2" }}>
+                  {r.valid_from || r.valid_to
+                    ? `${r.valid_from ?? "…"} → ${r.valid_to ?? "…"}`
+                    : t("rules.windowAny", { defaultValue: "any date" })}
                 </td>
                 <td style={td}>
                   {r.status !== "ok" && (

@@ -72,7 +72,7 @@
     "checkLabel": "Cheque",
     "confirm": "Confirmar",
     "empty": "Nada por revisar",
-    "emptyHint": "Cuando la IA dude de una transacción, aparecerá aquí.",
+    "emptyHint": "Cuando un movimiento necesite una segunda mirada (por ejemplo, dinero que entró marcado como gasto), aparecerá aquí.",
     "intro": "{{count}} transacciones necesitan tu confirmación.",
     "answerPlaceholder": "Cuéntanos en tus palabras (ej. \"subcontratista de plomería\", \"renta\")"
   },
@@ -101,7 +101,33 @@
     "operatingIncome": "Utilidad operativa",
     "otherIncome": "+ Otros ingresos",
     "otherExpense": "− Otros gastos",
-    "netIncome": "Utilidad neta"
+    "netIncome": "Utilidad neta",
+    "beforePending": "antes de lo Pendiente",
+    "pendingTitle": "Pendiente — sin clasificar todavía",
+    "pendingLead_one": "1 movimiento no está incluido en el resultado de arriba.",
+    "pendingLead_other": "{{count}} movimientos no están incluidos en el resultado de arriba.",
+    "pendingWhy": "Todavía no tienen sección del P&L, así que no se puede saber si suman o restan al resultado. Aquí se muestran como entradas y salidas de caja.",
+    "pendingIn": "Entró plata",
+    "pendingOut": "Salió plata",
+    "pendingUnknown": "El banco no reportó la dirección",
+    "pendingNetCash": "Efecto neto en caja",
+    "pendingHint": "Clasifícalos en la Hoja —con una regla o a mano— y este bloque desaparece.",
+    "pendingBadge_one": "{{count}} movimiento Pendiente no está en este número",
+    "pendingBadge_other": "{{count}} movimientos Pendientes no están en este número",
+    "nothingClassified": "Todavía no hay nada clasificado en este libro.",
+    "back": "Volver",
+    "cancel": "Cancelar",
+    "close": "Cerrar el período (congelar)",
+    "closed": "Cerrado",
+    "confirmDelete": "¿Eliminar este proyecto?",
+    "delete": "Eliminar proyecto",
+    "draft": "Borrador",
+    "pdf": "Exportar PDF",
+    "projectName": "Nombre del proyecto (ej. Q1 2026)",
+    "reopen": "Reabrir (borrador)",
+    "save": "Guardar",
+    "saved": "Proyectos guardados",
+    "saveProject": "Guardar como proyecto"
   },
   "empty": {
     "welcome": "¡Bienvenido a ContaBu!",
@@ -130,7 +156,7 @@
       "ai": "IA",
       "manual": "Tú"
     },
-    "confidence": "Confianza de la IA",
+    "confidence": "Confianza",
     "cols": {
       "date": "Fecha",
       "movement": "Movimiento",
@@ -164,7 +190,7 @@
     "choose": "Toca para elegir tu archivo CSV",
     "submit": "Subir y categorizar",
     "done": "¡Listo!",
-    "result": "{{count}} movimientos categorizados",
+    "result": "{{count}} movimientos agregados",
     "seeSummary": "Ver mi resumen →",
     "held": "{{count}} transacciones recientes se importarán cuando se asienten",
     "skipped": "{{count}} duplicados omitidos (ya estaban)",
@@ -179,10 +205,7 @@
       "saving": "Guardando…"
     },
     "progress": "Categorizando {{done}} / {{total}}…",
-    "quotaBlocked": "{{count}} transacciones no se categorizaron — alcanzaste tu cupo de IA. Sube de plan para categorizarlas.",
     "audit": "El auditor revisó tus libros y encontró {{count}} cosas para mirar — ve a Auditoría.",
-    "proposeHint": "La IA categorizó {{count}} transacciones. Convierte lo que aprendió en reglas que tú apruebas — la próxima vez no necesitarán IA.",
-    "proposeCta": "Crear mis reglas",
     "orCsv": "o sube un extracto (CSV)"
   },
   "bank": {
@@ -300,7 +323,7 @@
     "subcategoryPlaceholder": "ej. Home Depot",
     "create": "Crear regla",
     "created": "Regla creada — aplicada a {{count}} transacciones.",
-    "dup": "Ya existe una regla con esa palabra clave.",
+    "dup": "Ya existe una regla con esa palabra clave y esas fechas.",
     "createError": "No se pudo crear la regla.",
     "add": "Nueva regla",
     "anySector": "Sector",
@@ -327,7 +350,8 @@
     "importStatus": {
       "exists": "ya existe",
       "duplicate": "repetida en el archivo",
-      "needs_section": "elige una categoría"
+      "needs_section": "elige una categoría",
+      "bad_date": "fecha ilegible"
     },
     "undoCreate": "crear la regla {{k}}",
     "undoPriority": "la prioridad de {{k}}",
@@ -369,7 +393,17 @@
       "needSub": "Escribe la subcategoría"
     },
     "undoStyle_one": "resaltar {{count}} regla",
-    "undoStyle_other": "resaltar {{count}} reglas"
+    "undoStyle_other": "resaltar {{count}} reglas",
+    "validFrom": "Desde",
+    "validTo": "Hasta",
+    "window": "Fechas",
+    "windowAny": "cualquier fecha",
+    "windowHint": "La regla solo vale para movimientos con fecha entre estos días (inclusive). Vacío = sin límite.",
+    "dateInvalid": "Escribe la fecha como AAAA-MM-DD (p. ej. 2026-08-03), o déjala vacía.",
+    "windowBackwards": "La fecha de inicio va después de la de fin.",
+    "undoWindow": "fechas de {{k}}",
+    "released_one": "{{count}} movimiento quedó fuera de las nuevas fechas y volvió a las otras reglas.",
+    "released_other": "{{count}} movimientos quedaron fuera de las nuevas fechas y volvieron a las otras reglas."
   },
   "cat": {
     "Small Tools & Equipment": "Herramientas y equipo menor",
@@ -453,19 +487,13 @@
     "out": "salió",
     "goToTx": "Abrir esta transacción",
     "fixRule": "Arreglar → volver a la regla ({{s}})",
-    "pendingAi": "{{n}} transacciones siguen sin categoría (alcanzaron tu cupo de IA al subirlas).",
-    "categorizePending": "Categorizarlas ahora",
-    "pendingRunning": "Categorizando…",
-    "pendingDone": "Las {{done}} quedaron categorizadas. ✅",
-    "pendingBlocked": "{{done}} categorizadas; a {{left}} les falta cupo de IA.",
-    "pendingNoQuota": "{{n}} transacciones siguen sin categoría y no te queda cupo de IA — suscríbete para categorizarlas.",
-    "upgradeCta": "Subir de plan",
-    "rulesOnly": "Aplicar solo mis reglas (gratis)"
+    "pendingInfo_one": "{{count}} movimiento sigue sin categoría. Ponle una aquí abajo o crea una regla en Movimientos.",
+    "pendingInfo_other": "{{count}} movimientos siguen sin categoría. Ponles una aquí abajo o crea una regla en Movimientos."
   },
   "billing": {
     "title": "Plan",
     "current": "Plan activo: {{n}} transacciones/mes.",
-    "free": "Plan gratis (solo manual). Suscríbete para activar la categorización con IA.",
+    "free": "Plan gratis. Suscríbete para subir tu límite mensual de movimientos.",
     "txMonth": "{{n}} transacciones/mes",
     "yourPlan": "Tu plan",
     "choose": "Elegir",
@@ -723,7 +751,7 @@
         },
         "s6": {
           "t": "Vincula un banco",
-          "d": "Teller sandbox (usuario username, clave password). Entran movimientos nuevos y las reglas los categorizan solas."
+          "d": "Sandbox de Plaid (user_good / pass_good), en Bancos. Entran movimientos nuevos y las reglas los categorizan solas."
         },
         "s7": {
           "t": "Abre Casa Lupita",
