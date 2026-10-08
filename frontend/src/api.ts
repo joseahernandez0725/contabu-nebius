@@ -192,8 +192,9 @@ export interface PivotLeaf {
   amount: string; is_inflow: boolean | null; subcategory: string | null;
 }
 
-export async function getPivot(account?: string): Promise<PivotNode[]> {
-  const qs = account ? `?account=${encodeURIComponent(account)}` : "";
+export async function getPivot(accounts: string[] = []): Promise<PivotNode[]> {
+  // Varias cuentas: ?account=A&account=B (el filtro con casillas de la hoja).
+  const qs = accounts.length ? "?" + new URLSearchParams(accounts.map((a) => ["account", a])).toString() : "";
   const res = await fetch(`${API}/api/companies/${cid()}/pivot${qs}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error("No se pudo cargar el pivote");
   return res.json();
@@ -201,9 +202,10 @@ export async function getPivot(account?: string): Promise<PivotNode[]> {
 
 /** El último `+`: solo se pide cuando el bookkeeper abre ese mes. */
 export async function getPivotLeaves(
-  section: string, category: string, subcategory: string, month: string,
+  section: string, category: string, subcategory: string, month: string, accounts: string[] = [],
 ): Promise<PivotLeaf[]> {
   const qs = new URLSearchParams({ section, category, subcategory, month });
+  for (const a of accounts) qs.append("account", a);
   const res = await fetch(`${API}/api/companies/${cid()}/pivot/leaves?${qs}`, {
     headers: await authHeaders(),
   });
@@ -314,7 +316,14 @@ export interface Rule {
   // Ventana de fechas (4-oct): la regla solo vale entre estos días, INCLUSIVOS ("YYYY-MM-DD"; null = sin límite).
   valid_from?: string | null;
   valid_to?: string | null;
+  // Transparencia del orden (4-oct): en qué lugar corre de verdad, en cuántas filas gana, y con qué
+  // otras reglas caza los mismos movimientos (a quién le gana y contra quién pierde, con cuántas filas).
+  order?: number | null;
+  wins?: number;
+  lost_to?: RuleClash[];
+  beats?: RuleClash[];
 }
+export interface RuleClash { id: number; match_text: string; rows: number }
 export interface RuleStyle { bg: string | null; bold: boolean; italic: boolean }
 
 // Vista previa de una regla ANTES de crearla (la ventana "Crear regla"). Sin keyword y con la fila,
@@ -346,7 +355,7 @@ export async function getRules(): Promise<Rule[]> {
 // Regla creada A MANO desde la tabla (el reglamento también se escribe directo — hallazgo 8.10).
 export async function createRule(payload: {
   match_text: string; account_type: string; category: string; subcategory?: string;
-  valid_from?: string | null; valid_to?: string | null;
+  valid_from?: string | null; valid_to?: string | null; priority?: number | null;
 }): Promise<{ id: number; applied: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules`, {
     method: "POST",
@@ -374,12 +383,28 @@ export async function updateRule(
 }
 
 // `revert`: DESHACER la creación de una regla — devuelve las transacciones que movió a como estaban.
-export async function deleteRule(id: number, revert = false): Promise<void> {
+// Borrar una regla devuelve sus movimientos al MOTOR (Jose, 4-oct): otra regla → transferencia →
+// Pendiente. Lo escrito a mano no se toca.
+export interface RuleDeleteResult { deleted: number; reverted: number; to_rule: number; to_transfer: number; to_pending: number }
+export async function deleteRule(id: number, revert = false): Promise<RuleDeleteResult> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}${revert ? "?revert=true" : ""}`, {
     method: "DELETE",
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error("No se pudo eliminar la regla");
+  return res.json();
+}
+
+/** ANTES de borrar: cuántos movimientos decide la regla y a dónde irían. No toca nada. */
+export interface RuleDeletePreview {
+  id: number; match_text: string; rows: number;
+  to_rules: { id: number; match_text: string; category: string; rows: number }[];
+  to_transfer: number; to_pending: number;
+}
+export async function previewRuleDelete(id: number): Promise<RuleDeletePreview> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}/delete-preview`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("No se pudo revisar la regla");
+  return res.json();
 }
 
 // Higiene: borra las reglas que no matchean ninguna transacción (afecta 0). Devuelve cuántas borró.
@@ -529,6 +554,9 @@ export interface PnlReportMeta {
   status: "draft" | "closed";
   closed_at?: string | null;
   net_income?: number;
+  // Movimientos Pendientes del período (FASE 12). `null`/ausente = no se sabe: un reporte cerrado
+  // antes de la FASE 12 congeló un snapshot sin esa cuenta. 0 = no hay Pendiente.
+  pending_count?: number | null;
 }
 export interface PnlReportDetail extends PnlReportMeta {
   pnl: IncomeStatement;
@@ -771,3 +799,52 @@ export const syncBankConnection = (id: number) =>
 
 export const deleteBankConnection = (id: number) =>
   bankFetch<{ deleted: number; revoked: boolean }>(`/${id}`, { method: "DELETE" });
+
+// --- NOTAS DEL LIBRO (FASE 11, Auditoría / IA · 4-oct-2026) ------------------------------------
+// Lo que el bookkeeper le escribe al agente sobre este cliente. Una nota nunca categoriza: es la
+// entrada del agente ④, que solo PROPONE filas de la fórmula del libro.
+export type BookNoteKind = "keep_in_mind" | "dont_report";
+export type BookNotePriority = "high" | "normal";
+
+export interface BookNote {
+  id: number;
+  kind: BookNoteKind;
+  priority: BookNotePriority;
+  text: string;
+  merchant: string | null;
+  valid_from: string | null; // ISO yyyy-mm-dd
+  valid_to: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export type BookNoteInput = Partial<Pick<BookNote, "kind" | "priority" | "text" | "merchant" | "valid_from" | "valid_to">>;
+
+/** Error de validación del backend: `code` es estable (en inglés) y se traduce con `notes.error.<code>`. */
+export class BookNoteError extends Error {
+  code: string;
+  constructor(code: string) { super(code); this.code = code; }
+}
+
+async function notesFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API}/api/companies/${cid()}/notes${path}`, {
+    ...init,
+    headers: { ...(await authHeaders()), "Content-Type": "application/json", ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j?.detail).catch(() => null);
+    throw new BookNoteError(detail?.code ?? (res.status === 403 ? "forbidden" : "notes_error"));
+  }
+  return res.json();
+}
+
+export const getBookNotes = () => notesFetch<BookNote[]>("");
+
+export const createBookNote = (note: BookNoteInput) =>
+  notesFetch<BookNote>("", { method: "POST", body: JSON.stringify(note) });
+
+export const updateBookNote = (id: number, note: BookNoteInput) =>
+  notesFetch<BookNote>(`/${id}`, { method: "PATCH", body: JSON.stringify(note) });
+
+export const deleteBookNote = (id: number) =>
+  notesFetch<{ deleted: number }>(`/${id}`, { method: "DELETE" });

@@ -14,7 +14,7 @@ import os
 import re
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
@@ -28,10 +28,12 @@ from auth import (current_user, effective_role, owned_company, owner_company, ow
                   client_writable_company, console_company, user_firm)
 from categories import categories_for, categories_for_company
 from company_profile import format_profile_facts
-from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_PRECEDENCE, VIA_RULE_UPDATE, last_change, record_change,
+from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_DELETED, VIA_RULE_PRECEDENCE, VIA_RULE_UPDATE,
+                         last_change, record_change,
                          snapshot, undo_change)
 from db import get_session
 import demo  # FASE 13 — despliegue de demo (no hace nada si DEMO_MODE está apagado)
+import book_notes  # FASE 11 — las notas del libro (Auditoría / IA)
 from ingestion import ingest_csv, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
@@ -47,7 +49,8 @@ import bank
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
     in_window, is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
-    reapply_rule_precedence, redecide_transaction, suggest_keyword, normalize,
+    place_priority, reapply_rule_precedence, redecide_transaction, rule_overlaps, simulate_delete,
+    suggest_keyword, normalize,
 )
 
 
@@ -891,6 +894,14 @@ def list_rules(
     txs = session.exec(
         select(Transaction).where(Transaction.company_id == company_id)
     ).all()
+    # ORDEN REAL de evaluación (4-oct): el bookkeeper ve en qué lugar corre cada regla, en vez de
+    # deducirlo de prioridad + largo + ventana. Y qué reglas cazan los mismos movimientos.
+    ranked = load_rules(session, company_id, "")
+    order = {r.id: i for i, r in enumerate(ranked, start=1)}
+    by_id = {r.id: r for r in rules}
+    overlaps = rule_overlaps(ranked, [t for t in txs if t.source != "manual"])
+    clash = lambda c: [{"id": k, "match_text": by_id[k].match_text, "rows": n}  # noqa: E731
+                       for k, n in c.most_common() if k in by_id]
     out = []
     for r in rules:
         # Lo escrito a mano NO cuenta: está desconectado de las reglas (Jose, 3-oct).
@@ -907,6 +918,10 @@ def list_rules(
             "category": r.category, "subcategory": r.subcategory, "matches": matches,
             "direction": direction,
             "priority": r.priority, "style": r.style, **_rule_out(r),
+            "order": order.get(r.id),  # None = no corre (sin sección del P&L)
+            "wins": overlaps.get(r.id, {}).get("wins", 0),
+            "lost_to": clash(overlaps[r.id]["lost_to"]) if r.id in overlaps else [],
+            "beats": clash(overlaps[r.id]["beats"]) if r.id in overlaps else [],
             # `scope`/`sector`: si la regla es de ESTE libro o de todo un sector (la hoja de reglas
             # los muestra como una sola columna "Sector": "This book" o el nombre del sector).
             "scope": r.scope.value, "sector": r.sector,
@@ -1006,10 +1021,11 @@ def create_rule(
         scope=RuleScope.COMPANY, company_id=company_id, match_text=match_text,
         account_type=payload.account_type, category=payload.category,
         subcategory=(payload.subcategory or "").strip() or None,
-        priority=_valid_priority(payload.priority),
         valid_from=payload.valid_from, valid_to=payload.valid_to,
     )
     session.add(rule)
+    if payload.priority is not None:
+        place_priority(session, company_id, rule, _valid_priority(payload.priority))  # sin repetir
     applied = apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
     # Una regla nueva puede tomar transacciones que otra regla con más prioridad debe conservar.
     reassigned = reapply_rule_precedence(session, company_id, user_id=user.id)
@@ -1046,7 +1062,9 @@ def update_rule(
     if "subcategory" in data:  # "" desde la UI = limpiar (volver al match_text)
         data["subcategory"] = (data["subcategory"] or "").strip() or None
     if "priority" in data:
-        data["priority"] = _valid_priority(data["priority"])
+        # Sin repetir (4-oct): poner la 1 inserta la regla ahí y empuja a las demás, como en Excel.
+        place_priority(session, company_id, rule, _valid_priority(data.pop("priority")))
+        data["_priority"] = True  # marca para lo de abajo (no es un campo)
     if "style" in data:
         st = data["style"] or {}
         bg = st.get("bg")
@@ -1069,6 +1087,7 @@ def update_rule(
                                                   valid_from=vf, valid_to=vt), t.date)]
     else:
         released = []
+    moved_priority = bool(data.pop("_priority", False))
     for field, value in data.items():
         setattr(rule, field, value)
     session.add(rule)
@@ -1083,9 +1102,9 @@ def update_rule(
     # otra regla o el bookkeeper decidieron): solo se re-decide qué regla gana.
     # Cambiar SOLO cómo se ve (style) no toca ninguna transacción.
     applied = (apply_rule_to_transactions(session, company_id, rule, user_id=user.id)
-               if data.keys() - {"priority", "style"} else 0)
+               if data.keys() - {"style"} else 0)
     reassigned = (reapply_rule_precedence(session, company_id, user_id=user.id)
-                  if data.keys() - {"style"} else 0)
+                  if (data.keys() - {"style"}) or moved_priority else 0)
     session.commit()
     session.refresh(rule)
     return {"id": rule.id, "match_text": rule.match_text,
@@ -1093,6 +1112,33 @@ def update_rule(
             "category": rule.category, "subcategory": rule.subcategory,
             "priority": rule.priority, "style": rule.style, **_rule_out(rule),
             "applied": applied, "reassigned": reassigned, "released": len(released)}
+
+
+def _rule_rows(session: Session, company_id: int, rule_id: int) -> list[Transaction]:
+    """Las filas que DECIDE una regla (no lo escrito a mano: está desconectado de las reglas)."""
+    return session.exec(select(Transaction).where(Transaction.company_id == company_id)
+                        .where(Transaction.matched_rule_id == rule_id)
+                        .where(Transaction.source == "rule")).all()
+
+
+@app.get("/api/companies/{company_id}/rules/{rule_id}/delete-preview")
+def preview_delete_rule(
+    company_id: int,
+    rule_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """ANTES de borrar una regla (4-oct): cuántos movimientos decide y a dónde irían — a otra regla,
+    a transferencia o a Pendiente. No toca nada."""
+    console_company(company_id, user, session)
+    rule = _owned_company_rule(company_id, rule_id, session)
+    rows = _rule_rows(session, company_id, rule_id)
+    sim = simulate_delete(load_rules(session, company_id, ""), rule_id, rows)
+    names = {r.id: r for r in session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)).all()}
+    return {"id": rule.id, "match_text": rule.match_text, "rows": len(rows),
+            "to_rules": [{"id": k, "match_text": names[k].match_text, "category": names[k].category, "rows": n}
+                         for k, n in sim["to_rules"].most_common()],
+            "to_transfer": sim["to_transfer"], "to_pending": sim["to_pending"]}
 
 
 @app.delete("/api/companies/{company_id}/rules/{rule_id}")
@@ -1103,10 +1149,16 @@ def delete_rule(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Elimina una regla del reglamento. Por defecto no re-categoriza lo ya hecho (solo deja de
-    aplicar a futuro). Con `revert=true` —lo usa DESHACER al crear una regla— primero devuelve a su
-    estado anterior las transacciones que esta regla movió (según el historial de correcciones),
-    siempre que nadie las haya tocado después."""
+    """Elimina una regla del reglamento.
+
+    🔴 Decisión de Jose (4-oct): **borrar una regla devuelve sus movimientos al MOTOR** — como borrar
+    la fórmula de una celda. Otra regla que aplique los toma; si no, transferencia; si no, quedan
+    Pendientes. Lo escrito a mano no se toca. Cada fila que cambia deja su par antes → después en el
+    historial (`via="rule_deleted"`). Las prioridades que quedan se renumeran sin hueco.
+
+    Con `revert=true` —lo usa DESHACER al crear una regla— primero devuelve a su estado anterior las
+    transacciones que esta regla movió (según el historial de correcciones), siempre que nadie las
+    haya tocado después; lo que quede, va al motor igual."""
     owned_company(company_id, user, session, write=True)
     rule = _owned_company_rule(company_id, rule_id, session)
     reverted = 0
@@ -1125,16 +1177,34 @@ def delete_rule(
             if tx is not None and tx.company_id == company_id and \
                     undo_change(session, tx, ch, user_id=user.id):
                 reverted += 1
-        # Lo que la regla solo "estampó" (misma categoría, sin cambio en el historial) pierde su
-        # procedencia: ya no la decide una regla que no existe.
-        for tx in session.exec(select(Transaction).where(Transaction.company_id == company_id)
-                               .where(Transaction.matched_rule_id == rule_id)).all():
-            tx.matched_rule_id = None
-            session.add(tx)
+        session.flush()
+    # Lo que la regla todavía decide vuelve al motor, sin ella.
+    rest = [r for r in load_rules(session, company_id, "") if r.id != rule_id]
+    moved = {"to_rule": 0, "to_transfer": 0, "to_pending": 0}
+    for tx in _rule_rows(session, company_id, rule_id):
+        before = snapshot(tx)
+        redecide_transaction(tx, rest)
+        moved["to_rule" if tx.source == "rule" else "to_transfer" if tx.source == "transfer" else "to_pending"] += 1
+        session.add(tx)
+        record_change(session, tx, before, via=VIA_RULE_DELETED, user_id=user.id)
+    # Una fila que la regla solo "estampó" sin ser suya (procedencia vieja) pierde la referencia.
+    for tx in session.exec(select(Transaction).where(Transaction.company_id == company_id)
+                           .where(Transaction.matched_rule_id == rule_id)).all():
+        tx.matched_rule_id = None
+        session.add(tx)
+    had_priority = rule.priority is not None
     session.delete(rule)
+    session.flush()
+    if had_priority:  # cerrar el hueco: 1, 2, 3… sin saltos
+        ranked = sorted(session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
+                                     .where(CategoryRule.priority != None)).all(),  # noqa: E711
+                        key=lambda r: (r.priority, r.id))
+        for i, r in enumerate(ranked, start=1):
+            if r.priority != i:
+                r.priority = i
+                session.add(r)
     session.commit()
-    return {"deleted": rule_id, "reverted": reverted}
-
+    return {"deleted": rule_id, "reverted": reverted, **moved}
 
 class CheckoutPayload(BaseModel):
     quota: int  # tier M5: 100 | 200 | 400 | 1000 (transacciones/mes)
@@ -1366,6 +1436,77 @@ def audit_company(
     Determinista, sin IA. Corre a demanda Y automáticamente tras cada subida (badge)."""
     console_company(company_id, user, session)
     return _company_audit(session, company_id)
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# NOTAS DEL LIBRO (FASE 11, área Auditoría / IA · 4-oct-2026). Lo que el bookkeeper le escribe al
+# agente sobre ESTE cliente: 📌 tenlo en cuenta / 🚫 no me reportes. Lógica en `book_notes.py`.
+# Leer = consola (el CLIENTE no las ve: es el criterio del bookkeeper). Escribir = operador.
+# Una nota nunca categoriza: es la entrada del agente ④, que solo PROPONE filas de la fórmula.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+class BookNoteIn(BaseModel):
+    text: Optional[str] = None
+    kind: Optional[str] = None          # keep_in_mind | dont_report
+    priority: Optional[str] = None      # high | normal
+    merchant: Optional[str] = None      # alcance opcional
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
+
+
+def _owned_note(session: Session, company_id: int, note_id: int) -> "book_notes.BookNote":
+    note = session.get(book_notes.BookNote, note_id)
+    if note is None or note.company_id != company_id:
+        raise HTTPException(status_code=404, detail="note not found")
+    return note
+
+
+def _note_error(e: "book_notes.NoteError") -> HTTPException:
+    return HTTPException(status_code=422, detail={"code": e.code})
+
+
+@app.get("/api/companies/{company_id}/notes")
+def list_book_notes(company_id: int, user: User = Depends(current_user),
+                    session: Session = Depends(get_session)):
+    console_company(company_id, user, session)
+    return [book_notes.to_dict(n) for n in book_notes.list_notes(session, company_id)]
+
+
+@app.post("/api/companies/{company_id}/notes")
+def create_book_note(company_id: int, payload: BookNoteIn, user: User = Depends(current_user),
+                     session: Session = Depends(get_session)):
+    owned_company(company_id, user, session, write=True)
+    try:
+        note = book_notes.create_note(session, company_id, payload.model_dump(exclude_unset=True),
+                                      user_id=user.id)
+    except book_notes.NoteError as e:
+        raise _note_error(e)
+    session.commit()
+    session.refresh(note)
+    return book_notes.to_dict(note)
+
+
+@app.patch("/api/companies/{company_id}/notes/{note_id}")
+def update_book_note(company_id: int, note_id: int, payload: BookNoteIn,
+                     user: User = Depends(current_user), session: Session = Depends(get_session)):
+    owned_company(company_id, user, session, write=True)
+    note = _owned_note(session, company_id, note_id)
+    try:
+        book_notes.update_note(session, note, payload.model_dump(exclude_unset=True))
+    except book_notes.NoteError as e:
+        raise _note_error(e)
+    session.commit()
+    session.refresh(note)
+    return book_notes.to_dict(note)
+
+
+@app.delete("/api/companies/{company_id}/notes/{note_id}")
+def delete_book_note(company_id: int, note_id: int, user: User = Depends(current_user),
+                     session: Session = Depends(get_session)):
+    owned_company(company_id, user, session, write=True)
+    session.delete(_owned_note(session, company_id, note_id))
+    session.commit()
+    return {"deleted": note_id}
 
 
 @app.post("/api/companies/{company_id}/rule-proposals")
@@ -1603,7 +1744,12 @@ def list_pnl_reports(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Lista los proyectos de P&L guardados (con su net income para mostrar en la lista)."""
+    """Lista los proyectos de P&L guardados (con su net income para mostrar en la lista).
+
+    Lleva también `pending_count`: la lista enseña un net income por proyecto y, sin él, sería la
+    única salida del P&L que calla lo Pendiente. `None` = **no se sabe** (un reporte CERRADO antes de
+    la FASE 12 congeló un snapshot sin esa cuenta): se deja vacío en vez de afirmar un cero.
+    """
     # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
     # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
     console_company(company_id, user, session)
@@ -1611,8 +1757,13 @@ def list_pnl_reports(
         select(PnlReport).where(PnlReport.company_id == company_id)
         .order_by(PnlReport.created_at.desc())
     ).all()
-    return [{**_report_meta(r), "net_income": _report_pnl(session, company_id, r)["net_income"]}
-            for r in reports]
+    out = []
+    for r in reports:
+        pnl = _report_pnl(session, company_id, r)
+        u = pnl.get("uncategorized")
+        out.append({**_report_meta(r), "net_income": pnl["net_income"],
+                    "pending_count": u["count"] if u else None})
+    return out
 
 
 @app.post("/api/companies/{company_id}/pnl-reports")
@@ -1785,7 +1936,7 @@ def get_pivot(
     company_id: int,
     start: Optional[date] = None,
     end: Optional[date] = None,
-    account: Optional[str] = None,
+    account: Optional[list[str]] = Query(None),  # varias: ?account=A&account=B (filtro con casillas)
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
@@ -1803,6 +1954,7 @@ def get_pivot_leaves(
     category: str,
     subcategory: str,
     month: str,
+    account: Optional[list[str]] = Query(None),  # el mismo filtro de cuentas que el árbol
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
@@ -1811,7 +1963,7 @@ def get_pivot_leaves(
     # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
     # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
     console_company(company_id, user, session)
-    return pivot_leaves(session, company_id, section, category, subcategory, month)
+    return pivot_leaves(session, company_id, section, category, subcategory, month, account)
 
 
 @app.get("/api/companies/{company_id}/transactions/review")

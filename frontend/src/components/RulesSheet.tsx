@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useTranslation } from "react-i18next";
 import { RevoGrid } from "@revolist/react-datagrid";
 import {
-  getRules, createRule, updateRule, deleteRule, getCategories, importRules, applyRuleProposals,
+  getRules, createRule, updateRule, deleteRule, previewRuleDelete, getCategories, importRules, applyRuleProposals,
   type Rule, type RuleStyle, type ChartOfAccounts,
 } from "../api";
 import {
@@ -41,7 +41,7 @@ const SECTION_COLOR: Record<string, string> = {
   OTHER_INCOME: "#15803d", OTHER_EXPENSE: "#991b1b", NON_PL: "#5b6b62",
 };
 
-type Row = Rule & { _scopeLabel: string; _draft?: boolean; _rowClass?: string };
+type Row = Rule & { _scopeLabel: string; _draft?: boolean; _rowClass?: string; _clash?: string; _clashLoses?: boolean };
 
 /** Texto legible sobre cualquier fondo (mismo cálculo que la Hoja). */
 function readableOn(hex: string): string {
@@ -116,9 +116,12 @@ export type RulesCommands = {
   newRule: () => void; importRules: () => void; exportRules: () => void; canExport: boolean;
   undo: () => void; canUndo: boolean; lastUndo: string | null;
   restyle: (patch: Partial<RuleStyle> | "clear") => void; selectedCount: number;
+  /** Eliminar la regla de la celda enfocada (Edición → Eliminar regla). */
+  deleteRule: () => void; canDelete: boolean;
 };
 
-export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, formulaBar = true, onCommands }: {
+export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, formulaBar = true, onCommands,
+  focusRule, onFocusRuleDone }: {
   /** Descripción de una transacción con la que arrancar la regla (viene de la hoja). */
   seedKeyword?: string | null;
   onSeedUsed?: () => void;
@@ -126,6 +129,9 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   toolbar?: boolean;
   formulaBar?: boolean;
   onCommands?: (c: RulesCommands | null) => void;
+  /** "Ir a la regla" desde la Hoja: esta regla se selecciona y queda a la vista. */
+  focusRule?: { id: number; n: number } | null;
+  onFocusRuleDone?: () => void;
 } = {}) {
   const { t } = useTranslation();
   const [rules, setRules] = useState<Rule[] | null>(null);
@@ -187,6 +193,12 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     _scopeLabel: r.scope === "SECTOR"
       ? (r.sector || t("rules.anySector", { defaultValue: "Sector" }))
       : t("rules.thisBook", { defaultValue: "This book" }),
+    // CHOQUES (4-oct): con qué reglas caza los mismos movimientos. Primero contra quién PIERDE.
+    _clash: [
+      ...(r.lost_to ?? []).map((c) => t("rules.losesTo", { defaultValue: "loses {{n}} to {{k}}", n: c.rows, k: c.match_text })),
+      ...(r.beats ?? []).map((c) => t("rules.beats", { defaultValue: "wins {{n}} over {{k}}", n: c.rows, k: c.match_text })),
+    ].join(" · "),
+    _clashLoses: !!r.lost_to?.length,
     _draft: false,
   })),
   ], [rules, draft, t]);
@@ -497,6 +509,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
           catch { setError(t("sheet.menu.pasteBlocked", { defaultValue: "The browser didn't allow reading the clipboard. Use Ctrl+V." })); }
         } },
     ];
+    if (!m._draft && m.scope === "COMPANY") items.push("sep",
+      { label: t("rules.deleteRule", { defaultValue: "Delete rule…" }), onClick: () => void removeRule(m) });
     if (prop === "subcategory" && !m._draft && !m.subcategory && m.match_text && editable(m, prop)) {
       items.push({ label: t("sheet.menu.useSuggestion", { defaultValue: "Use the suggestion: {{s}}", s: m.match_text }),
                    onClick: () => void saveCell(m, "subcategory", m.match_text) });
@@ -513,6 +527,14 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   };
 
   const columns = useMemo(() => ([
+    // ORDEN REAL de evaluación (4-oct): en qué lugar corre cada regla — prioridad → con ventana de
+    // fechas → la palabra más larga → alfabético. Así no hay que deducirlo.
+    { prop: "order", name: t("rules.order", { defaultValue: "Order" }), size: 72, sortable: true, readonly: true,
+      cellTemplate: (h: any, p: any) => h("span", {
+        title: t("rules.orderHint", { defaultValue: "The order in which the sheet tries the rules: priority first, then rules with dates, then the longest keyword, then A–Z. The first one that matches decides." }),
+        style: { display: "block", textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 700,
+                 color: p.model.order != null ? "#1A8754" : "#b9b2a2" },
+      }, p.model._draft ? "" : (p.model.order != null ? `#${p.model.order}` : "—")) },
     { prop: "priority", name: t("rules.priority", { defaultValue: "Priority" }), size: 96,
       sortable: true, editor: TEXT_EDITOR,
       readonly: (p: any) => !!p.model?._draft,
@@ -582,6 +604,12 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       cellTemplate: (h: any, p: any) => h("span",
         { style: { display: "block", textAlign: "right", color: "#5b6b62",
                    fontVariantNumeric: "tabular-nums" } }, String(p.model.matches ?? 0)) },
+    { prop: "_clash", name: t("rules.clash", { defaultValue: "Overlaps" }), size: 260, readonly: true,
+      cellTemplate: (h: any, p: any) => h("span", {
+        title: p.model._clash ? t("rules.clashHint", { defaultValue: "Rules that match the same transactions. Only the first one in the Order decides each row." }) : "",
+        style: { display: "block", fontSize: "12px", whiteSpace: "normal", lineHeight: 1.3,
+                 color: p.model._clashLoses ? "#b45309" : "#1A8754", fontWeight: p.model._clashLoses ? 600 : 400 },
+      }, p.model._clash ? (p.model._clashLoses ? "⚠ " : "") + p.model._clash : "") },
   ]), [t, caseStyle]);
 
   const editableCell = (id: number, prop: string) => {
@@ -655,6 +683,69 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     } finally { setImporting(false); }
   }
 
+  /** La regla de la celda enfocada (solo las de ESTE libro se pueden borrar). */
+  const focusedRule = (): Rule | null => {
+    const r = focus ? (rulesRef.current ?? []).find((x) => x.id === focus.id) : null;
+    return r && r.scope === "COMPANY" ? r : null;
+  };
+
+  /** ELIMINAR UNA REGLA (Jose, 4-oct): primero dice cuántos movimientos decide y a dónde irán (otra
+   *  regla → transferencia → Pendiente; lo escrito a mano no se toca). Se deshace re-creándola. */
+  async function removeRule(r: Rule) {
+    setError(null); setNote(null);
+    let p;
+    try { p = await previewRuleDelete(r.id); } catch (e) { setError(String((e as Error).message)); return; }
+    const lines = [p.rows === 0
+      ? t("rules.deleteNone", { defaultValue: "Delete the rule “{{k}}”? It doesn't decide any transaction right now.", k: r.match_text })
+      : t("rules.deleteAsk", { defaultValue: "Delete the rule “{{k}}”? It decides {{count}} transactions. If you delete it:", k: r.match_text, count: p.rows })];
+    for (const x of p.to_rules) lines.push("• " + t("rules.deleteToRule", { defaultValue: "{{count}} go to the rule {{k}} ({{c}})", count: x.rows, k: x.match_text, c: x.category }));
+    if (p.to_transfer) lines.push("• " + t("rules.deleteToTransfer", { defaultValue: "{{count}} become transfers", count: p.to_transfer }));
+    if (p.to_pending) lines.push("• " + t("rules.deleteToPending", { defaultValue: "{{count}} stay Pending", count: p.to_pending }));
+    if (p.rows) lines.push(t("rules.deleteManual", { defaultValue: "What you wrote by hand doesn't change. You can undo it." }));
+    if (!window.confirm(lines.join("\n"))) return;
+    setSaving(t("rules.saving", { defaultValue: "Saving…" }));
+    try {
+      const res = await deleteRule(r.id);
+      const snap = { ...r };
+      pushUndo({ label: t("rules.undoDelete", { defaultValue: "delete rule {{k}}", k: r.match_text }),
+                 run: async () => {
+                   // Volver a crearla igual: la regla re-toma lo que gane (lo manual sigue sin tocarse).
+                   const again = await createRule({
+                     match_text: snap.match_text, account_type: snap.account_type ?? "", category: snap.category,
+                     subcategory: snap.subcategory ?? undefined, priority: snap.priority ?? null,
+                     valid_from: snap.valid_from ?? null, valid_to: snap.valid_to ?? null,
+                   });
+                   if (snap.style) await updateRule(again.id, { style: snap.style });
+                   load();
+                 } });
+      setNote(t("rules.deleted", {
+        defaultValue: "Rule deleted. {{r}} went to another rule, {{tr}} to transfers, {{p}} are Pending.",
+        r: res.to_rule, tr: res.to_transfer, p: res.to_pending }));
+      load();
+    } catch (e) {
+      setError(String((e as Error).message));
+    } finally { setSaving(null); }
+  }
+
+  // "IR A LA REGLA" desde la Hoja: cuando las reglas llegan, se selecciona esa fila y se desplaza ahí.
+  useEffect(() => {
+    if (!focusRule || !rules) return;
+    const y = rows.findIndex((r) => r.id === focusRule.id);
+    onFocusRuleDone?.();
+    if (y < 0) {
+      setError(t("rules.goMissing", { defaultValue: "The rule that decided this row no longer exists. Its transactions went back to the other rules or are Pending." }));
+      return;
+    }
+    const grid = gridRef.current as any;
+    setTimeout(async () => {
+      try {
+        await grid?.scrollToRow?.(y);
+        const cols = (await grid?.getColumns?.()) ?? [];
+        await grid?.setCellsFocus?.({ x: 0, y }, { x: Math.max(0, cols.length - 1), y });
+      } catch { /* la grilla aún no está lista */ }
+    }, 120);
+  }, [focusRule, rules]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Los menús de arriba (en la Hoja) usan estas mismas acciones.
   useEffect(() => {
     onCommands?.({
@@ -664,6 +755,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       canExport: !!rules?.length,
       undo: () => void undo(), canUndo, lastUndo,
       restyle: (p) => void restyle(p), selectedCount: selected.length,
+      deleteRule: () => { const r = focusedRule(); if (r) void removeRule(r); }, canDelete: !!focusedRule(),
     });
   });
   useEffect(() => () => onCommands?.(null), []);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -689,6 +781,11 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         <button onClick={() => downloadRulesCsv((rules ?? []).filter((r) => r.scope === "COMPANY"))}
           disabled={!rules?.length} style={{ ...TOOL_BTN, opacity: rules?.length ? 1 : 0.5 }}>
           {t("rules.export", { defaultValue: "Export" })}
+        </button>
+        <button onClick={() => { const r = focusedRule(); if (r) void removeRule(r); }} disabled={!focusedRule()}
+          title={focusedRule() ? undefined : t("rules.deletePick", { defaultValue: "Select a cell of the rule to delete" })}
+          style={{ ...TOOL_BTN, color: "#991b1b", opacity: focusedRule() ? 1 : 0.5 }}>
+          {t("rules.deleteRule", { defaultValue: "Delete rule…" })}
         </button>
         {selected.length > 0 && imp === null && (
           <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#fff",

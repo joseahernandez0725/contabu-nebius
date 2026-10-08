@@ -127,7 +127,8 @@
     "reopen": "Reabrir (borrador)",
     "save": "Guardar",
     "saved": "Proyectos guardados",
-    "saveProject": "Guardar como proyecto"
+    "saveProject": "Guardar como proyecto",
+    "allTime": "Todo el periodo"
   },
   "empty": {
     "welcome": "¡Bienvenido a ContaBu!",
@@ -300,7 +301,6 @@
     "edit": "Editar regla",
     "editHint": "Al guardar, esta regla se re-aplica a todas las transacciones que coincidan.",
     "applied": "Se actualizaron {{count}} transacciones.",
-    "confirmDelete": "¿Eliminar esta regla?",
     "cancel": "Cancelar",
     "save": "Guardar",
     "saving": "Guardando…",
@@ -403,7 +403,28 @@
     "windowBackwards": "La fecha de inicio va después de la de fin.",
     "undoWindow": "fechas de {{k}}",
     "released_one": "{{count}} movimiento quedó fuera de las nuevas fechas y volvió a las otras reglas.",
-    "released_other": "{{count}} movimientos quedaron fuera de las nuevas fechas y volvieron a las otras reglas."
+    "released_other": "{{count}} movimientos quedaron fuera de las nuevas fechas y volvieron a las otras reglas.",
+    "order": "Orden",
+    "orderHint": "El orden en que la hoja prueba las reglas: primero la prioridad, luego las que tienen fechas, luego la palabra más larga y luego A–Z. La primera que coincide decide.",
+    "clash": "Choques",
+    "clashHint": "Reglas que cazan los mismos movimientos. En cada fila decide solo la primera según el Orden.",
+    "losesTo": "pierde {{n}} con {{k}}",
+    "beats": "le gana {{n}} a {{k}}",
+    "deleteRule": "Eliminar regla…",
+    "deletePick": "Selecciona una celda de la regla que quieres eliminar",
+    "deleteNone": "¿Eliminar la regla “{{k}}”? Ahora no decide ningún movimiento.",
+    "deleteAsk_one": "¿Eliminar la regla “{{k}}”? Decide {{count}} movimiento. Si la eliminas:",
+    "deleteAsk_other": "¿Eliminar la regla “{{k}}”? Decide {{count}} movimientos. Si la eliminas:",
+    "deleteToRule_one": "{{count}} pasa a la regla {{k}} ({{c}})",
+    "deleteToRule_other": "{{count}} pasan a la regla {{k}} ({{c}})",
+    "deleteToTransfer_one": "{{count}} queda como transferencia",
+    "deleteToTransfer_other": "{{count}} quedan como transferencias",
+    "deleteToPending_one": "{{count}} queda Pendiente",
+    "deleteToPending_other": "{{count}} quedan Pendientes",
+    "deleteManual": "Lo que escribiste a mano no cambia. Puedes deshacerlo.",
+    "undoDelete": "eliminar la regla {{k}}",
+    "deleted": "Regla eliminada. {{r}} pasaron a otra regla, {{tr}} a transferencias y {{p}} quedaron Pendientes.",
+    "goMissing": "La regla que decidía esta fila ya no existe. Sus movimientos volvieron a las otras reglas o están Pendientes."
   },
   "cat": {
     "Small Tools & Equipment": "Herramientas y equipo menor",
@@ -461,6 +482,47 @@
     "Loan Proceeds": "Ingreso de préstamo",
     "Loan Principal Payment": "Pago de capital de préstamo",
     "Credit Card Payment": "Pago de tarjeta de crédito"
+  },
+  "notes": {
+    "title": "Notas del libro",
+    "subtitle": "Lo que el agente debe saber de este cliente. Las notas nunca categorizan: el agente las lee para proponer cambios a la fórmula de este libro, y tú apruebas.",
+    "add": "+ Nueva nota",
+    "loading": "Cargando notas…",
+    "empty": "Todavía no hay notas. Escribe lo que le dirías a un asistente nuevo sobre este cliente: excepciones, fechas, qué vigilar.",
+    "kindLabel": "Tipo",
+    "kind": {
+      "keep_in_mind": "Tenlo en cuenta",
+      "dont_report": "No me reportes"
+    },
+    "priorityLabel": "Prioridad",
+    "priority": {
+      "high": "Alta",
+      "normal": "Normal"
+    },
+    "textLabel": "Nota",
+    "textPlaceholder": "Ej.: el dueño estuvo de vacaciones en Europa del 3 al 17 de agosto: lo que compró allá es personal.",
+    "merchantLabel": "Comercio (opcional)",
+    "merchantPlaceholder": "Ej.: STARBUCKS",
+    "fromLabel": "Vale desde (opcional)",
+    "toLabel": "Vale hasta (opcional)",
+    "save": "Guardar nota",
+    "saving": "Guardando…",
+    "cancel": "Cancelar",
+    "edit": "Editar",
+    "delete": "Borrar",
+    "confirmDelete": "¿Borrar esta nota? El agente dejará de tenerla en cuenta.",
+    "error": {
+      "notes_error": "No se pudo guardar la nota. Inténtalo de nuevo.",
+      "forbidden": "No tienes permiso para cambiar las notas de este libro.",
+      "empty_text": "Escribe la nota primero.",
+      "text_too_long": "La nota es demasiado larga (máximo 1.000 caracteres).",
+      "bad_kind": "Tipo de nota desconocido.",
+      "bad_priority": "Prioridad desconocida.",
+      "bad_date": "Una de las fechas no es válida.",
+      "bad_window": "La fecha de inicio es posterior a la de fin.",
+      "merchant_too_long": "El comercio es demasiado largo (máximo 80 caracteres).",
+      "too_many_notes": "Este libro ya tiene 100 notas. Borra las que ya no apliquen."
+    }
   },
   "audit": {
     "title": "Auditar mi categorización",
@@ -638,7 +700,8 @@
       "newRule": "Crear una regla desde esta fila",
       "bankKeep": "Mantenerlo (quitar la marca del banco)",
       "bankDelete": "Eliminarlo del libro (el banco lo retiró)",
-      "bankDeleteConfirm": "¿Eliminar este movimiento? El banco lo retiró. No se puede deshacer."
+      "bankDeleteConfirm": "¿Eliminar este movimiento? El banco lo retiró. No se puede deshacer.",
+      "goToRule": "Ir a la regla"
     },
     "case": {
       "asis": "Texto como está escrito",
@@ -714,7 +777,13 @@
       "failed_other": "{{count}} bancos no se pudieron actualizar. Intenta de nuevo en unos minutos.",
       "close": "Cerrar",
       "justNow": "Actualizado hace un momento"
-    }
+    },
+    "accountsSome": "{{n}} de {{m}} cuentas",
+    "accountsLabel": "Cuentas",
+    "noAccounts": "Este libro todavía no tiene cuentas.",
+    "searchHint": "Ctrl+F para buscar · Enter: siguiente · Shift+Enter: anterior · Esc: limpiar",
+    "searchCount": "{{n}} de {{m}}",
+    "searchNone": "0 encontrados"
   },
   "shell": {
     "book": "Este libro",

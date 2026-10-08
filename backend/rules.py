@@ -153,12 +153,73 @@ def load_rules(session: Session, company_id: int, sector: str) -> list[CategoryR
 
 
 def rule_order(r: CategoryRule) -> tuple:
-    """Clave del orden de evaluación: prioridad manual (1, 2, 3…) → sin prioridad, la más larga →
-    empate de largo, la que tiene VENTANA DE FECHAS antes que la general (es la excepción: "STARBUCKS
-    del 3 al 17-ago" le gana a "STARBUCKS") → alfabético (decisión de Jose, 1-oct: sin esto ganaba la
-    que la base devolviera primero, y el resultado podía cambiar sin que nadie tocara una regla)."""
-    return (r.priority is None, r.priority or 0, -len(normalize(r.match_text)),
-            not has_window(r), _phrase(r.match_text))
+    """Clave del orden de evaluación: prioridad manual (1, 2, 3…) → sin prioridad, las que tienen
+    VENTANA DE FECHAS antes que las generales → la más larga → alfabético (decisión de Jose, 1-oct: sin
+    esto ganaba la que la base devolviera primero, y el resultado podía cambiar sin que nadie tocara
+    una regla).
+
+    La ventana va ANTES del largo (chat central + Jose, 4-oct): una ventana es una excepción explícita
+    del bookkeeper, y "STARBUCKS del 3 al 17-ago" debe ganarle a "STARBUCKS COFFEE" sin ventana aunque
+    esa tenga la palabra más larga (era la historia del demo y perdía sin aviso). La prioridad manual
+    sigue mandando sobre todo: es la decisión más explícita que hay."""
+    return (r.priority is None, r.priority or 0, not has_window(r),
+            -len(normalize(r.match_text)), _phrase(r.match_text))
+
+
+def place_priority(session: Session, company_id: int, rule: CategoryRule, priority: Optional[int]) -> None:
+    """PRIORIDADES SIN REPETIR, como filas de Excel (chat central + Jose, 4-oct): poner la 1 a una regla
+    la INSERTA en ese lugar y empuja a las demás; quitarle el número (None) cierra el hueco. Quedan
+    siempre 1, 2, 3… sin saltos (un número mayor que la cantidad se vuelve el último)."""
+    ranked = [r for r in session.exec(
+        select(CategoryRule).where(CategoryRule.company_id == company_id)
+        .where(CategoryRule.scope == RuleScope.COMPANY)
+        .where(CategoryRule.priority != None)  # noqa: E711
+    ).all() if r is not rule and (rule.id is None or r.id != rule.id)]
+    ranked.sort(key=lambda r: (r.priority, r.id or 0))
+    if priority is not None:
+        ranked.insert(max(1, min(priority, len(ranked) + 1)) - 1, rule)
+    else:
+        rule.priority = None
+        session.add(rule)
+    for i, r in enumerate(ranked, start=1):
+        if r.priority != i:
+            r.priority = i
+            session.add(r)
+
+
+def rule_overlaps(rules: list[CategoryRule], txs: list) -> dict[int, dict]:
+    """Qué reglas CAZAN LOS MISMOS movimientos (4-oct): por regla, en cuántas filas gana (`wins`), a
+    quién le gana (`beats`) y contra quién pierde (`lost_to`) — `{otra_id: filas}`. `rules` ya
+    ordenadas (`load_rules`); `txs` sin lo escrito a mano (no lo decide ninguna regla)."""
+    out = {r.id: {"wins": 0, "beats": Counter(), "lost_to": Counter()} for r in rules}
+    for t in txs:
+        text = matchable_text(t.description, t.description_extra)
+        hit = [r for r in rules if match_rule([r], text, t.date) is not None]
+        if not hit:
+            continue
+        winner = hit[0]
+        out[winner.id]["wins"] += 1
+        for loser in hit[1:]:
+            out[winner.id]["beats"][loser.id] += 1
+            out[loser.id]["lost_to"][winner.id] += 1
+    return out
+
+
+def simulate_delete(rules: list[CategoryRule], rule_id: int, txs: list) -> dict:
+    """A dónde irían los movimientos de una regla si se borra (sin tocar nada): otra regla →
+    transferencia → Pendiente. `txs` = las filas que decide esa regla."""
+    rest = [r for r in rules if r.id != rule_id]
+    to_rules: Counter = Counter()
+    to_transfer = to_pending = 0
+    for t in txs:
+        w = match_rule(rest, matchable_text(t.description, t.description_extra), t.date)
+        if w is not None:
+            to_rules[w.id] += 1
+        elif classify_transfer(t.description) is not None:
+            to_transfer += 1
+        else:
+            to_pending += 1
+    return {"to_rules": to_rules, "to_transfer": to_transfer, "to_pending": to_pending}
 
 
 def has_window(r: CategoryRule) -> bool:
@@ -810,17 +871,19 @@ def create_company_rule(
             r.match_text = kw
             if subcategory:
                 r.subcategory = subcategory
-            if priority:
-                r.priority = priority
             session.add(r)
+            if priority:
+                place_priority(session, company_id, r, priority)  # sin repetir: empuja a las demás
             return r
     rule = CategoryRule(
         scope=RuleScope.COMPANY, company_id=company_id, sector=sector,
         match_text=kw, account_type=account_type, category=category,
-        subcategory=subcategory or None, priority=priority or None,
+        subcategory=subcategory or None,
         valid_from=valid_from, valid_to=valid_to,
     )
     session.add(rule)
+    if priority:
+        place_priority(session, company_id, rule, priority)
     return rule
 
 

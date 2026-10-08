@@ -40,14 +40,25 @@ MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 #   Autentica con Application Default Credentials (NO API key): en local `gcloud auth
 #   application-default login`; en Cloud Run, la service account con rol `roles/aiplatform.user`.
 # - AI STUDIO (por defecto): usa GEMINI_API_KEY; se cobra de los créditos PREPAGADOS de Gemini.
-if os.getenv("GEMINI_USE_VERTEX", "").lower() in ("1", "true", "yes"):
-    _client = genai.Client(
-        vertexai=True,
-        project=os.getenv("GOOGLE_CLOUD_PROJECT", "contabu-prod"),
-        location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
-    )
-else:
-    _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+#
+# El cliente se crea la PRIMERA VEZ QUE SE USA, no al importar (4-oct, pedido de Firm en el 📬 Buzón):
+# creado al importar, sin `GEMINI_API_KEY` el backend entero no arrancaba (`ValueError`), aunque nadie
+# fuera a llamar a Gemini.
+_client = None
+
+
+def _gemini():
+    global _client
+    if _client is None:
+        if os.getenv("GEMINI_USE_VERTEX", "").lower() in ("1", "true", "yes"):
+            _client = genai.Client(
+                vertexai=True,
+                project=os.getenv("GOOGLE_CLOUD_PROJECT", "contabu-prod"),
+                location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
+            )
+        else:
+            _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    return _client
 
 # Códigos HTTP transitorios que vale la pena reintentar (saturación, límites temporales).
 _RETRY_CODES = {429, 500, 502, 503, 504}
@@ -105,7 +116,7 @@ def _generate(contents, schema, *, model: str = MODEL, max_retries: int = 4):
     delay = 2.0
     for attempt in range(1, max_retries + 1):
         try:
-            return _client.models.generate_content(
+            return _gemini().models.generate_content(
                 model=model,
                 contents=contents,
                 config={

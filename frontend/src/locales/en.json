@@ -126,7 +126,8 @@
     "reopen": "Reopen (draft)",
     "save": "Save",
     "saved": "Saved projects",
-    "saveProject": "Save as project"
+    "saveProject": "Save as project",
+    "allTime": "All time"
   },
   "tx": {
     "title": "Transactions",
@@ -278,6 +279,47 @@
       }
     }
   },
+  "notes": {
+    "title": "Book notes",
+    "subtitle": "What the agent must know about this client. Notes never categorize: the agent reads them to propose changes to this book's formula, and you approve.",
+    "add": "+ New note",
+    "loading": "Loading notes…",
+    "empty": "No notes yet. Write what you'd tell a new assistant about this client: exceptions, dates, what to watch for.",
+    "kindLabel": "Type",
+    "kind": {
+      "keep_in_mind": "Keep in mind",
+      "dont_report": "Don't report"
+    },
+    "priorityLabel": "Priority",
+    "priority": {
+      "high": "High",
+      "normal": "Normal"
+    },
+    "textLabel": "Note",
+    "textPlaceholder": "e.g. The owner was on vacation in Europe from Aug 3 to Aug 17: purchases there are personal.",
+    "merchantLabel": "Merchant (optional)",
+    "merchantPlaceholder": "e.g. STARBUCKS",
+    "fromLabel": "Valid from (optional)",
+    "toLabel": "Valid until (optional)",
+    "save": "Save note",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "edit": "Edit",
+    "delete": "Delete",
+    "confirmDelete": "Delete this note? The agent will stop taking it into account.",
+    "error": {
+      "notes_error": "Couldn't save the note. Try again.",
+      "forbidden": "You don't have permission to change this book's notes.",
+      "empty_text": "Write the note first.",
+      "text_too_long": "The note is too long (1,000 characters max).",
+      "bad_kind": "Unknown note type.",
+      "bad_priority": "Unknown priority.",
+      "bad_date": "One of the dates isn't valid.",
+      "bad_window": "The start date is after the end date.",
+      "merchant_too_long": "The merchant is too long (80 characters max).",
+      "too_many_notes": "This book already has 100 notes. Delete the ones that no longer apply."
+    }
+  },
   "audit": {
     "title": "Audit my categorization",
     "subtitle": "Find and fix suspicious or inconsistent categorizations.",
@@ -357,7 +399,6 @@
     "cancel": "Cancel",
     "save": "Save",
     "saving": "Saving…",
-    "confirmDelete": "Delete this rule?",
     "cleanup": "Clean unused rules",
     "cleaned": "Removed {{count}} unused rules.",
     "applied": "Updated {{count}} transactions.",
@@ -458,7 +499,28 @@
     "windowBackwards": "The start date is after the end date.",
     "undoWindow": "dates of {{k}}",
     "released_one": "{{count}} transaction fell outside the new dates and went back to the other rules.",
-    "released_other": "{{count}} transactions fell outside the new dates and went back to the other rules."
+    "released_other": "{{count}} transactions fell outside the new dates and went back to the other rules.",
+    "order": "Order",
+    "orderHint": "The order in which the sheet tries the rules: priority first, then rules with dates, then the longest keyword, then A–Z. The first one that matches decides.",
+    "clash": "Overlaps",
+    "clashHint": "Rules that match the same transactions. Only the first one in the Order decides each row.",
+    "losesTo": "loses {{n}} to {{k}}",
+    "beats": "wins {{n}} over {{k}}",
+    "deleteRule": "Delete rule…",
+    "deletePick": "Select a cell of the rule to delete",
+    "deleteNone": "Delete the rule “{{k}}”? It doesn't decide any transaction right now.",
+    "deleteAsk_one": "Delete the rule “{{k}}”? It decides {{count}} transaction. If you delete it:",
+    "deleteAsk_other": "Delete the rule “{{k}}”? It decides {{count}} transactions. If you delete it:",
+    "deleteToRule_one": "{{count}} goes to the rule {{k}} ({{c}})",
+    "deleteToRule_other": "{{count}} go to the rule {{k}} ({{c}})",
+    "deleteToTransfer_one": "{{count}} becomes a transfer",
+    "deleteToTransfer_other": "{{count}} become transfers",
+    "deleteToPending_one": "{{count}} stays Pending",
+    "deleteToPending_other": "{{count}} stay Pending",
+    "deleteManual": "What you wrote by hand doesn't change. You can undo it.",
+    "undoDelete": "delete rule {{k}}",
+    "deleted": "Rule deleted. {{r}} went to another rule, {{tr}} to transfers, {{p}} are Pending.",
+    "goMissing": "The rule that decided this row no longer exists. Its transactions went back to the other rules or are Pending."
   },
   "verify": {
     "title": "Verify your email — we sent a link to {{email}}.",
@@ -557,7 +619,8 @@
       "newRule": "Create a rule from this row",
       "bankKeep": "Keep it (clear the bank's mark)",
       "bankDelete": "Delete it from the book (the bank withdrew it)",
-      "bankDeleteConfirm": "Delete this transaction? The bank withdrew it. This can't be undone."
+      "bankDeleteConfirm": "Delete this transaction? The bank withdrew it. This can't be undone.",
+      "goToRule": "Go to the rule"
     },
     "case": {
       "asis": "Text as written",
@@ -633,7 +696,13 @@
       "failed_other": "{{count}} banks couldn't update. Try again in a few minutes.",
       "close": "Close",
       "justNow": "Updated just now"
-    }
+    },
+    "accountsSome": "{{n}} of {{m}} accounts",
+    "accountsLabel": "Accounts",
+    "noAccounts": "No accounts in this book yet.",
+    "searchHint": "Ctrl+F to search · Enter: next · Shift+Enter: previous · Esc: clear",
+    "searchCount": "{{n}} of {{m}}",
+    "searchNone": "0 found"
   },
   "common": {
     "loading": "Loading…",

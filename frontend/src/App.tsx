@@ -7,6 +7,7 @@ import Sheet from "./components/Sheet";
 import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
+import BookNotes from "./components/BookNotes";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
@@ -232,6 +233,8 @@ function App() {
             )}
             {view === "audit" && (
               <div className="space-y-4">
+                {/* FASE 11: las notas del libro van ARRIBA — son la entrada de los agentes. */}
+                <BookNotes />
                 <Audit
                   onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
                   onCount={setAuditCount}

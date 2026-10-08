@@ -30,6 +30,7 @@ VIA_RULE_APPLIED = "rule_applied"    # una regla creada/editada alineó esta tra
 VIA_RULE_PRECEDENCE = "rule_precedence"  # cambió qué regla gana (p. ej. una prioridad)
 VIA_UNDO = "undo"                    # el bookkeeper deshizo un cambio (Ctrl+Z / botón Deshacer)
 VIA_BANK_MODIFIED = "bank_modified"  # el banco vinculado cambió el movimiento y el motor lo re-decidió
+VIA_RULE_DELETED = "rule_deleted"    # se borró la regla que la decidía: el motor la re-decidió (Jose, 4-oct)
 
 _FIELDS = ("account_type", "category", "subcategory")
 

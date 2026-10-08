@@ -123,7 +123,8 @@ function Row({ node, depth, path, open, leaves, onToggle, t, section }: {
   );
 }
 
-export default function Pivot({ account }: { account?: string }) {
+// `accounts`: el mismo filtro de cuentas con casillas que la hoja (vacío = todas).
+export default function Pivot({ accounts = [] }: { accounts?: string[] }) {
   const { t } = useTranslation();
   const [nodes, setNodes] = useState<PivotNode[] | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -131,8 +132,9 @@ export default function Pivot({ account }: { account?: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getPivot(account).then(setNodes).catch((e) => setError(String(e?.message ?? e)));
-  }, [account]);
+    setLeaves({});  // las transacciones de cada mes dependen de las cuentas: se vuelven a pedir
+    getPivot(accounts).then(setNodes).catch((e) => setError(String(e?.message ?? e)));
+  }, [accounts.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = useCallback(async (node: PivotNode, path: string[]) => {
     const key = node.key;
@@ -146,13 +148,13 @@ export default function Pivot({ account }: { account?: string }) {
       setLeaves((l) => ({ ...l, [key]: "loading" }));
       try {
         const [section, category, subcategory] = path;
-        const rows = await getPivotLeaves(section, category, subcategory, node.label);
+        const rows = await getPivotLeaves(section, category, subcategory, node.label, accounts);
         setLeaves((l) => ({ ...l, [key]: rows }));
       } catch {
         setLeaves((l) => ({ ...l, [key]: [] }));
       }
     }
-  }, [leaves]);
+  }, [leaves, accounts]);
 
   if (error) return <p style={{ color: "#991b1b", padding: 16 }}>{error}</p>;
   if (!nodes) return <p style={{ color: "#5b6b62", padding: 16 }}>{t("common.loading", { defaultValue: "Loading…" })}</p>;

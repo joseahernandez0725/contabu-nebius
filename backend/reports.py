@@ -245,7 +245,7 @@ def pivot(
     company_id: int,
     start: Optional[date] = None,
     end: Optional[date] = None,
-    account: Optional[str] = None,
+    account: "Optional[list[str] | str]" = None,
 ) -> list[dict]:
     """Árbol del pivote con los totales agregados en SQL.
 
@@ -269,8 +269,9 @@ def pivot(
         stmt = stmt.where(Transaction.date >= start)
     if end is not None:
         stmt = stmt.where(Transaction.date <= end)
-    if account:
-        stmt = stmt.where(Transaction.bank_account == account)
+    accounts = [account] if isinstance(account, str) else (account or [])
+    if accounts:  # una o varias cuentas (el filtro con casillas de la hoja, 4-oct)
+        stmt = stmt.where(Transaction.bank_account.in_(accounts))
 
     tree: dict[tuple, dict] = {}
     for at, category, subcategory, m, total, n in session.exec(stmt).all():
@@ -312,7 +313,7 @@ def pivot(
 
 def pivot_leaves(
     session: Session, company_id: int, section: str, category: str,
-    subcategory: str, month: str,
+    subcategory: str, month: str, account: Optional[list[str]] = None,
 ) -> list[dict]:
     """Las transacciones de UNA hoja del pivote (el último `+`: día exacto + descripción).
 
@@ -335,6 +336,8 @@ def pivot_leaves(
             Transaction.category.is_(None),
         ).order_by(Transaction.date)
 
+    if account:  # el mismo filtro de cuentas que el árbol (antes las hojas mostraban todas)
+        stmt = stmt.where(Transaction.bank_account.in_(account))
     rows = session.exec(stmt).all()
     want_sub = None if subcategory == "—" else subcategory
     return [{

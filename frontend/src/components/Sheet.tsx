@@ -52,7 +52,10 @@ const SEV_BG: Record<string, string> = {
 const SEV_FG: Record<string, string> = { high: "#991b1b", medium: "#7a5b00", low: "#475569" };
 
 // Va ANTES que `rowCss` en el DOM: con la misma especificidad, el resaltado de fila gana.
-const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}";
+const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}"
+  // BUSCAR: lo encontrado se resalta en ámbar; la coincidencia activa, con borde (como Excel).
+  + ".rgCell.cb-hit{background:rgba(251,191,36,.28)!important}"
+  + ".rgCell.cb-hit-cur{background:rgba(251,191,36,.55)!important;box-shadow:inset 0 0 0 2px #d97706}";
 
 /** Preferencia de vista recordada en este navegador (si no hay almacenamiento, solo esta sesión). */
 function usePref(key: string, initial: boolean): [boolean, (v: boolean) => void] {
@@ -83,6 +86,20 @@ function downloadSheetCsv(rows: SheetRow[]) {
   URL.revokeObjectURL(url);
 }
 
+/** El texto de cada columna VISIBLE en el que busca Ctrl+F (lo que el bookkeeper lee en la celda). */
+const SEARCH_PROPS = ["date", "description_extra", "amount", "category", "subcategory", "note"] as const;
+function searchText(r: SheetRow, prop: string): string {
+  switch (prop) {
+    case "date": return r.date ? `${r.date} ${new Date(r.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}` : "";
+    case "description_extra": return [r.description, r.description_extra].filter(Boolean).join(" - ");
+    case "amount": {
+      const n = Number(r.amount ?? 0), sign = r.is_inflow ? "" : "-";
+      return `${sign}${n.toFixed(2)} ${sign}$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    }
+    default: return String((r as any)[prop] ?? "");
+  }
+}
+
 export default function Sheet({ onNavigate, menuRight }: {
   onNavigate?: (v: View) => void;
   menuRight?: React.ReactNode;   // lo que va a la derecha de la barra de menús (p. ej. "vista anterior")
@@ -92,11 +109,19 @@ export default function Sheet({ onNavigate, menuRight }: {
   const [chart, setChart] = useState<ChartOfAccounts>({});
   // Ventana "Crear regla" (4-oct): `seed` = la fila de la que parte, o null para una regla en blanco.
   const [ruleDialog, setRuleDialog] = useState<{ seed: SheetRow | null } | null>(null);
-  const [account, setAccount] = useState("");     // "" = todas
+  // CUENTAS con casillas (Jose, 4-oct): ver 2 o más a la vez. Vacío = todas. El Pivote usa el mismo.
+  const [acctSel, setAcctSel] = useState<string[]>([]);
+  const [acctOpen, setAcctOpen] = useState(false);
+  // "IR A LA REGLA" desde una fila (clic derecho): la pestaña Reglas abre con esa regla a la vista.
+  // `n` cambia en cada pedido, así dos clics seguidos a la misma regla vuelven a llevar ahí.
+  const [goRule, setGoRule] = useState<{ id: number; n: number } | null>(null);
+  // BUSCAR (Ctrl+F, como en Excel): qué coincidencia está activa ("N de M").
+  const [hit, setHit] = useState(0);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
   const [onlyPending, setOnlyPending] = useState(false);
   const [search, setSearch] = useState("");
   const searchRef = useRef<HTMLInputElement | null>(null);
+  const lastSearchRef = useRef("");  // Enter con la misma búsqueda = siguiente; con una nueva = la primera
   const [saving, setSaving] = useState<string | null>(null);
   // MENÚ VER (Jose, 4-oct): la barra de botones, la barra de fórmulas y fijar Fecha + Descripción
   // a la izquierda se pueden ver / ocultar. Todo lo de los botones también está en los menús.
@@ -276,14 +301,14 @@ export default function Sheet({ onNavigate, menuRight }: {
 
   const visible = useMemo(() => {
     let out = rows ?? [];
-    if (account) out = out.filter((r) => r.bank_account === account);
+    if (acctSel.length) out = out.filter((r) => acctSel.includes(r.bank_account ?? ""));
     if (onlyFlagged) out = out.filter((r) => r.observation);
     if (onlyPending) out = out.filter((r) => !r.category);
+    // Busca en TODAS las columnas visibles + la cuenta (Jose, 4-oct); antes solo descripción y categoría.
     const q = search.trim().toLowerCase();
     if (q) out = out.filter((r) =>
-      (r.description ?? "").toLowerCase().includes(q) ||
-      (r.category ?? "").toLowerCase().includes(q) ||
-      (r.subcategory ?? "").toLowerCase().includes(q));
+      SEARCH_PROPS.some((p) => searchText(r, p).toLowerCase().includes(q)) ||
+      (r.bank_account ?? "").toLowerCase().includes(q));
     // La grilla necesita los valores ya planos para pintarlos y editarlos.
     // `_rowClass` pinta la fila COMPLETA (borde a borde). Estilar dentro de cada `cellTemplate`
     // no alcanzaba: dejaba sin color la columna de observación y el espacio sobrante a la derecha.
@@ -293,7 +318,18 @@ export default function Sheet({ onNavigate, menuRight }: {
       _sev: r.observation?.severity ?? "",
       _rowClass: rowClassOf(r),
     }));
-  }, [rows, account, onlyFlagged, onlyPending, search, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rows, acctSel, onlyFlagged, onlyPending, search, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Las CELDAS que coinciden, en orden de lectura (fila por fila, de izquierda a derecha): son las que
+  // se resaltan y por las que se navega con Enter / Shift+Enter ("N de M").
+  const hits = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [] as { id: number; prop: string; y: number }[];
+    const out: { id: number; prop: string; y: number }[] = [];
+    visible.forEach((r, y) => { for (const p of SEARCH_PROPS) if (searchText(r, p).toLowerCase().includes(q)) out.push({ id: r.id, prop: p, y }); });
+    return out;
+  }, [visible, search]);
+  useEffect(() => { setHit(0); }, [search]);
 
   const flagged = (rows ?? []).filter((r) => r.observation).length;
   const pending = (rows ?? []).filter((r) => !r.category).length;
@@ -730,6 +766,10 @@ export default function Sheet({ onNavigate, menuRight }: {
     ];
     if (m.source === "manual") items.push({ label: t("sheet.menu.followRule", { defaultValue: "Follow the rule again" }),
       onClick: () => void backToRule(m.id) });
+    // IR A LA REGLA (Jose, 4-oct): la fórmula de esta celda, en la hoja de Reglas.
+    if (m.source === "rule" && m.matched_rule_id != null) items.push({
+      label: t("sheet.menu.goToRule", { defaultValue: "Go to the rule" }),
+      onClick: () => { setGoRule({ id: m.matched_rule_id, n: Date.now() }); setTab("rules"); } });
     // El banco vinculado lo retiró: el bookkeeper decide (Movimientos, 4-oct).
     if (m.bank_removed_at) items.push(
       { label: t("sheet.menu.bankKeep", { defaultValue: "Keep it (clear the bank's mark)" }),
@@ -765,9 +805,53 @@ export default function Sheet({ onNavigate, menuRight }: {
   };
 
   // Fijar Fecha + Descripción a la izquierda (menú Ver): no se van al desplazarse de lado.
-  const gridColumns = useMemo(() => pinDesc
-    ? (columns as any[]).map((c) => (c.prop === "date" || c.prop === "description_extra") ? { ...c, pin: "colPinStart" } : c)
-    : columns, [columns, pinDesc]);
+  const hitKey = useMemo(() => new Set(hits.map((h) => `${h.id}|${h.prop}`)), [hits]);
+  const curHit = hits[Math.min(hit, hits.length - 1)];
+  const gridColumns = useMemo(() => (columns as any[]).map((c) => {
+    let col = pinDesc && (c.prop === "date" || c.prop === "description_extra") ? { ...c, pin: "colPinStart" } : c;
+    if (hitKey.size && (SEARCH_PROPS as readonly string[]).includes(c.prop)) {
+      const base = c.cellProperties;
+      col = { ...col, cellProperties: (p: any) => {
+        const own = base ? base(p) : {};
+        const key = `${p?.model?.id}|${c.prop}`;
+        if (!hitKey.has(key)) return own;
+        const cur = curHit && `${curHit.id}|${curHit.prop}` === key;
+        return { ...own, class: { ...(own.class ?? {}), "cb-hit": true, "cb-hit-cur": !!cur } };
+      } };
+    }
+    return col;
+  }), [columns, pinDesc, hitKey, curHit]);
+
+  /** Lleva la grilla a la coincidencia `i` (la desplaza y enfoca su celda). */
+  const goHit = useCallback(async (i: number) => {
+    if (!hits.length) return;
+    const n = ((i % hits.length) + hits.length) % hits.length;
+    setHit(n);
+    const h = hits[n], grid = gridRef.current as any;
+    if (!grid) return;
+    const pinned = pinDesc ? ["date", "description_extra"] : [];
+    const cols = (columns as any[]).map((c) => c.prop);
+    const isPin = pinned.includes(h.prop);
+    const x = isPin ? pinned.indexOf(h.prop) : cols.filter((p) => !pinned.includes(p)).indexOf(h.prop);
+    try {
+      await grid.scrollToRow?.(h.y);
+      if (!isPin) await grid.scrollToColumnProp?.(h.prop);
+      await grid.setCellsFocus?.({ x, y: h.y }, { x, y: h.y }, isPin ? "colPinStart" : "rgCol", "rgRow");
+    } catch { /* la grilla aún no está lista */ }
+  }, [hits, pinDesc, columns]);
+
+  // CTRL+F / CMD+F dentro de la hoja: enfoca NUESTRO buscador en vez del del navegador (como Excel).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.key.toLowerCase() !== "f") return;
+      if (tab !== "sheet") return;
+      e.preventDefault();
+      searchRef.current?.focus();
+      searchRef.current?.select();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab]);
 
   // BARRA DE MENÚS (Jose, 4-oct): Archivo · Edición · Ver · Formato · Opciones, arriba de las pestañas.
   // Las acciones son las MISMAS de los botones y del clic derecho; en Reglas, las de esa hoja.
@@ -818,8 +902,13 @@ export default function Sheet({ onNavigate, menuRight }: {
             onClick: () => { if (tab !== "sheet") setTab("sheet"); setRuleDialog({ seed: selRow }); } },
       { label: t("sheet.menu.followRule", { defaultValue: "Follow the rule again" }),
         disabled: tab !== "sheet" || selRow?.source !== "manual", onClick: () => selRow && void backToRule(selRow.id) },
+      onRules
+        ? { label: t("rules.deleteRule", { defaultValue: "Delete rule…" }), disabled: !rc?.canDelete, onClick: () => rc?.deleteRule() }
+        : { label: t("sheet.menu.goToRule", { defaultValue: "Go to the rule" }),
+            disabled: tab !== "sheet" || selRow?.source !== "rule" || selRow?.matched_rule_id == null,
+            onClick: () => { if (selRow?.matched_rule_id != null) { setGoRule({ id: selRow.matched_rule_id, n: Date.now() }); setTab("rules"); } } },
       "sep",
-      { label: t("sheet.mb.find"), disabled: tab !== "sheet",
+      { label: t("sheet.mb.find"), hint: "Ctrl+F", disabled: tab !== "sheet",
         onClick: () => setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 0) },
     ] },
     { id: "view", label: t("sheet.mb.view"), items: [
@@ -926,13 +1015,75 @@ export default function Sheet({ onNavigate, menuRight }: {
           ))}
         </div>
 
-        <select value={account} onChange={(e) => setAccount(e.target.value)} style={input}>
-          <option value="">{t("sheet.allAccounts", { defaultValue: "All accounts" })}</option>
-          {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
-        </select>
+        {/* CUENTAS con casillas: el botón dice cuáles están activas (todas, una, dos, o "N de M"). */}
+        <div style={{ position: "relative" }}>
+          <button type="button" onClick={() => setAcctOpen((o) => !o)} aria-expanded={acctOpen}
+            title={acctSel.length ? acctSel.join(" · ") : undefined}
+            style={{ ...input, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+                     borderColor: acctSel.length ? "#1A8754" : "#d5d0c4", color: acctSel.length ? "#1A8754" : undefined,
+                     fontWeight: acctSel.length ? 600 : 400 }}>
+            {acctSel.length === 0 ? t("sheet.allAccounts", { defaultValue: "All accounts" })
+              : acctSel.length <= 2 ? acctSel.join(" · ")
+              : t("sheet.accountsSome", { defaultValue: "{{n}} of {{m}} accounts", n: acctSel.length, m: accounts.length })}
+            <span style={{ fontSize: 10 }}>▾</span>
+          </button>
+          {acctOpen && (
+            <>
+              <div onClick={() => setAcctOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+              <div role="group" aria-label={t("sheet.accountsLabel", { defaultValue: "Accounts" })}
+                style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 41, minWidth: 220,
+                         background: "#fff", border: "1px solid #d5d0c4", borderRadius: 8,
+                         boxShadow: "0 8px 24px rgba(15,23,42,.12)", padding: 6 }}>
+                <label style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 8px", fontSize: 13, cursor: "pointer", fontWeight: 600 }}>
+                  <input type="checkbox" checked={acctSel.length === 0} onChange={() => setAcctSel([])} />
+                  {t("sheet.allAccounts", { defaultValue: "All accounts" })}
+                </label>
+                <div style={{ borderTop: "1px solid #eee9de", margin: "4px 0" }} />
+                {accounts.map((a) => (
+                  <label key={a} style={{ display: "flex", gap: 8, alignItems: "center", padding: "5px 8px", fontSize: 13, cursor: "pointer" }}>
+                    <input type="checkbox" checked={acctSel.includes(a)}
+                      onChange={(e) => setAcctSel((cur) => {
+                        const next = e.target.checked ? [...cur, a] : cur.filter((x) => x !== a);
+                        return next.length === accounts.length ? [] : next;  // todas marcadas = "todas"
+                      })} />
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>{a}</span>
+                  </label>
+                ))}
+                {accounts.length === 0 && (
+                  <div style={{ padding: "5px 8px", fontSize: 12.5, color: "#8a958f" }}>
+                    {t("sheet.noAccounts", { defaultValue: "No accounts in this book yet." })}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
-        <input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...input, minWidth: 210 }}
-               placeholder={t("sheet.search", { defaultValue: "Search…" })} />
+        {/* BUSCAR: Ctrl+F lo enfoca · Enter / Shift+Enter siguiente / anterior · Esc limpia. */}
+        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+          <input ref={searchRef} value={search} onChange={(e) => setSearch(e.target.value)}
+                 onKeyDown={(e) => {
+                   if (e.key === "Escape") { e.preventDefault(); setSearch(""); return; }
+                   if (e.key === "Enter") {
+                     e.preventDefault();
+                     const next = e.shiftKey ? hit - 1 : (search === lastSearchRef.current ? hit + 1 : 0);
+                     lastSearchRef.current = search;
+                     // Como el cuadro de buscar de Excel: la grilla va a la celda y el foco se queda aquí.
+                     void goHit(next).then(() => setTimeout(() => searchRef.current?.focus(), 80));  // RevoGrid enfoca después
+                   }
+                 }}
+                 title={t("sheet.searchHint", { defaultValue: "Ctrl+F to search · Enter: next · Shift+Enter: previous · Esc: clear" })}
+                 style={{ ...input, minWidth: 230, paddingInlineEnd: search ? 70 : 10 }}
+                 placeholder={t("sheet.search", { defaultValue: "Search…" })} />
+          {search.trim() && (
+            <span aria-live="polite" style={{ position: "absolute", insetInlineEnd: 10, fontSize: 11.5,
+                         color: hits.length ? "#5b6b62" : "#991b1b", fontVariantNumeric: "tabular-nums", pointerEvents: "none" }}>
+              {hits.length
+                ? t("sheet.searchCount", { defaultValue: "{{n}} of {{m}}", n: Math.min(hit, hits.length - 1) + 1, m: hits.length })
+                : t("sheet.searchNone", { defaultValue: "0 found" })}
+            </span>
+          )}
+        </div>
 
         {/* CREAR REGLA — protagonista (Jose, 4-oct): siempre a la vista. Con UNA fila seleccionada
             parte de su descripción (el texto COMBINADO: si escribiste a quién fue el cheque, esa es
@@ -1111,9 +1262,10 @@ export default function Sheet({ onNavigate, menuRight }: {
                     borderRadius: 10, overflow: "hidden" }}>
         {tab === "rules"
           ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)}
-              toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands} />
+              toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands}
+              focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} />
           : tab === "pivot"
-          ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot account={account || undefined} /></div>
+          ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot accounts={acctSel} /></div>
           : rows === null
           ? <p style={{ padding: 16, color: "#5b6b62" }}>{t("common.loading", { defaultValue: "Loading…" })}</p>
           : <RevoGrid

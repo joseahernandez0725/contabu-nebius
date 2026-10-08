@@ -9,8 +9,10 @@ import { exportIncomeStatementPdf } from "../pdf";
 import type { IncomeStatement as IS } from "../types";
 import IncomeStatementCard from "./IncomeStatement";
 
-const fmtRange = (s: string | null, e: string | null) =>
-  s && e ? `${s} → ${e}` : e ? `→ ${e}` : s ? `${s} →` : "All time";
+// `allTime` llega traducido desde el componente: "All time" cableado aquí salía en inglés
+// dentro de la app en español (regla: todo lo visible, en EN y ES).
+const fmtRange = (s: string | null, e: string | null, allTime: string) =>
+  s && e ? `${s} → ${e}` : e ? `→ ${e}` : s ? `${s} →` : allTime;
 
 // Sección P&L: estado de resultados en vivo (con filtro de fechas) + proyectos guardados.
 // Un proyecto es un borrador que recalcula; al "cerrarlo" se congela (snapshot).
@@ -54,7 +56,7 @@ export default function Pnl({ companyName }: { companyName: string }) {
             <h2 className="text-lg font-bold text-slate-900">{selected.name}</h2>
             <StatusBadge status={selected.status} />
           </div>
-          <p className="text-sm text-slate-500">{fmtRange(selected.start, selected.end)}</p>
+          <p className="text-sm text-slate-500">{fmtRange(selected.start, selected.end, t("pnl.allTime"))}</p>
         </div>
 
         <IncomeStatementCard data={selected.pnl} />
@@ -168,11 +170,23 @@ export default function Pnl({ companyName }: { companyName: string }) {
                     <span className="font-medium text-slate-800 truncate">{r.name}</span>
                     <StatusBadge status={r.status} />
                   </div>
-                  <div className="text-xs text-slate-500">{fmtRange(r.start, r.end)}</div>
+                  <div className="text-xs text-slate-500">{fmtRange(r.start, r.end, t("pnl.allTime"))}</div>
+                  {/* Esta lista también enseña un net income: sin esto sería la única salida del
+                      P&L que calla lo Pendiente. */}
+                  {!!r.pending_count && (
+                    <div className="text-[11px] text-amber-700 mt-0.5">
+                      {t("pnl.pendingBadge", { count: r.pending_count })}
+                    </div>
+                  )}
                 </div>
                 {r.net_income != null && (
-                  <span className={`tabular-nums font-semibold ${r.net_income >= 0 ? "text-brand-green" : "text-rose-600"}`}>
-                    {money(r.net_income)}
+                  <span className="text-end">
+                    <span className={`block tabular-nums font-semibold ${r.net_income >= 0 ? "text-brand-green" : "text-rose-600"}`}>
+                      {money(r.net_income)}
+                    </span>
+                    {!!r.pending_count && (
+                      <span className="block text-[10px] text-amber-700">{t("pnl.beforePending")}</span>
+                    )}
                   </span>
                 )}
               </button>

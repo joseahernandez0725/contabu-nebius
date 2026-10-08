@@ -462,3 +462,32 @@ class BankConnection(SQLModel, table=True):
     last_synced_at: Optional[datetime] = Field(default=None)
     created_by_user_id: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class BookNote(SQLModel, table=True):
+    """Una NOTA DEL LIBRO (FASE 11, Auditoría / IA · 4-oct-2026): lo que el bookkeeper le escribe al
+    agente sobre ESTE cliente — lo que hay que recordar y lo prioritario.
+
+    Es la entrada del agente ④ (el redactor de "la fórmula del libro") y reemplaza a las preguntas
+    del comienzo (la entrevista, eliminada el 2-oct). 🔴 Una nota NUNCA categoriza: el agente la lee
+    y PROPONE filas de la fórmula que el bookkeeper aprueba.
+
+    `kind`: "keep_in_mind" (📌 tenlo en cuenta) | "dont_report" (🚫 no me reportes).
+    `priority`: "high" | "normal" — las altas van primero al agente y arriba en la pantalla.
+    `merchant`: alcance opcional (huella o palabra del comercio). Con él, un 🚫 se puede filtrar en
+    código sin depender de que el modelo obedezca.
+    `valid_from` / `valid_to`: vigencia opcional, INCLUSIVA (p. ej. "vacaciones del 3 al 17-ago").
+    `created_by_user_id` sin clave foránea, a propósito (como `matched_rule_id`): borrar un usuario no
+    debe borrar ni impedir el criterio del libro.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    kind: str = Field(default="keep_in_mind")
+    priority: str = Field(default="normal")
+    text: str
+    merchant: Optional[str] = Field(default=None)
+    valid_from: Optional[date] = Field(default=None)
+    valid_to: Optional[date] = Field(default=None)
+    created_by_user_id: Optional[int] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
