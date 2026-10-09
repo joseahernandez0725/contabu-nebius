@@ -848,3 +848,91 @@ export const updateBookNote = (id: number, note: BookNoteInput) =>
 
 export const deleteBookNote = (id: number) =>
   notesFetch<{ deleted: number }>(`/${id}`, { method: "DELETE" });
+
+// --- LOS AGENTES DE LA FÓRMULA (FASE 11, Auditoría / IA · 7-oct-2026) — Nemotron sobre Nebius ----
+// ④ propone filas de la fórmula (se aprueban con `createRule`), ① revisa los hallazgos del auditor.
+// Cada llamada se mide (tokens, costo) y cuenta contra el tope diario de la oficina.
+export interface AgentUsage {
+  model: string; reasoning: boolean; prompt_tokens: number; completion_tokens: number;
+  reasoning_tokens_est: number; cost_usd: number | null; latency_ms: number; finish_reason: string | null;
+}
+
+export interface FormulaProposal {
+  keyword: string; valid_from: string | null; valid_to: string | null; priority: number | null;
+  account_type: string; category: string; subcategory: string | null; explanation: string;
+  from_notes: number[]; from_changes: number[]; matches: number;
+  /** Evidencia del ② verificador (Tavily), adjuntada por el código: lo que de verdad se encontró. */
+  web_evidence: WebEvidence[];
+  /** Avisos calculados por el código (no rechazan la fila): p. ej. "web_says_personal". */
+  warnings: string[];
+  test: {
+    changes: number; changed_ids: number[]; by_pair: { from: string; to: string; rows: number }[];
+    protected_manual: number; agrees_with_corrections: number; disagrees_with_corrections: number;
+    realigned: number;
+  };
+}
+
+export interface WebEvidence {
+  query: string; business_type: string; confidence: "high" | "medium" | "low" | null;
+  source_url: string | null; source_domain: string | null;
+}
+
+export interface MerchantCheck {
+  merchant: string; rows: number; status: string; business_type: string | null;
+  confidence: "high" | "medium" | "low" | null; source_url: string | null; source_domain: string | null;
+}
+
+export interface VerifyResponse {
+  outcome: string; items: MerchantCheck[]; searched: number; from_cache: number;
+  skipped: Record<string, number>; credits: number;
+}
+
+export interface DraftResponse {
+  outcome: string; calls: number; proposals: FormulaProposal[];
+  rejected: { keyword: string | null; errors: string[] }[]; usage: AgentUsage | null;
+}
+
+export interface AgentReview {
+  ref: string; type: string; merchant: string; transaction_ids: number[];
+  verdict: "problem" | "legitimate" | "unsure"; observation: string; answered: boolean;
+}
+
+export interface ReviewResponse {
+  outcome: string; silenced: number; reviews: AgentReview[]; usage: AgentUsage | null;
+}
+
+export interface AgentUsageSummary {
+  by_agent: Record<string, { calls: number; ok: number; prompt_tokens: number; completion_tokens: number;
+    reasoning_tokens_est: number; cost_usd: number }>;
+  total_cost_usd: number; calls_today: number; daily_cap: number; left_today: number;
+  searches_today: number; daily_search_cap: number; searches_left_today: number;
+}
+
+/** Error de un agente: `code` estable (en inglés), se traduce con `agents.error.<code>`. */
+export class AgentError extends Error {
+  code: string;
+  constructor(code: string) { super(code); this.code = code; }
+}
+
+async function agentsFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API}/api/companies/${cid()}/agents${path}`, {
+    ...init,
+    headers: { ...(await authHeaders()), "Content-Type": "application/json", ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j?.detail).catch(() => null);
+    throw new AgentError(detail?.code ?? (res.status === 403 ? "forbidden" : "agent_error"));
+  }
+  return res.json();
+}
+
+export const runFormulaDrafter = (lang: string) =>
+  agentsFetch<DraftResponse>("/draft", { method: "POST", body: JSON.stringify({ lang }) });
+
+export const runReviewer = (lang: string) =>
+  agentsFetch<ReviewResponse>("/review", { method: "POST", body: JSON.stringify({ lang }) });
+
+export const runMerchantVerifier = () =>
+  agentsFetch<VerifyResponse>("/verify", { method: "POST", body: JSON.stringify({}) });
+
+export const getAgentUsage = () => agentsFetch<AgentUsageSummary>("/usage");

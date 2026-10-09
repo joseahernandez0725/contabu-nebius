@@ -21,11 +21,21 @@ Reglas:
 - **Privacidad:** en el log va el modelo, los tokens y la latencia; **nunca el contenido** del prompt
   ni de la respuesta. Lo que se manda queda en memoria (`SENT`, los últimos 50) solo para que una
   prueba pueda comprobar que no viajaron descripciones, montos ni nombres.
-- **Medible:** cada `Reply` trae tokens y latencia (regla del área: toda llamada nueva se mide).
+- **Medible:** cada `Reply` trae tokens, costo en dólares y latencia (regla del área: toda llamada
+  nueva se mide). Los agentes la guardan en la tabla `agentcall` (`agent_calls.py`).
+- **Razonamiento APAGADO por defecto** (7-oct). Nemotron razona antes de contestar y ese razonamiento
+  se cobra como tokens de salida: el ping gastó 230–247 tokens razonando contra **18** sin razonar
+  (✅ medido en Nebius). Se apaga con `chat_template_kwargs: {"enable_thinking": false}` (✅ ficha
+  oficial del modelo en Hugging Face; ✅ Nebius lo respeta). Quien lo encienda (`reasoning=True`)
+  recibe un piso de `max_tokens` (`REASONING_MIN_TOKENS`): con poco margen el modelo se queda sin
+  tokens a mitad del razonamiento y no contesta nada.
+- **"Se quedó sin tokens" es su propio error** (`out_of_tokens`), no `not_json`: el `content` llega
+  vacío con `finish_reason="length"` y lo que hay que cambiar es el tope, no el formato.
 
 Comprobar la conexión cuando exista la clave:
     .venv/bin/python nemotron.py --models     # ids disponibles en la cuenta
-    .venv/bin/python nemotron.py --ping       # una llamada mínima con JSON estricto
+    .venv/bin/python nemotron.py --ping       # una llamada mínima con JSON estricto (sin razonar)
+    .venv/bin/python nemotron.py --ping --reasoning   # la misma, dejándolo razonar
 """
 
 import json
@@ -49,6 +59,19 @@ logger = logging.getLogger("contabu.nemotron")
 DEFAULT_MODEL = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
 DEFAULT_BASE_URL = "https://api.tokenfactory.nebius.com/v1/"
 _RETRY_CODES = {429, 500, 502, 503, 504}
+# Piso cuando se pide razonar. ✅ Medido el 7-oct: una propuesta real del ④ con Nano razonó MÁS de
+# 4000 tokens y se quedó sin contestar (`out_of_tokens`). Configurable para medir (NEMOTRON_REASONING_MIN_TOKENS).
+REASONING_MIN_TOKENS = int(os.getenv("NEMOTRON_REASONING_MIN_TOKENS") or 16000)
+
+# Precio por millón de tokens (entrada, salida), en dólares. ✅ Catálogo público de Nebius
+# (`/api/public/models_info`, leído el 4-oct-2026). Un modelo que no está aquí se mide en tokens y
+# su costo queda en None: nunca se inventa un precio.
+PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
+    "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B": (0.06, 0.24),
+    "nvidia/Nemotron-3_5-Lightning": (0.06, 0.24),
+    "nvidia/nemotron-3-super-120b-a12b": (0.30, 0.90),
+    "nvidia/Nemotron-3-Ultra-550b-a55b": (1.00, 3.00),
+}
 
 SENT: deque = deque(maxlen=50)          # mensajes enviados (en memoria, para las pruebas de privacidad)
 _FORMAT_SUPPORT: dict[str, str] = {}    # modelo → "json_schema" | "json_object" | "none"
@@ -62,20 +85,60 @@ class NemotronUnavailable(RuntimeError):
 class NemotronError(RuntimeError):
     """La llamada falló o la respuesta no es JSON. `code` es estable y en inglés."""
 
-    def __init__(self, code: str, detail: str = ""):
+    def __init__(self, code: str, detail: str = "", usage: Optional["Usage"] = None):
         super().__init__(f"{code}: {detail}" if detail else code)
         self.code = code
+        self.usage = usage   # lo gastado aunque falle (p. ej. `out_of_tokens` sí cobra)
+
+
+@dataclass
+class Usage:
+    """Lo que costó UNA llamada. `reasoning_tokens_est` es una ESTIMACIÓN: Nebius no separa los tokens
+    de razonamiento (`completion_tokens_details` llega vacío, ✅ 7-oct), así que se reparten los de
+    salida en proporción a los caracteres de `reasoning` y de `content`."""
+    model: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens_est: int = 0
+    latency_ms: int = 0
+    finish_reason: Optional[str] = None
+    format_used: Optional[str] = None
+    reasoning: bool = False
+
+    @property
+    def cost_usd(self) -> Optional[float]:
+        price = PRICES_PER_MTOK.get(self.model)
+        if price is None:
+            return None
+        return (self.prompt_tokens * price[0] + self.completion_tokens * price[1]) / 1_000_000
 
 
 @dataclass
 class Reply:
     data: object                    # el JSON ya parseado (dict o list) — SIN validar: valida quien llama
-    model: str
-    format_used: str                # json_schema | json_object | none
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    latency_ms: int = 0
+    usage: Usage
     raw_text: str = field(default="", repr=False)
+
+    # Atajos (compatibles con quien ya los leía)
+    @property
+    def model(self) -> str:
+        return self.usage.model
+
+    @property
+    def format_used(self) -> Optional[str]:
+        return self.usage.format_used
+
+    @property
+    def prompt_tokens(self) -> int:
+        return self.usage.prompt_tokens
+
+    @property
+    def completion_tokens(self) -> int:
+        return self.usage.completion_tokens
+
+    @property
+    def latency_ms(self) -> int:
+        return self.usage.latency_ms
 
 
 def model_name() -> str:
@@ -154,12 +217,31 @@ def _format_rejected(r: httpx.Response) -> bool:
     return "response_format" in body or "json_schema" in body or "json_object" in body or "guided" in body
 
 
+def _usage_from(body: dict, name: str, mode: str, reasoning: bool, started: float) -> Usage:
+    choice = (body.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    usage = body.get("usage") or {}
+    completion = int(usage.get("completion_tokens") or 0)
+    r_chars, c_chars = len(msg.get("reasoning") or msg.get("reasoning_content") or ""), len(msg.get("content") or "")
+    est = round(completion * r_chars / (r_chars + c_chars)) if (r_chars + c_chars) else 0
+    return Usage(model=body.get("model") or name, prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                 completion_tokens=completion, reasoning_tokens_est=est,
+                 latency_ms=int((time.monotonic() - started) * 1000),
+                 finish_reason=choice.get("finish_reason"), format_used=mode, reasoning=reasoning)
+
+
 def chat_json(system: str, user: str, schema: Optional[type[BaseModel]] = None, *,
-              model: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 4000) -> Reply:
+              model: Optional[str] = None, temperature: float = 0.0, max_tokens: int = 2000,
+              reasoning: bool = False) -> Reply:
     """Una llamada a Nemotron que devuelve JSON. `schema` (pydantic) se manda como `json_schema` si el
     modelo lo acepta; la respuesta vuelve SIN validar — la valida quien llama (p. ej. el validador de
-    la fórmula), porque una fila rechazada se cuenta, no se esconde."""
+    la fórmula), porque una fila rechazada se cuenta, no se esconde.
+
+    `reasoning=False` (por defecto) apaga el razonamiento del modelo; `True` lo deja razonar y sube
+    `max_tokens` al piso `REASONING_MIN_TOKENS`. Si aun así se queda sin tokens → `out_of_tokens`."""
     name = model or model_name()
+    if reasoning:
+        max_tokens = max(max_tokens, REASONING_MIN_TOKENS)
     messages = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     modes = ["json_schema", "json_object", "none"]
     known = _FORMAT_SUPPORT.get(name)
@@ -168,7 +250,8 @@ def chat_json(system: str, user: str, schema: Optional[type[BaseModel]] = None, 
     SENT.append({"model": name, "messages": messages})
     started = time.monotonic()
     for mode in modes:
-        payload = {"model": name, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
+        payload = {"model": name, "messages": messages, "temperature": temperature, "max_tokens": max_tokens,
+                   "chat_template_kwargs": {"enable_thinking": bool(reasoning)}}
         fmt = _response_format(mode, schema)
         if fmt is not None:
             payload["response_format"] = fmt
@@ -184,15 +267,24 @@ def chat_json(system: str, user: str, schema: Optional[type[BaseModel]] = None, 
             raise NemotronError(f"http_{r.status_code}", r.text[:200])
         _FORMAT_SUPPORT[name] = mode
         body = r.json()
-        text = (body.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-        usage = body.get("usage") or {}
-        reply = Reply(data=parse_json(text), model=body.get("model") or name, format_used=mode,
-                      prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                      completion_tokens=int(usage.get("completion_tokens") or 0),
-                      latency_ms=int((time.monotonic() - started) * 1000), raw_text=text)
-        logger.info("nemotron | model=%s format=%s tokens=%d/%d latency_ms=%d", reply.model, mode,
-                    reply.prompt_tokens, reply.completion_tokens, reply.latency_ms)
-        return reply
+        usage = _usage_from(body, name, mode, reasoning, started)
+        text = ((body.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        logger.info("nemotron | model=%s format=%s reasoning=%s tokens=%d/%d (razonamiento≈%d) "
+                    "cost=$%s latency_ms=%d finish=%s", usage.model, mode, reasoning, usage.prompt_tokens,
+                    usage.completion_tokens, usage.reasoning_tokens_est,
+                    f"{usage.cost_usd:.6f}" if usage.cost_usd is not None else "?", usage.latency_ms,
+                    usage.finish_reason)
+        if usage.finish_reason == "length":
+            raise NemotronError("out_of_tokens",
+                                f"se quedó sin tokens (max_tokens={max_tokens}, razonamiento≈"
+                                f"{usage.reasoning_tokens_est}); sube max_tokens o apaga el razonamiento",
+                                usage=usage)
+        try:
+            data = parse_json(text)
+        except NemotronError as e:
+            e.usage = usage
+            raise
+        return Reply(data=data, usage=usage, raw_text=text)
     raise NemotronError("format_unsupported", "el modelo rechazó todos los formatos de respuesta")
 
 
@@ -216,10 +308,15 @@ if __name__ == "__main__":
             print("\n".join(i for i in ids if "nemotron" in i.lower()) or "(ningún Nemotron en la lista)")
             print(f"\n{len(ids)} modelos en total · NEBIUS_MODEL = {model_name()}")
         elif "--ping" in sys.argv:
+            think = "--reasoning" in sys.argv
             rep = chat_json("Reply only with JSON.",
-                            'Return {"ok": true, "model_family": "<your model family>"}.', _Ping, max_tokens=200)
-            print(f"✅ {rep.model} · formato {rep.format_used} · {rep.prompt_tokens}/{rep.completion_tokens} "
-                  f"tokens · {rep.latency_ms} ms → {rep.data}")
+                            'Return {"ok": true, "model_family": "<your model family>"}.', _Ping,
+                            max_tokens=200, reasoning=think)
+            u = rep.usage
+            cost = f"${u.cost_usd:.6f}" if u.cost_usd is not None else "sin precio"
+            print(f"✅ {u.model} · formato {u.format_used} · razonamiento {'sí' if think else 'no'} · "
+                  f"{u.prompt_tokens}/{u.completion_tokens} tokens (razonamiento≈{u.reasoning_tokens_est}) · "
+                  f"{cost} · {u.latency_ms} ms → {rep.data}")
         else:
             print(__doc__)
     except NemotronUnavailable as e:

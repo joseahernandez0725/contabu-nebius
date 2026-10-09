@@ -131,6 +131,11 @@ BODIES: dict[tuple[str, str], dict] = {
     # Notas del libro (F11). El PATCH apunta a la nota 999999: un 404 también prueba el rechazo.
     ("POST", "/api/companies/{company_id}/notes"): {"text": "permcheck note"},
     ("PATCH", "/api/companies/{company_id}/notes/{note_id}"): {"text": "permcheck note"},
+    # Agentes (F11). La prueba NO sale a internet: si el permiso dejara pasar, la llamada a Nebius
+    # fallaría en local; lo que se mide aquí es solo el 403.
+    ("POST", "/api/companies/{company_id}/agents/draft"): {"lang": "es"},
+    ("POST", "/api/companies/{company_id}/agents/review"): {"lang": "es"},
+    ("POST", "/api/companies/{company_id}/agents/verify"): {},
     # "__TX__" se reemplaza por el id de la transacción REAL de prueba: con una lista vacía el
     # endpoint corta con 422 ("no transactions") ANTES de mirar el permiso, y no probaría nada.
     ("POST", "/api/transactions/clarify-group"): {"transaction_ids": ["__TX__"], "answer": "x"},

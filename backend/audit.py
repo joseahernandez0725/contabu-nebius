@@ -6,12 +6,17 @@ boletín de la Fase 8 (`eval_engine.py`, borrado el 4-oct) pero sobre los **dato
 → 1 click, rápido y gratis. La capa de IA (juicio fino "¿esto es realmente raro?") queda para después.
 
 Es **aditivo** a la cola de revisión: atrapa lo que `needs_review` NO ve — sobre todo **inconsistencias
-entre transacciones** del mismo comercio. Calibrado para evitar falsos positivos (excluye gas/super, cuyo
-split por monto es intencional, y los cheques, que no agrupan).
+entre transacciones** del mismo comercio. Excluye los cheques, que no agrupan. *(Hasta el 7-oct
+también excluía gasolineras y supermercados por su split por monto; esas bandas se eliminaron el 1-oct,
+así que un Chevron con dos categorías vuelve a ser una inconsistencia — pedido de Movimientos.)*
+
+Lo escrito a mano manda (Jose, 3-oct): si los `items` traen `source`, cada inconsistencia lleva
+`manual_ids` — las filas que el bookkeeper puso a mano a propósito. El revisor ① (agents.py) las trata
+como excepción deliberada o como señal para el ④, no como error.
 """
 from collections import Counter, defaultdict
 
-from rules import classify_merchant, merchant_signature
+from rules import merchant_signature
 
 # account_type (valor string) que SUMA en el P&L; el resto (COGS/OPEX/OTHER_EXPENSE) resta; NON_PL se excluye.
 _INCOME = {"REVENUE", "OTHER_INCOME"}
@@ -50,12 +55,11 @@ def audit_categorization(items: list[dict], rules_by_id: dict[int, dict] | None 
                 })
 
     # 1) INCONSISTENCIA POR COMERCIO: misma huella, distintas (account_type, category).
-    #    Excluye gas/super (su split por monto es a propósito) y cheques (huella vacía).
+    #    Excluye cheques (huella vacía).
     groups: dict[str, list[dict]] = defaultdict(list)
     for it in items:
-        desc = it.get("description") or ""
-        sig = merchant_signature(desc)
-        if sig and classify_merchant(desc) is None:
+        sig = merchant_signature(it.get("description") or "")
+        if sig:
             groups[sig].append(it)
     for sig, its in groups.items():
         labels = Counter((it.get("account_type"), it.get("category"))
@@ -70,6 +74,7 @@ def audit_categorization(items: list[dict], rules_by_id: dict[int, dict] | None 
                 "merchant": sig,
                 "transaction_ids": [it["id"] for it in its],
                 "odd_ids": odd,  # las que difieren de la mayoría (las que el fix de 1 toque corrige)
+                "manual_ids": [it["id"] for it in its if it.get("source") == "manual"],
                 "detail": sorted(f"{a}/{c}" for a, c in labels),
                 "suggestion": f"{maj_at}/{maj_cat}",
                 "suggested_account_type": maj_at,  # estructurado → el fix lo aplica directo

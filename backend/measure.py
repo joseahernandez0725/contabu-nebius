@@ -18,6 +18,9 @@ Uso:
                                                        # transacción, mide y la DESHACE (no deja nada)
     .venv/bin/python measure.py --company 12           # un libro existente (solo lectura)
     .venv/bin/python measure.py --demo --cutoff 2026-08-15
+    .venv/bin/python measure.py --demo --agent         # + el agente ④ REAL (Nemotron), contra la misma
+                                                       # línea base; mide tokens, costo y privacidad
+    .venv/bin/python measure.py --demo --agent --reasoning   # el mismo, dejándolo razonar
 """
 
 import argparse
@@ -45,6 +48,19 @@ NOTE_CASES = {
         "contains": "STARBUCKS",
         "from": date(2026, 8, 3), "to": date(2026, 8, 17),
         "expect": ("NON_PL", "Owner Draw"),
+    },
+}
+
+
+# El ② VERIFICADOR: el tipo de negocio que DEBE salir para cada comercio de Sparkle (el caso del demo:
+# descripciones crípticas SQ*/TST*/PAYPAL* y el gimnasio camuflado). Escrito el 8-oct ANTES de la
+# primera búsqueda. Las personas (Zelle) no están: no se buscan nunca.
+VERIFIER_EXPECTED = {
+    "Sparkle Cleaning Co.": {
+        "SHELL OIL": "gas_station", "EL FAROLITO": "restaurant", "COSTCO WHSE": "warehouse_club",
+        "JANITEX SUPPLY": "cleaning_supplies", "NEXT INSURANCE": "insurance", "ULINE": "packaging_shipping",
+        "T-MOBILE PCS": "telecom", "24 HOUR FITNESS": "gym_fitness", "BAYCITY UNIFORMS": "uniforms_apparel",
+        "ZOROTOOLS": "industrial_supplies",
     },
 }
 
@@ -171,6 +187,64 @@ def measure_book(session: Session, company: Company, cutoff: date) -> dict:
     }
 
 
+def measure_agent(session: Session, company: Company, cutoff: date, *, reasoning: bool, model=None) -> dict:
+    """El agente ④ REAL sobre el mismo libro y el mismo corte: solo ve el pasado (`cutoff`), propone,
+    el validador filtra y se puntúa igual que la línea base. No se guarda nada (`record=False`)."""
+    import agents
+    ctx = BookContext(session, company)
+    test = [c for c in corrections(session, company.id) if c.tx.date >= cutoff]
+    res = agents.draft(session, company, cutoff=cutoff, record=False, reasoning=reasoning, model=model)
+    rows = [p.row for p in res.proposals]
+    return {
+        "book": company.name, "outcome": res.outcome, "usage": res.usage,
+        "rows": [(r.keyword, r.valid_from, r.valid_to, r.category) for r in rows],
+        "rejected": [(rj["raw"].get("keyword") if isinstance(rj["raw"], dict) else rj["raw"], rj["errors"])
+                     for rj in res.rejected],
+        "score": score(ctx, rows, test, cutoff), "note_case": note_case(ctx, rows),
+    }
+
+
+def _print_agent(results: list[dict], base: list[dict], privacy: dict) -> None:
+    print("AGENTE ④ (Nemotron) · mismo corte, mismo puntaje\n")
+    tot, btot = Score(), Score()
+    cost = 0.0
+    p_tok = c_tok = r_tok = 0
+    proposed = rejected = 0
+    for r, b in zip(results, base):
+        s, u = r["score"], r["usage"]
+        print(f"■ {r['book']}  — resultado: {r['outcome']}")
+        for kw, vf, vt, cat in r["rows"]:
+            window = f" [{vf} → {vt}]" if vf or vt else ""
+            print(f"    fila propuesta: {kw!r}{window} → {cat}")
+        for kw, errs in r["rejected"]:
+            print(f"    fila RECHAZADA: {kw!r} {errs}")
+        print(f"    reproduce {s.reproduced}/{s.corrected} ({s.reproduced_rows}/{s.correction_rows} filas) · "
+              f"cambiadas mal: {s.wrong} · Pendientes que categorizaría: {s.newly_categorized}"
+              f"   [línea base: {b['score'].reproduced}/{b['score'].corrected}, mal {b['score'].wrong}]")
+        for ex in s.wrong_examples:
+            print(f"      ✗ {ex}")
+        if r["note_case"]:
+            n = r["note_case"]
+            print(f"    caso de nota ({n['note']}): {n['hit']}/{n['expected']} filas esperadas · {n['extra']} de más")
+        if u:
+            print(f"    costo: {u.prompt_tokens} tokens de entrada / {u.completion_tokens} de salida "
+                  f"(razonamiento≈{u.reasoning_tokens_est}) · ${u.cost_usd or 0:.6f} · {u.latency_ms} ms")
+            cost += u.cost_usd or 0
+            p_tok += u.prompt_tokens; c_tok += u.completion_tokens; r_tok += u.reasoning_tokens_est
+        proposed += len(r["rows"]) + len(r["rejected"]); rejected += len(r["rejected"])
+        for k in ("corrected", "reproduced", "wrong", "newly_categorized"):
+            setattr(tot, k, getattr(tot, k) + getattr(s, k))
+            setattr(btot, k, getattr(btot, k) + getattr(b["score"], k))
+    beats = tot.reproduced > btot.reproduced and tot.wrong <= btot.wrong
+    print(f"\nTOTAL AGENTE · reproduce {tot.reproduced}/{tot.corrected} · cambiadas mal {tot.wrong} · "
+          f"filas rechazadas {rejected}/{proposed}"
+          f"\nTOTAL LÍNEA BASE · reproduce {btot.reproduced}/{btot.corrected} · cambiadas mal {btot.wrong}"
+          f"\n→ {'✅ SUPERA' if beats else '❌ NO supera'} a la línea base (más reproducidas, igual o menos mal)")
+    print(f"COSTO TOTAL · {p_tok} entrada / {c_tok} salida (razonamiento≈{r_tok}) · ${cost:.6f}")
+    print(f"PRIVACIDAD de lo enviado a Nebius · descripciones completas: {privacy['descriptions']} · "
+          f"montos: {privacy['amounts']} · nombres de persona: {privacy['person_names']}\n")
+
+
 def _print(results: list[dict], cutoff: date) -> None:
     print(f"\nLÍNEA BASE SIN IA · corte {cutoff.isoformat()} (aprende antes, se mide desde ahí)\n")
     tot = Score()
@@ -202,6 +276,9 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="siembra el demo en una transacción y la deshace")
     ap.add_argument("--company", type=int, help="id de un libro existente (solo lectura)")
     ap.add_argument("--cutoff", type=date.fromisoformat, default=DEFAULT_CUTOFF)
+    ap.add_argument("--agent", action="store_true", help="corre también el agente ④ real (Nemotron)")
+    ap.add_argument("--reasoning", action="store_true", help="deja razonar al modelo (más tokens)")
+    ap.add_argument("--model", help="otro modelo de Nebius (por defecto NEBIUS_MODEL)")
     args = ap.parse_args()
     if not args.demo and args.company is None:
         ap.error("usa --demo o --company ID")
@@ -227,7 +304,20 @@ def main() -> int:
                     print(f"No existe el libro {args.company}", file=sys.stderr)
                     return 1
                 books = [book]
-            _print([measure_book(session, b, args.cutoff) for b in books], args.cutoff)
+            base = [measure_book(session, b, args.cutoff) for b in books]
+            _print(base, args.cutoff)
+            if args.agent:
+                import agents
+                import nemotron
+                from company_profile import p2p_counterparty
+                nemotron.SENT.clear()
+                results = [measure_agent(session, b, args.cutoff, reasoning=args.reasoning, model=args.model)
+                           for b in books]
+                txs = [t for b in books for t in session.exec(
+                    select(Transaction).where(Transaction.company_id == b.id)).all()]
+                import merchant_verifier
+                persons = merchant_verifier.protected_names(txs)
+                _print_agent(results, base, agents.privacy_scan(list(nemotron.SENT), txs, persons))
         finally:
             session.rollback()   # --demo no deja NADA en la base; --company nunca escribió
     return 0

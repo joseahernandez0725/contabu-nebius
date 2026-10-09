@@ -1509,6 +1509,83 @@ def delete_book_note(company_id: int, note_id: int, user: User = Depends(current
     return {"deleted": note_id}
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# LOS AGENTES DE LA FÓRMULA (FASE 11, Auditoría / IA · 7-oct-2026), sobre Nemotron (Nebius).
+# ④ /agents/draft: PROPONE filas de la fórmula (nunca las aplica: se aprueban con POST /rules).
+# ① /agents/review: juzga los hallazgos del auditor. Lógica en `agents.py`; costo en `agent_calls.py`.
+# Correr un agente = operador (gasta crédito y propone sobre el libro). Ver el costo = consola.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+class AgentRunIn(BaseModel):
+    lang: Optional[str] = "es"          # idioma de las explicaciones (el de la interfaz)
+    reasoning: Optional[bool] = False   # dejar razonar al modelo (más tokens; ver nemotron.py)
+
+
+def _agent_error(e: Exception) -> HTTPException:
+    import agent_calls
+    import nemotron
+    if isinstance(e, agent_calls.CapReached):
+        return HTTPException(status_code=429, detail={"code": "agent_cap_reached"})
+    if isinstance(e, nemotron.NemotronUnavailable):
+        return HTTPException(status_code=503, detail={"code": "ai_unavailable"})
+    raise e
+
+
+@app.post("/api/companies/{company_id}/agents/draft")
+def run_formula_drafter(company_id: int, payload: AgentRunIn, user: User = Depends(current_user),
+                        session: Session = Depends(get_session)):
+    import agent_calls
+    import agents
+    company = owned_company(company_id, user, session, write=True)
+    try:
+        res = agents.draft(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
+                           user_id=user.id)
+    except Exception as e:
+        raise _agent_error(e)
+    return {"outcome": res.outcome, "calls": res.calls,
+            "proposals": [agents.proposal_dict(p) for p in res.proposals],
+            "rejected": [{"keyword": r["raw"].get("keyword") if isinstance(r["raw"], dict) else None,
+                          "errors": r["errors"]} for r in res.rejected],
+            "usage": agent_calls.usage_dict(res.usage)}
+
+
+@app.post("/api/companies/{company_id}/agents/review")
+def run_reviewer(company_id: int, payload: AgentRunIn, user: User = Depends(current_user),
+                 session: Session = Depends(get_session)):
+    import agent_calls
+    import agents
+    company = owned_company(company_id, user, session, write=True)
+    try:
+        res = agents.review(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
+                            user_id=user.id)
+    except Exception as e:
+        raise _agent_error(e)
+    return {"outcome": res.outcome, "silenced": res.silenced, "reviews": res.reviews,
+            "usage": agent_calls.usage_dict(res.usage)}
+
+
+@app.post("/api/companies/{company_id}/agents/verify")
+def run_merchant_verifier(company_id: int, user: User = Depends(current_user),
+                          session: Session = Depends(get_session)):
+    """② Verificador de comercios (Tavily): tipo de negocio de cada comercio, con enlace y confianza.
+    Nunca busca personas; una búsqueda por comercio, guardada por oficina; no cambia ninguna categoría."""
+    import merchant_verifier
+    company = owned_company(company_id, user, session, write=True)
+    try:
+        res = merchant_verifier.verify(session, company, user_id=user.id)
+    except merchant_verifier.TavilyUnavailable:
+        raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
+    return {"outcome": res.outcome, "items": res.items, "searched": res.searched,
+            "from_cache": res.from_cache, "skipped": dict(res.skipped), "credits": res.credits}
+
+
+@app.get("/api/companies/{company_id}/agents/usage")
+def agent_usage(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    import agent_calls
+    company = console_company(company_id, user, session)
+    return agent_calls.summary(session, company)
+
+
 @app.post("/api/companies/{company_id}/rule-proposals")
 def generate_rule_proposals(
     company_id: int,

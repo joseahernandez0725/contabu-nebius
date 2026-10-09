@@ -491,3 +491,63 @@ class BookNote(SQLModel, table=True):
     created_by_user_id: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+
+
+class AgentCall(SQLModel, table=True):
+    """UNA llamada de un agente a Nemotron (FASE 11, Auditoría / IA · 7-oct-2026): lo que costó y lo que
+    salió. Existe para medir desde el principio (tokens, costo, latencia) y para el TOPE de llamadas
+    por oficina del demo. Nunca guarda el contenido del prompt ni de la respuesta (privacidad).
+
+    `agent`: "drafter" (④ redactor de la fórmula) | "reviewer" (① revisor).
+    `outcome`: "ok" o el código de error (`out_of_tokens`, `not_json`, `http_500`…).
+    `items_out` / `items_valid`: filas que propuso el modelo / las que pasaron el validador (④), o
+    hallazgos revisados (①). `firm_id` y `user_id` sin clave foránea (historia, como `matched_rule_id`).
+    `reasoning_tokens_est` es estimado (Nebius no los separa).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    firm_id: Optional[int] = Field(default=None, index=True)
+    user_id: Optional[int] = Field(default=None)
+    agent: str = Field(index=True)
+    model: str
+    reasoning: bool = Field(default=False)
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    reasoning_tokens_est: int = Field(default=0)
+    cost_usd: Optional[float] = Field(default=None)
+    latency_ms: int = Field(default=0)
+    finish_reason: Optional[str] = Field(default=None)
+    outcome: str = Field(default="ok")
+    items_out: int = Field(default=0)
+    items_valid: int = Field(default=0)
+    credits: int = Field(default=0)   # créditos de Tavily (agente ② verificador); 0 en Nemotron
+    created_at: datetime = Field(default_factory=_utcnow, index=True)
+
+
+class MerchantLookup(SQLModel, table=True):
+    """Lo que el ② VERIFICADOR DE COMERCIOS encontró en internet (Tavily) sobre UN comercio
+    (FASE 11, Auditoría / IA · 8-oct-2026). Es la CACHÉ: una búsqueda por comercio, guardada.
+
+    🔒 **Por oficina** (`firm_id`): nada cruza entre oficinas (decisión del 04-oct). Un libro sin
+    oficina usa `company_id`.
+    🔒 Se guarda un **DATO ESTRUCTURADO**, nunca el texto de la página:
+    - `business_type`: de una lista cerrada (`merchant_verifier.BUSINESS_TYPES`);
+    - `confidence`: high, medium o low;
+    - `source_url`: el enlace.
+    Ese texto nunca entra al prompt de los agentes (protección contra inyección de instrucciones).
+    `query` es exactamente lo que se mandó a Tavily: la huella del comercio, sin montos ni nombres.
+    `status`: "ok" | "not_found" | "error".
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    firm_id: Optional[int] = Field(default=None, index=True)
+    company_id: Optional[int] = Field(default=None, index=True)
+    fingerprint: str = Field(index=True)          # la frase buscada, en mayúsculas (una búsqueda por comercio)
+    query: str
+    status: str = Field(default="ok")
+    business_type: Optional[str] = Field(default=None)
+    confidence: Optional[str] = Field(default=None)
+    source_url: Optional[str] = Field(default=None)
+    source_domain: Optional[str] = Field(default=None)
+    results_count: int = Field(default=0)
+    credits: int = Field(default=0)
+    created_at: datetime = Field(default_factory=_utcnow)

@@ -8,6 +8,7 @@ import Upload from "./components/Upload";
 import Review from "./components/Review";
 import Audit from "./components/Audit";
 import BookNotes from "./components/BookNotes";
+import FormulaAgents from "./components/FormulaAgents";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
@@ -29,6 +30,7 @@ function App() {
   const [authError, setAuthError] = useState(false);
   const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
   const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
+  const [auditKey, setAuditKey] = useState(0); // FASE 11: una fila aprobada por el agente re-corre el auditor
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
   // LA HOJA (FASE 10): la consola del bookkeeper reemplaza la lista móvil simplificada.
@@ -235,7 +237,13 @@ function App() {
               <div className="space-y-4">
                 {/* FASE 11: las notas del libro van ARRIBA — son la entrada de los agentes. */}
                 <BookNotes />
+                {/* El equipo de agentes (④ redactor, ① revisor) sobre Nemotron. */}
+                <FormulaAgents
+                  onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
+                  onChanged={() => setAuditKey((k) => k + 1)}
+                />
                 <Audit
+                  key={auditKey}
                   onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
                   onCount={setAuditCount}
                 />
