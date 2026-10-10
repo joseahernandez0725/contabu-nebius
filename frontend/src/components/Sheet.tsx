@@ -136,7 +136,7 @@ export default function Sheet({ onNavigate, menuRight }: {
   const pendingRulesCmd = useRef<((c: RulesCommands) => void) | null>(null);
   const onRulesCommands = useCallback((c: RulesCommands | null) => {
     rulesCmdsRef.current = c;
-    setRulesSig(c ? `${c.canUndo}|${c.lastUndo}|${c.selectedCount}|${c.canExport}` : "");
+    setRulesSig(c ? `${c.canUndo}|${c.lastUndo}|${c.selectedCount}|${c.canExport}|${c.canDelete}|${c.formulaOpen}` : "");
     if (c && pendingRulesCmd.current) { const run = pendingRulesCmd.current; pendingRulesCmd.current = null; run(c); }
   }, []);
   // DENSIDAD: cuántas transacciones ve el bookkeeper de un vistazo. Se recuerda por navegador.
@@ -912,6 +912,9 @@ export default function Sheet({ onNavigate, menuRight }: {
         onClick: () => setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 0) },
     ] },
     { id: "view", label: t("sheet.mb.view"), items: [
+      { label: t("rules.formula.show", { defaultValue: "View as formula" }), checked: !!rc?.formulaOpen,
+        onClick: () => withRules((c) => c.toggleFormula()) },
+      "sep",
       { label: t("sheet.tabSheet", { defaultValue: "Bookkeeping" }), checked: tab === "sheet", onClick: () => setTab("sheet") },
       { label: t("sheet.tabRules", { defaultValue: "Rules" }), checked: tab === "rules", onClick: () => setTab("rules") },
       { label: t("sheet.tabPivot", { defaultValue: "Pivot" }), checked: tab === "pivot", onClick: () => setTab("pivot") },

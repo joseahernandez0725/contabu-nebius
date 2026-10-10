@@ -234,6 +234,13 @@ class CategoryRule(SQLModel, table=True):
     # gana la regla con ventana (es la excepción: "STARBUCKS del 3 al 17-ago → Owner Draw").
     valid_from: Optional[date] = Field(default=None)
     valid_to: Optional[date] = Field(default=None)
+    # DE DÓNDE SALIÓ (8-oct): "agent" (propuesta del agente ④, aprobada) · "import" (archivo) · None (la
+    # hoja o una corrección). Solo informativo: "Ver como fórmula" marca las del agente.
+    origin: Optional[str] = Field(default=None)
+    # MONTO (8-oct, 2ª condición de la fórmula): la regla vale solo si la MAGNITUD del movimiento está
+    # entre estos dos, INCLUSIVOS ("SAFEWAY y más de $50"). None = sin límite por ese lado.
+    amount_min: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
+    amount_max: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
     created_at: datetime = Field(default_factory=_utcnow)
 
 
@@ -550,4 +557,57 @@ class MerchantLookup(SQLModel, table=True):
     source_domain: Optional[str] = Field(default=None)
     results_count: int = Field(default=0)
     credits: int = Field(default=0)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class Finding(SQLModel, table=True):
+    """UN HALLAZGO del auditor, guardado (FASE 11, Auditoría / IA · 8-oct-2026 — el `Finding` del Paso 2).
+
+    Existe para que **lo que el bookkeeper ya dijo "está bien" no vuelva a salir**, y para que en la
+    pestaña Auditoría el mismo hallazgo sea UNA tarjeta: lo que detectó el auditor (determinista) + el
+    veredicto del ① revisor + la evidencia del ② verificador.
+
+    `key`: identidad estable del hallazgo (tipo + comercio / movimiento / reglas / cuenta y mes). Si el
+    auditor lo vuelve a ver, es la MISMA fila.
+    `status`:
+    - "open": se muestra;
+    - "ok": el bookkeeper dijo que está bien, no vuelve a salir;
+    - "gone": el auditor ya no lo ve (se arregló).
+    `payload`: los datos estructurados para la pantalla (en inglés; la pantalla traduce por `type`).
+    `agent_*`: lo que dijo el ① (la IA nunca cambia una categoría desde aquí).
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    key: str = Field(index=True)
+    type: str
+    severity: str = Field(default="medium")          # high | medium | low | info
+    merchant: Optional[str] = Field(default=None)     # la huella limpia del comercio
+    transaction_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    payload: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    status: str = Field(default="open", index=True)
+    agent_verdict: Optional[str] = Field(default=None)        # problem | legitimate | unsure
+    agent_observation: Optional[str] = Field(default=None)
+    agent_lang: Optional[str] = Field(default=None)
+    agent_reviewed_at: Optional[datetime] = Field(default=None)
+    resolved_by_user_id: Optional[int] = Field(default=None)
+    resolved_at: Optional[datetime] = Field(default=None)
+    resolution_note: Optional[str] = Field(default=None)
+    first_seen_at: datetime = Field(default_factory=_utcnow)
+    last_seen_at: datetime = Field(default_factory=_utcnow)
+
+
+class ProposalDismissal(SQLModel, table=True):
+    """Una fila propuesta por el ④ que el bookkeeper DESCARTÓ, con su motivo (FASE 11 · 8-oct-2026).
+    El ④ no vuelve a proponer la misma fila (se filtra en código) y lee los motivos como contexto.
+    `reason_code`: wrong_category | too_broad | one_off | not_now | other. `reason_text`: libre, opcional."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    keyword: str
+    valid_from: Optional[date] = Field(default=None)
+    valid_to: Optional[date] = Field(default=None)
+    account_type: Optional[str] = Field(default=None)
+    category: Optional[str] = Field(default=None)
+    reason_code: str = Field(default="other")
+    reason_text: Optional[str] = Field(default=None)
+    user_id: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)

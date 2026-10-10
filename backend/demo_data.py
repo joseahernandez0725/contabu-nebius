@@ -30,8 +30,9 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Callable, Optional
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+import book_notes
 import corrections
 from ingestion import ingest_parsed, make_fingerprint
 from models import AccountType, CategoryRule, Company, Firm, RuleScope, Transaction, User
@@ -43,8 +44,8 @@ OPEX, COGS, REVENUE, NON_PL = (AccountType.OPERATING_EXPENSE, AccountType.COGS,
                                AccountType.REVENUE, AccountType.NON_PL)
 
 # ── Las NOTAS del bookkeeper ────────────────────────────────────────────────────────────────────
-# Todavía no tienen tabla: la F11 (Auditoría / IA) las siembra el 9-oct desde esta constante. Por
-# nombre de libro. En inglés (los datos siempre en inglés; el idioma es solo la capa visual).
+# Se siembran en la tabla `booknote` (F11) con `book_notes.seed_notes`, en `_seed_book`. Por nombre
+# de libro. En inglés (los datos siempre en inglés; el idioma es solo la capa visual).
 # `kind`: "keep_in_mind" (📌 tenlo en cuenta) | "dont_report" (🚫 no me reportes).
 DEMO_NOTES: dict[str, list[dict]] = {
     "Rivera HVAC LLC": [{
@@ -131,16 +132,35 @@ def _rule(company: Company, match: str, at: AccountType, category: str, sub: str
 
 
 def _manual(session: Session, tx: Transaction, at: AccountType, category: str, sub: str,
-            owner: User, when: datetime) -> None:
-    """Lo que el bookkeeper escribió a mano (lo manual manda), con su fila en el historial."""
+            owner: User, when: datetime, reason: Optional[str] = None) -> None:
+    """Lo que el bookkeeper escribió a mano (lo manual manda), con su fila en el historial.
+    `reason="planted_mistake"`: una corrección EQUIVOCADA plantada a propósito (una trampa para el
+    auditor). La medición de la F11 no debe contarla como verdad (pedido de la F11, 4-oct)."""
     before = corrections.snapshot(tx)
     tx.account_type, tx.category, tx.subcategory = at, category, sub.upper()
     tx.source, tx.matched_rule_id = "manual", None
     tx.confidence, tx.needs_review, tx.review_question = 1.0, False, None
     session.add(tx)
-    row = corrections.record_change(session, tx, before, via=corrections.VIA_MANUAL, user_id=owner.id)
+    row = corrections.record_change(session, tx, before, via=corrections.VIA_MANUAL, user_id=owner.id,
+                                    reason=reason)
     if row is not None:
         row.changed_at = when
+
+
+def _history(session: Session, company: Company, owner: User, plan: list[tuple]) -> None:
+    """MÁS HISTORIAL DE CORRECCIONES (pedido de la F11, 4-oct; aprobado por Jose el 8-oct): el
+    bookkeeper categorizó a mano algunos Pendientes, repartidos entre julio y septiembre, y a veces se
+    contradijo. Es la materia con que el agente ④ redacta la fórmula y con que se mide contra la línea
+    base. `plan`: (inicio de la descripción, [(n-ésima aparición, sección, categoría, comercio)…])."""
+    rows = sorted(session.exec(select(Transaction).where(Transaction.company_id == company.id)).all(),
+                  key=lambda t: (t.date, t.id))
+    for prefix, picks in plan:
+        hits = [t for t in rows if t.description.startswith(prefix) and t.source is None]
+        for n, at, cat, sub in picks:
+            if n < len(hits):
+                tx = hits[n]
+                _manual(session, tx, at, cat, sub, owner,
+                        datetime.combine(tx.date + timedelta(days=2), datetime.min.time()))
 
 
 def _seed_book(session: Session, firm: Firm, owner: User, name: str, sector: str, account: str,
@@ -163,6 +183,8 @@ def _seed_book(session: Session, firm: Firm, owner: User, name: str, sector: str
         if tag:
             tagged.setdefault(tag, []).append(session.get(Transaction, tid))
     plant(session, company, {r.match_text: r for r in made}, tagged, owner)
+    # Las NOTAS del bookkeeper (tabla `booknote` de la F11, 8-oct): misma validación que la API.
+    book_notes.seed_notes(session, company.id, DEMO_NOTES.get(name, []))
     session.flush()
     return company
 
@@ -194,7 +216,16 @@ def _rivera() -> Book:
     b.add(spread(4, b.rng), "FERGUSON HVAC SUPPLY #1462 CONCORD CA", 320, 1850)
     b.add(spread(3, b.rng), "JOHNSTONE SUPPLY 0331 HAYWARD CA", 210, 760)
     b.add(monthly(1), "ACH DEBIT BAYSIDE PROPERTIES LLC RENT", 2400)
+    # NÓMINA como la ve un banco de verdad (Jose, 10-oct): solo los pagos NETOS a los empleados (Gusto,
+    # quincenal) y las remesas de impuestos al IRS (EFTPS, depósito mensual de la 941). El BRUTO no
+    # aparece en ninguna parte: es lo que el auditor tiene que notar.
     b.add(biweekly(date(2026, 7, 10)), "GUSTO PAYROLL NET PAY RIVERA HVAC", 3150, 4100)
+    net = {m: sum(-a for d, desc, a, _t in b.rows if desc.startswith("GUSTO PAYROLL") and d.month == m) for m in (7, 8)}
+    # Depósito mensual: el día 15 del mes siguiente (impuesto retenido + Seguro Social y Medicare de las
+    # dos partes ≈ 32 % del neto). Julio paga junio, que no está en el libro: se estima como julio.
+    for d, base, k in ((date(2026, 7, 15), net[7], Decimal("0.31")), (date(2026, 8, 14), net[7], Decimal("0.32")),
+                       (date(2026, 9, 15), net[8], Decimal("0.32"))):
+        b.add([d], "IRS USATAXPYMT 270648213 EFTPS RIVERA HVAC LLC", float((base * k).quantize(Decimal("0.01"))))
     b.add(monthly(5), "STATE FARM INSURANCE 800-956-6310", 412.50)
     b.add(monthly(12), "VERIZON WIRELESS PAYMENTS", 148.32)
     b.add(monthly(18), "PGANDE WEB ONLINE PG&E", 176, 262, tag="pge")
@@ -239,6 +270,20 @@ def _plant_rivera(session, company, rules, tagged, owner) -> None:
     stray = tagged["pge"][0]
     stray.category = "Office Expense"
     session.add(stray)
+    # El historial de un trimestre: lo que el bookkeeper fue resolviendo a mano. HOME DEPOT una vez
+    # como herramienta (se contradice), la renta en julio y agosto, la nómina, los Zelle al dueño.
+    _history(session, company, owner, [
+        ("CHEVRON", [(0, OPEX, "Vehicle Fuel", "Chevron"), (4, OPEX, "Vehicle Fuel", "Chevron"),
+                     (9, OPEX, "Vehicle Fuel", "Chevron")]),
+        ("THE HOME DEPOT", [(0, COGS, "Materials", "Home Depot"), (3, COGS, "Small Tools & Equipment", "Home Depot"),
+                            (7, COGS, "Materials", "Home Depot")]),
+        ("FERGUSON", [(0, COGS, "Materials", "Ferguson"), (2, COGS, "Materials", "Ferguson")]),
+        ("JOHNSTONE", [(1, COGS, "Materials", "Johnstone Supply")]),
+        ("ACH DEBIT BAYSIDE", [(0, OPEX, "Office Rent", "Bayside Properties"), (1, OPEX, "Office Rent", "Bayside Properties")]),
+        ("GUSTO PAYROLL", [(0, COGS, "Direct Labor", "Gusto"), (2, COGS, "Direct Labor", "Gusto"),
+                           (5, OPEX, "Admin Wages", "Gusto")]),
+        ("ZELLE PAYMENT TO DANIEL RIVERA", [(0, NON_PL, "Owner Draw", "Daniel Rivera"), (3, NON_PL, "Owner Draw", "Daniel Rivera")]),
+    ])
 
 
 # ── Sparkle Cleaning Co. (limpieza) ─────────────────────────────────────────────────────────────
@@ -281,7 +326,16 @@ def _plant_sparkle(session, company, rules, tagged, owner) -> None:
     # El gimnasio, cargado a mano como gasto de oficina (un gasto personal camuflado).
     for tx in tagged["gym"]:
         _manual(session, tx, OPEX, "Office Expense", "24 Hour Fitness", owner,
-                datetime.combine(tx.date + timedelta(days=4), datetime.min.time()))
+                datetime.combine(tx.date + timedelta(days=4), datetime.min.time()), reason="planted_mistake")
+    _history(session, company, owner, [
+        ("TST* EL FAROLITO", [(0, OPEX, "Meals", "El Farolito"), (3, OPEX, "Meals", "El Farolito")]),
+        ("SQ *JANITEX", [(0, COGS, "Cleaning Supplies", "Janitex Supply"), (2, COGS, "Cleaning Supplies", "Janitex Supply")]),
+        ("PAYPAL *ULINE", [(0, COGS, "Cleaning Supplies", "Uline"), (2, OPEX, "Office Expense", "Uline")]),
+        ("T-MOBILE", [(0, OPEX, "Telephone & Internet", "T-Mobile"), (2, OPEX, "Telephone & Internet", "T-Mobile")]),
+        ("ZELLE PAYMENT TO MARIA LOPEZ", [(0, COGS, "Subcontractors", "Maria Lopez"), (2, COGS, "Subcontractors", "Maria Lopez"),
+                                          (5, COGS, "Direct Labor", "Maria Lopez")]),
+        ("SQ DEP", [(0, REVENUE, "Cleaning Revenue", "Square"), (6, REVENUE, "Cleaning Revenue", "Square")]),
+    ])
 
 
 # ── Casa Lupita Taqueria (restaurante) ──────────────────────────────────────────────────────────
@@ -294,8 +348,11 @@ def _lupita() -> Book:
     b.add(weekly(1), "DOORDASH INC PAYMENT", 290, 810, inflow=True)
     b.add(weekly(3), "SYSCO SAN FRANCISCO INC", 620, 1480)
     b.add(weekly(5), "RESTAURANT DEPOT #12 SAN LEANDRO", 190, 610)
-    b.add(spread(8, b.rng), "SAFEWAY #1711 OAKLAND CA", 22, 142)
-    b.add(spread(5, b.rng), "WALMART SUPERCENTER #2341", 18, 96)
+    # Supermercado a los dos lados de la nota de los $50 (8-oct: con un solo rango salían todas arriba).
+    b.add(spread(4, b.rng, START, date(2026, 9, 25)), "SAFEWAY #1711 OAKLAND CA", 18, 46)
+    b.add(spread(4, b.rng, date(2026, 7, 6), END), "SAFEWAY #1711 OAKLAND CA", 58, 142)
+    b.add(spread(3, b.rng), "WALMART SUPERCENTER #2341", 14, 44)
+    b.add(spread(2, b.rng, date(2026, 7, 20), END), "WALMART SUPERCENTER #2341", 64, 96)
     b.add(spread(4, b.rng), "SMART & FINAL #412", 35, 180)
     b.add(monthly(1), "ACH DEBIT MISSION ST PROPERTIES RENT", 3800)
     b.add(monthly(16), "PGANDE WEB ONLINE PG&E", 410, 690)
@@ -319,7 +376,15 @@ _LUPITA_RULES = [
 
 
 def _plant_lupita(session, company, rules, tagged, owner) -> None:
-    pass  # todo lo plantado aquí vive en las filas, las reglas y DEMO_NOTES
+    _history(session, company, owner, [
+        ("RESTAURANT DEPOT", [(0, COGS, "Food Purchases", "Restaurant Depot"), (4, COGS, "Food Purchases", "Restaurant Depot"),
+                              (9, COGS, "Paper & Packaging", "Restaurant Depot")]),
+        ("CINTAS", [(0, OPEX, "Linens", "Cintas"), (3, OPEX, "Linens", "Cintas")]),
+        ("ADP PAYROLL", [(0, OPEX, "Kitchen Wages", "ADP"), (3, OPEX, "Kitchen Wages", "ADP")]),
+        ("ECOLAB", [(0, OPEX, "Contract Cleaning", "Ecolab"), (2, OPEX, "Repairs & Maintenance", "Ecolab")]),
+        ("ACH DEBIT MISSION ST", [(0, OPEX, "Rent", "Mission St Properties"), (1, OPEX, "Rent", "Mission St Properties")]),
+        ("SMART & FINAL", [(1, COGS, "Food Purchases", "Smart & Final")]),
+    ])
 
 
 BOOKS = [

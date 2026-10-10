@@ -19,7 +19,7 @@ function fmtDay(iso: string, lang: string): string {
   return new Date(y, m - 1, d).toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function BookNotes() {
+export default function BookNotes({ compact = false }: { compact?: boolean }) {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || "en").split("-")[0];
   const [notes, setNotes] = useState<BookNote[] | null>(null);
@@ -133,17 +133,34 @@ export default function BookNotes() {
     </div>
   );
 
+  // Compacta (pestaña Auditoría, 8-oct): sin notas, una sola línea; nada de bloques grandes vacíos.
+  const empty = notes !== null && notes.length === 0 && editing === null;
+  if (compact && empty) {
+    return (
+      <div className="bg-white rounded-xl border border-slate-200 px-3 py-2 flex items-center gap-3 text-sm">
+        <span className="font-medium text-slate-800 shrink-0">{t("notes.title")}</span>
+        <span className="text-xs text-slate-400 truncate">{t("notes.emptyShort")}</span>
+        {error && <span className="text-xs text-rose-700">{error}</span>}
+        <button onClick={startNew} className="ms-auto shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-800 hover:bg-emerald-50">
+          {t("notes.add")}
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-3">
+    <div className={compact ? "bg-white rounded-xl border border-slate-200 px-3 py-2.5 space-y-2"
+                            : "bg-white rounded-2xl shadow-sm border border-slate-100 p-4 space-y-3"}>
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
-          <h2 className="font-semibold text-slate-900">{t("notes.title")}</h2>
-          <p className="text-sm text-slate-500">{t("notes.subtitle")}</p>
+          <h2 className={compact ? "text-sm font-semibold text-slate-900" : "font-semibold text-slate-900"}>{t("notes.title")}</h2>
+          {!compact && <p className="text-sm text-slate-500">{t("notes.subtitle")}</p>}
         </div>
         {editing === null && (
           <button onClick={startNew}
-                  className="px-4 py-2 rounded-xl font-semibold text-white shadow-sm shrink-0"
-                  style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
+                  className={compact ? "px-2.5 py-1 rounded-lg text-xs font-semibold text-emerald-800 hover:bg-emerald-50 shrink-0"
+                                     : "px-4 py-2 rounded-xl font-semibold text-white shadow-sm shrink-0"}
+                  style={compact ? undefined : { background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
             {t("notes.add")}
           </button>
         )}

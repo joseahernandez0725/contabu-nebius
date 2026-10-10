@@ -316,9 +316,13 @@ export interface Rule {
   // Ventana de fechas (4-oct): la regla solo vale entre estos días, INCLUSIVOS ("YYYY-MM-DD"; null = sin límite).
   valid_from?: string | null;
   valid_to?: string | null;
+  // Condición de monto (8-oct): la MAGNITUD del movimiento entre estos dos, inclusivos (null = sin límite).
+  amount_min?: number | null;
+  amount_max?: number | null;
   // Transparencia del orden (4-oct): en qué lugar corre de verdad, en cuántas filas gana, y con qué
   // otras reglas caza los mismos movimientos (a quién le gana y contra quién pierde, con cuántas filas).
   order?: number | null;
+  origin?: "agent" | "import" | null;  // de dónde salió (8-oct): la propuso el agente, o vino de un archivo
   wins?: number;
   lost_to?: RuleClash[];
   beats?: RuleClash[];
@@ -356,6 +360,7 @@ export async function getRules(): Promise<Rule[]> {
 export async function createRule(payload: {
   match_text: string; account_type: string; category: string; subcategory?: string;
   valid_from?: string | null; valid_to?: string | null; priority?: number | null;
+  amount_min?: number | null; amount_max?: number | null;
 }): Promise<{ id: number; applied: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules`, {
     method: "POST",
@@ -370,7 +375,8 @@ export async function createRule(payload: {
 export async function updateRule(
   id: number,
   payload: { account_type?: string; category?: string; subcategory?: string; priority?: number | null;
-             style?: RuleStyle | null; valid_from?: string | null; valid_to?: string | null },
+             style?: RuleStyle | null; valid_from?: string | null; valid_to?: string | null;
+             amount_min?: number | null; amount_max?: number | null },
 ): Promise<{ applied: number; reassigned: number; released?: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}`, {
     method: "PATCH",
@@ -515,6 +521,8 @@ export interface RuleImportRow {
   status: string;             // ok | exists | duplicate | needs_section | bad_date
   valid_from?: string | null; // columnas "From"/"To" de la exportación (ventana de fechas)
   valid_to?: string | null;
+  amount_min?: number | null; // columnas "Min amount"/"Max amount" (condición de monto)
+  amount_max?: number | null;
 }
 
 export async function importRules(
@@ -534,7 +542,8 @@ export async function importRules(
 // Crea las reglas APROBADAS por el dueño y las aplica a lo existente.
 export async function applyRuleProposals(
   rules: { keyword: string; account_type: string; category: string; subcategory?: string;
-           priority?: number | null; valid_from?: string | null; valid_to?: string | null }[],
+           priority?: number | null; valid_from?: string | null; valid_to?: string | null;
+           origin?: "agent" | "import"; amount_min?: number | null; amount_max?: number | null }[],
 ): Promise<{ created: number; applied: number }> {
   const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals/apply`, {
     method: "POST",
@@ -865,10 +874,14 @@ export interface FormulaProposal {
   web_evidence: WebEvidence[];
   /** Avisos calculados por el código (no rechazan la fila): p. ej. "web_says_personal". */
   warnings: string[];
+  amount_min: number | null; amount_max: number | null;
+  notes_used: { id: number; text: string }[];
+  corrections_used: number;
   test: {
     changes: number; changed_ids: number[]; by_pair: { from: string; to: string; rows: number }[];
     protected_manual: number; agrees_with_corrections: number; disagrees_with_corrections: number;
     realigned: number;
+    changed: (TxSummary & { from: string; to: string })[];
   };
 }
 
@@ -926,8 +939,10 @@ async function agentsFetch<T>(path: string, init: RequestInit = {}): Promise<T> 
   return res.json();
 }
 
-export const runFormulaDrafter = (lang: string) =>
-  agentsFetch<DraftResponse>("/draft", { method: "POST", body: JSON.stringify({ lang }) });
+export const runFormulaDrafter = (lang: string, focusTxIds?: number[]) =>
+  agentsFetch<DraftResponse>("/draft", {
+    method: "POST", body: JSON.stringify({ lang, focus_tx_ids: focusTxIds ?? null }),
+  });
 
 export const runReviewer = (lang: string) =>
   agentsFetch<ReviewResponse>("/review", { method: "POST", body: JSON.stringify({ lang }) });
@@ -936,3 +951,65 @@ export const runMerchantVerifier = () =>
   agentsFetch<VerifyResponse>("/verify", { method: "POST", body: JSON.stringify({}) });
 
 export const getAgentUsage = () => agentsFetch<AgentUsageSummary>("/usage");
+
+
+// --- LA REVISIÓN DEL LIBRO (FASE 11, Auditoría / IA · 8-oct-2026): la lista ÚNICA de hallazgos ---
+// guardados (auditor + veredicto del ① + evidencia del ②), lo Pendiente agrupado y el encabezado.
+export interface TxSummary {
+  id: number; merchant: string; date: string; amount: number; is_inflow: boolean; account: string | null;
+  description: string; category: string | null; account_type: string | null; source: string | null;
+}
+
+export interface BoardFinding {
+  id: number; key: string; type: string; severity: "high" | "medium" | "low" | "info"; merchant: string | null;
+  payload: Record<string, unknown>; status: string;
+  agent_verdict: "problem" | "legitimate" | "unsure" | null; agent_observation: string | null;
+  agent_reviewed_at: string | null;
+  web: { business_type: string; confidence: string | null; source_url: string | null; source_domain: string | null } | null;
+  transactions: TxSummary[]; rows: number; is_info: boolean;
+}
+
+export interface PendingGroup {
+  merchant: string; count: number; total: number; direction: "in" | "out"; first: string; last: string;
+  accounts: string[]; person_payment: boolean;
+  web: BoardFinding["web"]; transactions: TxSummary[];
+}
+
+export interface AuditBoard {
+  stats: { to_review: number; info: number; problems: number; pending: number; pending_merchants: number;
+           reviewed_at: string | null; reviewed_seconds_ago: number | null; silenced: number };
+  findings: BoardFinding[];
+  pending_groups: PendingGroup[];
+}
+
+async function auditFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API}/api/companies/${cid()}${path}`, {
+    ...init,
+    headers: { ...(await authHeaders()), "Content-Type": "application/json", ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j?.detail).catch(() => null);
+    throw new AgentError(detail?.code ?? (res.status === 403 ? "forbidden" : "agent_error"));
+  }
+  return res.json();
+}
+
+export const getAuditBoard = () => auditFetch<AuditBoard>("/audit/board");
+export const getAuditSummary = () => auditFetch<AuditBoard["stats"]>("/audit/summary");
+
+/** "Está bien" (no vuelve a salir) o reabrir. */
+export const resolveFinding = (id: number, status: "ok" | "open", note?: string) =>
+  auditFetch<{ id: number; status: string }>(`/audit/findings/${id}/resolve`, {
+    method: "POST", body: JSON.stringify({ status, note: note ?? null }),
+  });
+
+export type DismissReason = "wrong_category" | "too_broad" | "one_off" | "not_now" | "other";
+
+/** Descartar una fila del ④ con su motivo: no la vuelve a proponer. */
+export const dismissProposal = (p: FormulaProposal, reason_code: DismissReason, reason_text?: string) =>
+  auditFetch<{ id: number }>("/agents/dismissals", {
+    method: "POST",
+    body: JSON.stringify({ keyword: p.keyword, valid_from: p.valid_from, valid_to: p.valid_to,
+                           account_type: p.account_type, category: p.category, reason_code,
+                           reason_text: reason_text || null }),
+  });

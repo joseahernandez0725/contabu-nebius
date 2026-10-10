@@ -31,14 +31,22 @@ VALID = [
         "explanation": "El dueño estuvo de vacaciones en Europa del 3 al 17-ago (nota del bookkeeper)."}),
     ("comercio con signos reales (LOWE'S) y prioridad", {
         "keyword": "LOWE'S", "priority": 3, "account_type": "COGS", "category": "Materials"}),
+    ("condición de monto (8-oct, ya la entiende el motor)", {
+        "keyword": "STARBUCKS", "amount_min": 10, "account_type": "NON_PL", "category": "Owner Draw"}),
     ("comodín del motor", {
         "keyword": "THE HOME DEPOT*ANTIOCH", "account_type": "COGS", "category": "Materials"}),
 ]
 
 INVALID = [
-    ("campo que no existe (monto, todavía no lo entiende el motor)",
-     {"keyword": "STARBUCKS", "account_type": "OPERATING_EXPENSE", "category": "Meals", "amount_min": 50},
-     "unknown_field:amount_min"),
+    ("campo que el motor todavía no entiende (cuenta)",
+     {"keyword": "STARBUCKS", "account_type": "OPERATING_EXPENSE", "category": "Meals", "account": "X"},
+     "unknown_field:account"),
+    ("monto negativo",
+     {"keyword": "STARBUCKS", "amount_min": -5, "account_type": "NON_PL", "category": "Owner Draw"},
+     "bad_value:amount_min"),
+    ("rango de monto al revés",
+     {"keyword": "STARBUCKS", "amount_min": 100, "amount_max": 10, "account_type": "NON_PL", "category": "Owner Draw"},
+     "bad_amount_range"),
     ("operador inventado",
      {"keyword": "STARBUCKS", "operator": "regex", "account_type": "OPERATING_EXPENSE", "category": "Meals"},
      "unknown_field:operator"),

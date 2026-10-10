@@ -89,10 +89,13 @@ def corrections(session: Session, company_id: int) -> list[Correction]:
     rows = session.exec(select(CategorizationChange).where(
         CategorizationChange.company_id == company_id, CategorizationChange.via == "manual")).all()
     per_tx = Counter(r.transaction_id for r in rows)
+    # Una corrección TRAMPA (`reason="planted_mistake"`, Movimientos 8-oct: el gimnasio camuflado) no es
+    # verdad: si el agente la "reproduce", aprendió el error. No cuenta para ninguno de los dos.
+    trap = {r.transaction_id for r in rows if (r.reason or "") == "planted_mistake"}
     out = []
     for tx_id, n in per_tx.items():
         tx = session.get(Transaction, tx_id)
-        if tx is None or tx.source != "manual" or tx.account_type is None or not tx.category:
+        if tx is None or tx.source != "manual" or tx.account_type is None or not tx.category or tx_id in trap:
             continue
         out.append(Correction(tx=tx, truth=(tx.account_type.value, tx.category), changes=n))
     return out

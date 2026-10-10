@@ -136,6 +136,8 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/agents/draft"): {"lang": "es"},
     ("POST", "/api/companies/{company_id}/agents/review"): {"lang": "es"},
     ("POST", "/api/companies/{company_id}/agents/verify"): {},
+    ("POST", "/api/companies/{company_id}/audit/findings/{finding_id}/resolve"): {"status": "ok"},
+    ("POST", "/api/companies/{company_id}/agents/dismissals"): {"keyword": "PERMCHECK"},
     # "__TX__" se reemplaza por el id de la transacción REAL de prueba: con una lista vacía el
     # endpoint corta con 422 ("no transactions") ANTES de mirar el permiso, y no probaría nada.
     ("POST", "/api/transactions/clarify-group"): {"transaction_ids": ["__TX__"], "answer": "x"},

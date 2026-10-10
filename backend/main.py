@@ -48,7 +48,7 @@ from reports import pivot, pivot_leaves, income_statement
 import bank
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
-    in_window, is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
+    in_amount, in_window, is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
     place_priority, reapply_rule_precedence, redecide_transaction, rule_overlaps, simulate_delete,
     suggest_keyword, normalize,
 )
@@ -132,6 +132,8 @@ class RuleUpdate(BaseModel):
     style: Optional[dict] = None       # resaltado de la fila en la hoja de Reglas: {bg, bold, italic}
     valid_from: Optional[date] = None  # ventana de fechas, INCLUSIVA (null = sin límite por ese lado)
     valid_to: Optional[date] = None
+    amount_min: Optional[Decimal] = None  # monto, INCLUSIVO y sobre la magnitud (null = sin límite)
+    amount_max: Optional[Decimal] = None
 
 
 class RuleCreate(BaseModel):
@@ -144,6 +146,8 @@ class RuleCreate(BaseModel):
     priority: Optional[int] = None
     valid_from: Optional[date] = None  # ventana de fechas (4-oct, "la fórmula del libro")
     valid_to: Optional[date] = None
+    amount_min: Optional[Decimal] = None  # monto (8-oct), INCLUSIVO y sobre la magnitud
+    amount_max: Optional[Decimal] = None
 
 
 def _valid_window(valid_from: Optional[date], valid_to: Optional[date]) -> None:
@@ -152,16 +156,32 @@ def _valid_window(valid_from: Optional[date], valid_to: Optional[date]) -> None:
         raise HTTPException(status_code=422, detail="la fecha de inicio va después de la de fin")
 
 
-def _same_rule(r: CategoryRule, match_text: str, valid_from: Optional[date], valid_to: Optional[date]) -> bool:
-    """Dos reglas son la MISMA si tienen la misma palabra clave y la misma ventana de fechas: así
-    conviven "STARBUCKS" y "STARBUCKS del 3 al 17-ago"."""
+def _valid_amount(amount_min: Optional[Decimal], amount_max: Optional[Decimal]) -> None:
+    """El monto es una magnitud (≥ 0) y el rango no puede ir al revés."""
+    if any(a is not None and a < 0 for a in (amount_min, amount_max)):
+        raise HTTPException(status_code=422, detail="el monto de una regla va sin signo (≥ 0)")
+    if amount_min is not None and amount_max is not None and amount_min > amount_max:
+        raise HTTPException(status_code=422, detail="el monto mínimo va después del máximo")
+
+
+def _money(v) -> Optional[Decimal]:
+    return None if v is None else Decimal(str(v)).quantize(Decimal("0.01"))
+
+
+def _same_rule(r: CategoryRule, match_text: str, valid_from: Optional[date], valid_to: Optional[date],
+               amount_min=None, amount_max=None) -> bool:
+    """Dos reglas son la MISMA si tienen la misma palabra clave y las mismas condiciones (fechas y
+    monto): así conviven "STARBUCKS", "STARBUCKS del 3 al 17-ago" y "SAFEWAY más de $50"."""
     return (normalize(r.match_text) == normalize(match_text)
-            and (r.valid_from, r.valid_to) == (valid_from, valid_to))
+            and (r.valid_from, r.valid_to) == (valid_from, valid_to)
+            and (_money(r.amount_min), _money(r.amount_max)) == (_money(amount_min), _money(amount_max)))
 
 
 def _rule_out(r: CategoryRule) -> dict:
     return {"valid_from": r.valid_from.isoformat() if r.valid_from else None,
-            "valid_to": r.valid_to.isoformat() if r.valid_to else None}
+            "valid_to": r.valid_to.isoformat() if r.valid_to else None,
+            "amount_min": float(r.amount_min) if r.amount_min is not None else None,
+            "amount_max": float(r.amount_max) if r.amount_max is not None else None}
 
 
 class PnlReportCreate(BaseModel):
@@ -906,7 +926,7 @@ def list_rules(
     for r in rules:
         # Lo escrito a mano NO cuenta: está desconectado de las reglas (Jose, 3-oct).
         hit = [t for t in txs if t.source != "manual"
-               and match_rule([r], matchable_text(t.description, t.description_extra), t.date) is not None]
+               and match_rule([r], matchable_text(t.description, t.description_extra), t.date, t.amount) is not None]
         matches = len(hit)
         inflow = sum(1 for t in hit if t.is_inflow)
         # Hacia dónde va el dinero de lo que caza: así el editor de categorías ofrece primero las
@@ -919,6 +939,7 @@ def list_rules(
             "direction": direction,
             "priority": r.priority, "style": r.style, **_rule_out(r),
             "order": order.get(r.id),  # None = no corre (sin sección del P&L)
+            "origin": r.origin,        # "agent" | "import" | None
             "wins": overlaps.get(r.id, {}).get("wins", 0),
             "lost_to": clash(overlaps[r.id]["lost_to"]) if r.id in overlaps else [],
             "beats": clash(overlaps[r.id]["beats"]) if r.id in overlaps else [],
@@ -936,6 +957,8 @@ class RulePreviewIn(BaseModel):
     transaction_id: Optional[int] = None
     valid_from: Optional[date] = None  # con ventana: qué cazaría SOLO entre esas fechas
     valid_to: Optional[date] = None
+    amount_min: Optional[Decimal] = None  # con monto: qué cazaría SOLO en ese rango
+    amount_max: Optional[Decimal] = None
 
 
 @app.post("/api/companies/{company_id}/rules/preview")
@@ -966,11 +989,13 @@ def preview_rule(
     if len(normalize(keyword)) < 2:
         return out
     _valid_window(payload.valid_from, payload.valid_to)
+    _valid_amount(payload.amount_min, payload.amount_max)
     probe = CategoryRule(id=-1, scope=RuleScope.COMPANY, company_id=company_id, match_text=keyword,
                          account_type=AccountType.OPERATING_EXPENSE, category="-",
-                         valid_from=payload.valid_from, valid_to=payload.valid_to)
+                         valid_from=payload.valid_from, valid_to=payload.valid_to,
+                         amount_min=payload.amount_min, amount_max=payload.amount_max)
     for t in txs:
-        if match_rule([probe], matchable_text(t.description, t.description_extra), t.date) is None:
+        if match_rule([probe], matchable_text(t.description, t.description_extra), t.date, t.amount) is None:
             continue
         out["matches"] += 1
         out["pending"] += t.category is None
@@ -982,11 +1007,11 @@ def preview_rule(
                                     "category": t.category, "source": t.source})
     if seed is not None:
         out["seed_matched"] = match_rule([probe], matchable_text(seed.description, seed.description_extra),
-                                          seed.date) is not None
+                                          seed.date, seed.amount) is not None
     dup = session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
                        .where(CategoryRule.scope == RuleScope.COMPANY)).all()
     for r in dup:
-        if _same_rule(r, keyword, payload.valid_from, payload.valid_to):
+        if _same_rule(r, keyword, payload.valid_from, payload.valid_to, payload.amount_min, payload.amount_max):
             out["duplicate"] = {"id": r.id, "match_text": r.match_text, "category": r.category}
             break
     return out
@@ -1006,14 +1031,16 @@ def create_rule(
     if len(match_text) < 2:
         raise HTTPException(status_code=422, detail="keyword demasiado corto")
     _valid_window(payload.valid_from, payload.valid_to)
+    _valid_amount(payload.amount_min, payload.amount_max)
     same = session.exec(
         select(CategoryRule)
         .where(CategoryRule.scope == RuleScope.COMPANY)
         .where(CategoryRule.company_id == company_id)
         .where(CategoryRule.match_text == match_text)
     ).all()
-    if any(_same_rule(r, match_text, payload.valid_from, payload.valid_to) for r in same):
-        raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas fechas")
+    if any(_same_rule(r, match_text, payload.valid_from, payload.valid_to, payload.amount_min, payload.amount_max)
+           for r in same):
+        raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas condiciones")
     chart = categories_for_company(session, company_id, company.sector)  # sector + propias
     if payload.category not in (chart.get(payload.account_type.value) or []):
         raise HTTPException(status_code=422, detail="categoría fuera del plan de cuentas")
@@ -1022,6 +1049,7 @@ def create_rule(
         account_type=payload.account_type, category=payload.category,
         subcategory=(payload.subcategory or "").strip() or None,
         valid_from=payload.valid_from, valid_to=payload.valid_to,
+        amount_min=_money(payload.amount_min), amount_max=_money(payload.amount_max),
     )
     session.add(rule)
     if payload.priority is not None:
@@ -1071,20 +1099,27 @@ def update_rule(
         clean = {"bg": bg if isinstance(bg, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", bg) else None,
                  "bold": bool(st.get("bold")), "italic": bool(st.get("italic"))}
         data["style"] = clean if (clean["bg"] or clean["bold"] or clean["italic"]) else None
-    if "valid_from" in data or "valid_to" in data:
+    if data.keys() & {"valid_from", "valid_to", "amount_min", "amount_max"}:
         vf = data.get("valid_from", rule.valid_from)
         vt = data.get("valid_to", rule.valid_to)
+        amin = _money(data.get("amount_min", rule.amount_min))
+        amax = _money(data.get("amount_max", rule.amount_max))
+        for k, v in (("amount_min", amin), ("amount_max", amax)):
+            if k in data:
+                data[k] = v
         _valid_window(vf, vt)
+        _valid_amount(amin, amax)
         others = session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
                               .where(CategoryRule.id != rule.id)).all()
-        if any(_same_rule(r, rule.match_text, vf, vt) for r in others):
-            raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas fechas")
-        # Cambiar la ventana puede SOLTAR filas que ya no caen en ella: vuelven al motor (otra regla,
-        # transferencia o Pendiente). Lo manual no se toca.
+        if any(_same_rule(r, rule.match_text, vf, vt, amin, amax) for r in others):
+            raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas condiciones")
+        # Cambiar las condiciones puede SOLTAR filas que ya no caen en ellas: vuelven al motor (otra
+        # regla, transferencia o Pendiente). Lo manual no se toca.
+        cond = CategoryRule(match_text=rule.match_text, category="-", scope=RuleScope.COMPANY,
+                            valid_from=vf, valid_to=vt, amount_min=amin, amount_max=amax)
         released = [t for t in session.exec(select(Transaction).where(Transaction.company_id == company_id)
                                             .where(Transaction.matched_rule_id == rule.id)).all()
-                    if t.source != "manual" and not in_window(CategoryRule(match_text=rule.match_text, category="-", scope=RuleScope.COMPANY,
-                                                  valid_from=vf, valid_to=vt), t.date)]
+                    if t.source != "manual" and not (in_window(cond, t.date) and in_amount(cond, t.amount))]
     else:
         released = []
     moved_priority = bool(data.pop("_priority", False))
@@ -1519,6 +1554,7 @@ def delete_book_note(company_id: int, note_id: int, user: User = Depends(current
 class AgentRunIn(BaseModel):
     lang: Optional[str] = "es"          # idioma de las explicaciones (el de la interfaz)
     reasoning: Optional[bool] = False   # dejar razonar al modelo (más tokens; ver nemotron.py)
+    focus_tx_ids: Optional[list[int]] = None   # ④: una regla para ESTE grupo de Pendientes
 
 
 def _agent_error(e: Exception) -> HTTPException:
@@ -1539,7 +1575,7 @@ def run_formula_drafter(company_id: int, payload: AgentRunIn, user: User = Depen
     company = owned_company(company_id, user, session, write=True)
     try:
         res = agents.draft(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
-                           user_id=user.id)
+                           user_id=user.id, focus_tx_ids=payload.focus_tx_ids)
     except Exception as e:
         raise _agent_error(e)
     return {"outcome": res.outcome, "calls": res.calls,
@@ -1577,6 +1613,64 @@ def run_merchant_verifier(company_id: int, user: User = Depends(current_user),
         raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
     return {"outcome": res.outcome, "items": res.items, "searched": res.searched,
             "from_cache": res.from_cache, "skipped": dict(res.skipped), "credits": res.credits}
+
+
+# ── La revisión del libro (FASE 11, 8-oct): la lista ÚNICA de hallazgos guardados + lo Pendiente
+# agrupado + el encabezado de estado. Lógica en `book_review.py`. ──
+
+class FindingResolveIn(BaseModel):
+    status: str                      # "ok" (está bien, no vuelve a salir) | "open" (reabrir)
+    note: Optional[str] = None
+
+
+class DismissalIn(BaseModel):
+    keyword: str
+    valid_from: Optional[date] = None
+    valid_to: Optional[date] = None
+    account_type: Optional[str] = None
+    category: Optional[str] = None
+    reason_code: str = "other"       # wrong_category | too_broad | one_off | not_now | other
+    reason_text: Optional[str] = None
+
+
+@app.get("/api/companies/{company_id}/audit/board")
+def audit_board(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    import book_review
+    company = console_company(company_id, user, session)
+    return book_review.board(session, company)
+
+
+@app.get("/api/companies/{company_id}/audit/summary")
+def audit_summary(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    import book_review
+    company = console_company(company_id, user, session)
+    return book_review.summary(session, company)
+
+
+@app.post("/api/companies/{company_id}/audit/findings/{finding_id}/resolve")
+def resolve_finding(company_id: int, finding_id: int, payload: FindingResolveIn,
+                    user: User = Depends(current_user), session: Session = Depends(get_session)):
+    import book_review
+    company = owned_company(company_id, user, session, write=True)
+    try:
+        f = book_review.resolve(session, company, finding_id, payload.status, user_id=user.id, note=payload.note)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="finding not found")
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail={"code": str(e)})
+    return {"id": f.id, "status": f.status}
+
+
+@app.post("/api/companies/{company_id}/agents/dismissals")
+def dismiss_proposal(company_id: int, payload: DismissalIn, user: User = Depends(current_user),
+                     session: Session = Depends(get_session)):
+    import book_review
+    company = owned_company(company_id, user, session, write=True)
+    try:
+        d = book_review.dismiss(session, company, payload.model_dump(), user_id=user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail={"code": str(e)})
+    return {"id": d.id}
 
 
 @app.get("/api/companies/{company_id}/agents/usage")
@@ -1653,6 +1747,10 @@ class RuleProposalApply(BaseModel):
     priority: Optional[int] = None     # ídem (columna "Priority" de la exportación)
     valid_from: Optional[date] = None  # ventana de fechas (columnas "From"/"To" de la exportación)
     valid_to: Optional[date] = None
+    # De dónde sale (8-oct): "agent" = la propuso el agente ④ (la F11 lo manda al aprobar) · "import".
+    origin: Optional[str] = None
+    amount_min: Optional[Decimal] = None  # monto (columnas "Min amount"/"Max amount" de la exportación)
+    amount_max: Optional[Decimal] = None
 
 
 class RuleProposalsApply(BaseModel):
@@ -1676,10 +1774,15 @@ def apply_rule_proposals(
     for p in payload.rules:
         if p.valid_from and p.valid_to and p.valid_from > p.valid_to:
             continue  # ventana al revés: no caza nada
+        if (p.amount_min is not None and p.amount_min < 0) or (p.amount_max is not None and p.amount_max < 0) or \
+                (p.amount_min is not None and p.amount_max is not None and p.amount_min > p.amount_max):
+            continue  # monto inválido
         rule = create_company_rule(session, company_id, sector, p.keyword, p.account_type, p.category,
                                    (p.subcategory or "").strip() or None,
                                    p.priority if p.priority and p.priority >= 1 else None,
-                                   p.valid_from, p.valid_to)
+                                   p.valid_from, p.valid_to,
+                                   p.origin if p.origin in ("agent", "import") else None,
+                                   _money(p.amount_min), _money(p.amount_max))
         if rule is not None:
             created += 1
             session.flush()  # asigna id para apply_rule_to_transactions
@@ -1732,11 +1835,15 @@ async def import_rules_preview(
     # "From"/"To" (la ventana de fechas) también salen de nuestra exportación y se leen por nombre.
     from_col = next((h for h in headers if h.strip().lower() in ("from", "valid from")), "")
     to_col = next((h for h in headers if h.strip().lower() in ("to", "valid to")), "")
-    existing = [(r.match_text, r.valid_from, r.valid_to) for r in load_rules(session, company_id, sector)]
+    # "Min amount"/"Max amount" (la condición de monto, 8-oct): también por nombre.
+    min_col = next((h for h in headers if h.strip().lower() in ("min amount", "amount min", "monto mín", "monto min")), "")
+    max_col = next((h for h in headers if h.strip().lower() in ("max amount", "amount max", "monto máx", "monto max")), "")
+    existing = [(r.match_text, r.valid_from, r.valid_to, _money(r.amount_min), _money(r.amount_max))
+                for r in load_rules(session, company_id, sector)]
     preview = build_import_rules(
         headers, rows, mapping.keyword_column, mapping.category_column,
         mapping.account_type_column, sector, existing, mapping.subcategory_column, priority_col,
-        from_col, to_col,
+        from_col, to_col, min_col, max_col,
     )
     return {
         "mapping": {
@@ -1766,7 +1873,7 @@ def cleanup_rules(
     ).all()
     removed = 0
     for r in rules:
-        if not any(match_rule([r], matchable_text(t.description, t.description_extra), t.date) is not None for t in txs):
+        if not any(match_rule([r], matchable_text(t.description, t.description_extra), t.date, t.amount) is not None for t in txs):
             session.delete(r)
             removed += 1
     session.commit()
@@ -2085,7 +2192,7 @@ def update_transaction(
     if rule_action == "follow_rule":
         company = session.get(Company, tx.company_id)
         rules = load_rules(session, tx.company_id, company.sector if company else "")
-        rule = match_rule(rules, matchable_text(tx.description, tx.description_extra), tx.date)
+        rule = match_rule(rules, matchable_text(tx.description, tx.description_extra), tx.date, tx.amount)
         if rule is None:
             raise HTTPException(
                 status_code=404,

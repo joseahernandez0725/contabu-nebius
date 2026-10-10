@@ -385,7 +385,7 @@ def ingest_parsed(
     if categorize:
         for idx, row in enumerate(parsed):
             desc = row[1]
-            rule = match_rule(rules, desc, row[0])  # la fecha: ventana de la regla
+            rule = match_rule(rules, desc, row[0], abs(row[2]))  # fecha y monto: condiciones de la regla
             if rule is not None:
                 rule_hits[idx] = rule
                 continue

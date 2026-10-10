@@ -16,10 +16,11 @@ bookkeeper la vea.
 - Una fila que no cumple se DESCARTA y se cuenta (el porcentaje de rechazo es parte de la medición).
   No se "arregla" en silencio.
 
-Condiciones que el motor ya entiende (y por eso las únicas permitidas hoy): palabra clave (con `*`),
-ventana de fechas (`valid_from`/`valid_to`), prioridad. Monto, cuenta y entrada/salida NO se aceptan
-todavía: el motor las ignoraría y una fila aprobada valdría para más movimientos de los que dice.
-Se agregan cuando Movimientos las construya en el motor (📬 Buzón, 4-oct).
+Condiciones que el motor ya entiende (y por eso las únicas permitidas): palabra clave (con `*`),
+ventana de fechas (`valid_from`/`valid_to`), prioridad y, desde el 8-oct, **monto** (`amount_min` /
+`amount_max`, inclusivos, sobre la magnitud; Movimientos lo puso en el motor). Cuenta y entrada/salida
+NO se aceptan todavía: el motor las ignoraría y una fila aprobada valdría para más movimientos de los
+que dice. Se agregan cuando Movimientos las construya (📬 Buzón).
 
 Determinista, sin IA. La simulación usa las MISMAS funciones del motor (`rules.match_rule` con la
 fecha, `rules.classify_transfer`): no hay una segunda lógica de categorización.
@@ -28,6 +29,7 @@ fecha, `rules.classify_transfer`): no hay una segunda lógica de categorización
 import re
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -58,6 +60,8 @@ class FormulaRow(BaseModel):
     valid_from: Optional[date] = None                        # ventana INCLUSIVA (rules.in_window)
     valid_to: Optional[date] = None
     priority: Optional[int] = Field(default=None, ge=1, le=999)
+    amount_min: Optional[Decimal] = Field(default=None, ge=0, le=10_000_000)   # magnitud, inclusivo
+    amount_max: Optional[Decimal] = Field(default=None, ge=0, le=10_000_000)
     # ── Resultado ──
     account_type: AccountType
     category: str = Field(min_length=1, max_length=80)
@@ -141,6 +145,8 @@ def check_row(raw: dict, ctx: BookContext) -> Checked:
             break
     if row.valid_from and row.valid_to and row.valid_from > row.valid_to:
         errors.append("bad_window")
+    if row.amount_min is not None and row.amount_max is not None and row.amount_min > row.amount_max:
+        errors.append("bad_amount_range")
     if set(row.from_notes) - ctx.note_ids:
         errors.append("unknown_note")
     if set(row.from_changes) - ctx.change_ids:
@@ -150,17 +156,22 @@ def check_row(raw: dict, ctx: BookContext) -> Checked:
         rule = to_rule(row, ctx.company.id)
         kw = normalize(row.keyword)
         if any(normalize(r.match_text) == kw and r.valid_from == row.valid_from and r.valid_to == row.valid_to
+               and _same_amount(r.amount_min, row.amount_min) and _same_amount(r.amount_max, row.amount_max)
                and r.category == row.category for r in ctx.rules):
             errors.append("duplicate_rule")
         result.matches = sum(
             1 for t in ctx.txs
-            if match_rule([rule], matchable_text(t.description, t.description_extra), t.date) is not None)
+            if match_rule([rule], matchable_text(t.description, t.description_extra), t.date, t.amount) is not None)
         if result.matches == 0:
             errors.append("matches_nothing")   # una fila muerta no se le muestra al bookkeeper
 
     result.errors = errors
     result.row = row if not errors else None
     return result
+
+
+def _same_amount(a, b) -> bool:
+    return (a is None and b is None) or (a is not None and b is not None and Decimal(str(a)) == Decimal(str(b)))
 
 
 def check_rows(raws: list, ctx: BookContext) -> list[Checked]:
@@ -177,6 +188,7 @@ def to_rule(row: FormulaRow, company_id: int) -> CategoryRule:
         account_type=row.account_type, category=row.category,
         subcategory=row.subcategory, priority=row.priority,
         valid_from=row.valid_from, valid_to=row.valid_to,
+        amount_min=row.amount_min, amount_max=row.amount_max,
     )
 
 
@@ -194,7 +206,8 @@ def decide(rules_sorted: list[CategoryRule], tx: Transaction) -> Decision:
     """Precedencia del motor (`ingestion._apply_categorization`): regla (con su ventana de fechas) →
     transferencia → Pendiente. Ignora `source="manual"` a propósito: la medición pregunta qué habría
     decidido el motor ANTES de que el bookkeeper corrigiera a mano."""
-    rule = match_rule(rules_sorted, matchable_text(tx.description, tx.description_extra), tx.date)
+    # Con el MONTO (4º argumento, 8-oct): sin él, una regla con condición de monto nunca caza.
+    rule = match_rule(rules_sorted, matchable_text(tx.description, tx.description_extra), tx.date, tx.amount)
     if rule is not None:
         return Decision(rule.account_type.value if rule.account_type else None, rule.category, "rule")
     transfer = classify_transfer(tx.description)

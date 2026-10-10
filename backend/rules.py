@@ -14,6 +14,7 @@ a igualdad, gana la de `match_text` más específico (más largo).
 import re
 from collections import Counter, defaultdict
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from sqlmodel import Session, select
@@ -27,17 +28,26 @@ from models import AccountType, CategoryRule, RuleScope, Transaction
 
 # Un CHEQUE es un método de pago, no una contraparte: cada cheque puede ser para algo distinto
 # (no se puede agrupar) y su descripción ("CHECK #1234") es única → NO sirve crear una regla.
-_CHECK_RE = re.compile(r"\b(check|chk|cheque|e-?check)\b", re.IGNORECASE)
+# CHEQUE = la descripción EMPIEZA con CHECK / CHEQUE ("CHECK 20169  04/01"). Corregido el 8-oct (bug
+# comprobado contra un extracto real de Chase): antes bastaba la palabra en cualquier lugar, y "CHK"
+# también contaba. Pero en Chase / Bank of America "CHK" es la CUENTA de origen ("Online Transfer to
+# CHK ...2930"), y "ATM CHECK DEPOSIT" es un DEPÓSITO: las dos se guardaban como cheque, con número
+# falso, y ninguna regla creada después las tocaba. La columna "Check or Slip #" de Chase tampoco
+# basta sola: también trae el número de boleta de los depósitos.
+_CHECK_RE = re.compile(r"^\s*(?:check|cheque)\b", re.IGNORECASE)
+# Las palabras de cheque que se QUITAN al armar la firma del comercio (`merchant_signature`). Se
+# conserva la lista vieja a propósito: cambiarla movería cómo se agrupan los comercios en el auditor.
+_CHECK_WORDS_RE = re.compile(r"\b(check|chk|cheque|e-?check)\b", re.IGNORECASE)
 
 
 def is_check(description: Optional[str]) -> bool:
-    """True si la descripción parece un cheque (no agrupar, no crear regla)."""
+    """True si la descripción es un cheque emitido (empieza con CHECK / CHEQUE): no agrupar, no
+    crear regla sin el texto del bookkeeper. "CHK" (la cuenta) y "ATM CHECK DEPOSIT" no lo son."""
     return bool(description and _CHECK_RE.search(description))
 
 
-# Número de cheque tras la palabra "check" (ej. "CHECK 20169  04/01" → "20169"). Pide dígitos
-# inmediatamente después → NO matchea "ATM CHECK DEPOSIT" (un depósito, no un cheque emitido).
-_CHECK_NUM_RE = re.compile(r"\b(?:check|chk|cheque|e-?check)\s*#?\s*(\d+)", re.IGNORECASE)
+# Número de cheque tras CHECK / CHEQUE al INICIO (ej. "CHECK 20169  04/01" → "20169").
+_CHECK_NUM_RE = re.compile(r"^\s*(?:check|cheque)\s*#?\s*(\d+)", re.IGNORECASE)
 
 
 def check_number(description: Optional[str]) -> Optional[str]:
@@ -99,7 +109,7 @@ def merchant_signature(description: Optional[str], tokens: int = 2) -> str:
     if not description:
         return ""
     text = description.upper()
-    text = _CHECK_RE.sub(" ", text)                       # cheques
+    text = _CHECK_WORDS_RE.sub(" ", text)                 # palabras de cheque (y CHK)
     text = re.sub(r"X{2,}\d+", " ", text)                 # cuentas enmascaradas XXXX2961
     text = re.sub(r"#\s*\d+", " ", text)                  # número de tienda / ref #1234
     text = re.sub(r"\bREF\s*#?\s*\w+", " ", text)         # REF# dinámico
@@ -162,7 +172,7 @@ def rule_order(r: CategoryRule) -> tuple:
     del bookkeeper, y "STARBUCKS del 3 al 17-ago" debe ganarle a "STARBUCKS COFFEE" sin ventana aunque
     esa tenga la palabra más larga (era la historia del demo y perdía sin aviso). La prioridad manual
     sigue mandando sobre todo: es la decisión más explícita que hay."""
-    return (r.priority is None, r.priority or 0, not has_window(r),
+    return (r.priority is None, r.priority or 0, not is_exception(r),
             -len(normalize(r.match_text)), _phrase(r.match_text))
 
 
@@ -194,7 +204,7 @@ def rule_overlaps(rules: list[CategoryRule], txs: list) -> dict[int, dict]:
     out = {r.id: {"wins": 0, "beats": Counter(), "lost_to": Counter()} for r in rules}
     for t in txs:
         text = matchable_text(t.description, t.description_extra)
-        hit = [r for r in rules if match_rule([r], text, t.date) is not None]
+        hit = [r for r in rules if match_rule([r], text, t.date, t.amount) is not None]
         if not hit:
             continue
         winner = hit[0]
@@ -212,7 +222,7 @@ def simulate_delete(rules: list[CategoryRule], rule_id: int, txs: list) -> dict:
     to_rules: Counter = Counter()
     to_transfer = to_pending = 0
     for t in txs:
-        w = match_rule(rest, matchable_text(t.description, t.description_extra), t.date)
+        w = match_rule(rest, matchable_text(t.description, t.description_extra), t.date, t.amount)
         if w is not None:
             to_rules[w.id] += 1
         elif classify_transfer(t.description) is not None:
@@ -224,6 +234,31 @@ def simulate_delete(rules: list[CategoryRule], rule_id: int, txs: list) -> dict:
 
 def has_window(r: CategoryRule) -> bool:
     return getattr(r, "valid_from", None) is not None or getattr(r, "valid_to", None) is not None
+
+
+def has_amount(r: CategoryRule) -> bool:
+    return getattr(r, "amount_min", None) is not None or getattr(r, "amount_max", None) is not None
+
+
+def is_exception(r: CategoryRule) -> bool:
+    """Una regla con CONDICIONES (fechas o monto) es una excepción explícita del bookkeeper: en el orden
+    va antes que las generales de su misma prioridad (8-oct: el monto se sumó a la ventana)."""
+    return has_window(r) or has_amount(r)
+
+
+def in_amount(r: CategoryRule, amount) -> bool:
+    """¿La MAGNITUD del movimiento cae en el rango de monto de la regla (INCLUSIVO)? Sin rango, siempre.
+    Con rango y sin monto conocido, no (como la ventana: una condición nunca se aplica a ciegas)."""
+    if not has_amount(r):
+        return True
+    if amount is None:
+        return False
+    a = abs(Decimal(str(amount)))
+    if r.amount_min is not None and a < Decimal(str(r.amount_min)):
+        return False
+    if r.amount_max is not None and a > Decimal(str(r.amount_max)):
+        return False
+    return True
 
 
 def in_window(r: CategoryRule, on: Optional[date]) -> bool:
@@ -272,7 +307,8 @@ def _matches(match_text: str, desc_padded: str) -> bool:
     return matched_any  # False si el keyword no tenía ninguna palabra real (ej. solo "*")
 
 
-def match_rule(rules: list[CategoryRule], description: str, on: Optional[date] = None) -> CategoryRule | None:
+def match_rule(rules: list[CategoryRule], description: str, on: Optional[date] = None,
+               amount=None) -> CategoryRule | None:
     """Primera regla (de la lista ya ordenada por prioridad) cuyo `match_text` aparece como
     **palabra/frase completa** en la descripción (con soporte de comodín `*`) y cuya **ventana de
     fechas** incluye `on` (la fecha del movimiento; ver `in_window`). `None` si ninguna aplica.
@@ -284,7 +320,7 @@ def match_rule(rules: list[CategoryRule], description: str, on: Optional[date] =
     if desc == "  ":
         return None
     for rule in rules:
-        if _matches(rule.match_text, desc) and in_window(rule, on):
+        if _matches(rule.match_text, desc) and in_window(rule, on) and in_amount(rule, amount):
             return rule
     return None
 
@@ -344,7 +380,7 @@ def find_rule_candidates(rules: list[CategoryRule], items: list[dict]) -> list[d
         sig = merchant_signature(desc)
         if not sig:
             continue  # cheque/genérico → no se agrupa por comercio
-        if match_rule(rules, desc, it.get("date")) is not None:
+        if match_rule(rules, desc, it.get("date"), it.get("amount")) is not None:
             continue  # ya cubierto por una regla existente
         # (Antes se saltaban gasolineras y supermercados: los decidía la banda de monto. Desde el
         # 1-oct ya no hay banda, así que ellos también necesitan regla → se proponen como cualquiera.)
@@ -397,7 +433,7 @@ def reapply_rule_precedence(session: Session, company_id: int, *,
     for t in txs:
         if is_check(t.description) and not t.description_extra:
             continue
-        winner = match_rule(rules, matchable_text(t.description, t.description_extra), t.date)
+        winner = match_rule(rules, matchable_text(t.description, t.description_extra), t.date, t.amount)
         if winner is None:
             continue
         sub = winner.subcategory.upper() if winner.subcategory else t.subcategory
@@ -423,7 +459,7 @@ def redecide_transaction(tx: Transaction, rules: list[CategoryRule]) -> None:
     Pendiente (el mismo orden que al entrar). Lo usan los avisos del banco (`bank.apply_modified`) y
     el cambio de la ventana de fechas de una regla (las filas que quedan fuera se sueltan). Quien llama
     se asegura de que la fila no sea manual."""
-    rule = match_rule(rules, matchable_text(tx.description, tx.description_extra), tx.date)
+    rule = match_rule(rules, matchable_text(tx.description, tx.description_extra), tx.date, tx.amount)
     if rule is not None:
         tx.account_type, tx.category = rule.account_type, rule.category
         tx.subcategory = (rule.subcategory or rule.match_text).upper()
@@ -478,9 +514,9 @@ def apply_rule_to_transactions(
         if is_check(t.description) and not getattr(t, "description_extra", None):
             continue
         text = matchable_text(t.description, getattr(t, "description_extra", None))
-        if match_rule([rule], text, t.date) is None:
+        if match_rule([rule], text, t.date, t.amount) is None:
             continue
-        winner = match_rule(ranked, text, t.date)
+        winner = match_rule(ranked, text, t.date, t.amount)
         if winner is not None and winner.id != rule.id:
             continue  # otra regla le gana a esta en esa fila
         # La subcategoría también cuenta (Jose, 4-oct: "modifiqué la subcategoría en Reglas y no veo
@@ -774,15 +810,17 @@ def build_import_rules(
     headers: list[str], rows: list[list[str]], keyword_col: str, category_col: str,
     account_type_col: str, sector: str, existing_keywords: list,
     subcategory_col: str = "", priority_col: str = "", from_col: str = "", to_col: str = "",
+    min_col: str = "", max_col: str = "",
 ) -> list[dict]:
     """Construye el PREVIEW del import: por cada fila del archivo del usuario (ya mapeado por la IA),
     extrae keyword + categoría, **resuelve la sección** (del archivo si la trae, si no por el plan de
     cuentas), y marca un `status`: `ok` · `needs_section` (no se pudo resolver) · `exists` (ya hay
     regla con ese keyword) · `duplicate` (repetido dentro del archivo).
 
-    La identidad de una regla es keyword + ventana de fechas (`From`/`To` de nuestra exportación):
-    `existing_keywords` trae `(keyword, valid_from, valid_to)` o el keyword solo (sin ventana).
-    Una fecha ilegible marca la fila `bad_date` (no se adivina una ventana)."""
+    La identidad de una regla es keyword + condiciones (`From`/`To` y `Min amount`/`Max amount` de
+    nuestra exportación): `existing_keywords` trae `(keyword, valid_from, valid_to, amount_min,
+    amount_max)` o el keyword solo. Una fecha o un monto ilegible marca la fila `bad_date` /
+    `bad_amount` (no se adivina una condición)."""
     from categories import categories_for  # local: evita ciclo de import
     idx = {h: i for i, h in enumerate(headers)}
     ki, ci = idx.get(keyword_col), idx.get(category_col)
@@ -791,11 +829,13 @@ def build_import_rules(
     pi = idx.get(priority_col) if priority_col else None
     fi = idx.get(from_col) if from_col else None
     ti2 = idx.get(to_col) if to_col else None
+    mi = idx.get(min_col) if min_col else None
+    xi = idx.get(max_col) if max_col else None
     if ki is None or ci is None:
         return []
     cat_to_type = {normalize(c): at for at, cats in categories_for(sector).items() for c in cats}
-    existing_norm = {(normalize(k[0]), k[1], k[2]) if isinstance(k, tuple) else (normalize(k), None, None)
-                     for k in existing_keywords}
+    existing_norm = {(normalize(k[0]), *k[1:3], *(list(k[3:5]) + [None, None])[:2]) if isinstance(k, tuple)
+                     else (normalize(k), None, None, None, None) for k in existing_keywords}
     out: list[dict] = []
     seen: set[tuple] = set()
     for r in rows:
@@ -810,9 +850,13 @@ def build_import_rules(
             at = cat_to_type.get(normalize(cat), "")
         vf, bad_f = _parse_day(r[fi]) if (fi is not None and fi < len(r)) else (None, False)
         vt, bad_t = _parse_day(r[ti2]) if (ti2 is not None and ti2 < len(r)) else (None, False)
-        key = (nkw, vf, vt)
+        amin, bad_a = _parse_money(r[mi]) if (mi is not None and mi < len(r)) else (None, False)
+        amax, bad_b = _parse_money(r[xi]) if (xi is not None and xi < len(r)) else (None, False)
+        key = (nkw, vf, vt, amin, amax)
         if bad_f or bad_t or (vf and vt and vf > vt):
             status = "bad_date"
+        elif bad_a or bad_b or (amin is not None and amax is not None and amin > amax):
+            status = "bad_amount"
         elif key in seen:
             status = "duplicate"
         elif key in existing_norm:
@@ -826,8 +870,23 @@ def build_import_rules(
         out.append({"keyword": kw, "category": cat, "subcategory": sub,
                     "account_type": at, "status": status,
                     "priority": parse_priority(r[pi]) if (pi is not None and pi < len(r)) else None,
-                    "valid_from": vf.isoformat() if vf else None, "valid_to": vt.isoformat() if vt else None})
+                    "valid_from": vf.isoformat() if vf else None, "valid_to": vt.isoformat() if vt else None,
+                    "amount_min": float(amin) if amin is not None else None,
+                    "amount_max": float(amax) if amax is not None else None})
     return out
+
+
+def _parse_money(raw: Optional[str]) -> tuple[Optional[Decimal], bool]:
+    """Monto de la condición en un archivo de reglas ("50", "$1,200.00"). Vacío → (None, False).
+    Ilegible o negativo → (None, True): el import lo marca en vez de adivinar."""
+    text = (raw or "").strip().replace("$", "").replace(",", "")
+    if not text:
+        return None, False
+    try:
+        v = Decimal(text).quantize(Decimal("0.01"))
+    except Exception:
+        return None, True
+    return (v, False) if v >= 0 else (None, True)
 
 
 def _parse_day(raw: Optional[str]) -> tuple[Optional[date], bool]:
@@ -846,7 +905,8 @@ def create_company_rule(
     session: Session, company_id: int, sector: str,
     match_text: str, account_type: Optional[AccountType], category: Optional[str],
     subcategory: Optional[str] = None, priority: Optional[int] = None,
-    valid_from: Optional[date] = None, valid_to: Optional[date] = None,
+    valid_from: Optional[date] = None, valid_to: Optional[date] = None, origin: Optional[str] = None,
+    amount_min: Optional[Decimal] = None, amount_max: Optional[Decimal] = None,
 ) -> Optional[CategoryRule]:
     """Crea una regla COMPANY con el keyword **TAL CUAL** (preserva el comodín `*`, a diferencia de
     `upsert_company_rule` que lo normaliza con `specific_phrase`). Para reglas ya listas del
@@ -864,7 +924,8 @@ def create_company_rule(
         )
     ).all()
     for r in existing:
-        if normalize(r.match_text) == norm and (r.valid_from, r.valid_to) == (valid_from, valid_to):
+        if normalize(r.match_text) == norm and (r.valid_from, r.valid_to) == (valid_from, valid_to) \
+                and (r.amount_min, r.amount_max) == (amount_min, amount_max):
             # ya existe ese comercio con esa ventana → actualizar
             r.account_type = account_type
             r.category = category
@@ -879,7 +940,8 @@ def create_company_rule(
         scope=RuleScope.COMPANY, company_id=company_id, sector=sector,
         match_text=kw, account_type=account_type, category=category,
         subcategory=subcategory or None,
-        valid_from=valid_from, valid_to=valid_to,
+        valid_from=valid_from, valid_to=valid_to, origin=origin,
+        amount_min=amount_min, amount_max=amount_max,
     )
     session.add(rule)
     if priority:
@@ -919,7 +981,7 @@ def upsert_company_rule(
     ).all()
     for rule in existing:
         # Una corrección suelta aprende la regla GENERAL; nunca reescribe una con ventana de fechas.
-        if _phrase(rule.match_text) == phrase and not has_window(rule):
+        if _phrase(rule.match_text) == phrase and not is_exception(rule):
             rule.account_type = account_type
             rule.category = category
             rule.match_text = phrase

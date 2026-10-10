@@ -5,10 +5,7 @@ import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
 import Sheet from "./components/Sheet";
 import Upload from "./components/Upload";
-import Review from "./components/Review";
-import Audit from "./components/Audit";
-import BookNotes from "./components/BookNotes";
-import FormulaAgents from "./components/FormulaAgents";
+import AuditWorkspace from "./components/AuditWorkspace";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
@@ -18,8 +15,9 @@ import Sidebar, { viewLabel, type View } from "./components/Sidebar";
 import DemoTour from "./components/DemoTour";
 import { DEMO_MODE } from "./demo";
 import { auth } from "./firebase";
-import { getCompanies, getCompany, setActiveCompany, createCompany, getReviewTransactions, getAudit, confirmCheckout } from "./api";
-import type { Company, Transaction } from "./types";
+import { getCompanies, getCompany, setActiveCompany, createCompany, getAuditSummary, confirmCheckout } from "./api";
+import type { AuditBoard } from "./api";
+import type { Company } from "./types";
 
 function App() {
   const { t } = useTranslation();
@@ -28,9 +26,10 @@ function App() {
   const [company, setCompany] = useState<Company | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [authError, setAuthError] = useState(false);
-  const [reviewTxs, setReviewTxs] = useState<Transaction[]>([]);
+  // Contadores de Auditoría en la barra lateral (FASE 11, 8-oct): salen del MISMO encabezado de estado
+  // que muestra la pestaña (rojo = problemas, ámbar = por revisar), no de dos listas distintas.
+  const [problemCount, setProblemCount] = useState(0);
   const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
-  const [auditKey, setAuditKey] = useState(0); // FASE 11: una fila aprobada por el agente re-corre el auditor
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
   // LA HOJA (FASE 10): la consola del bookkeeper reemplaza la lista móvil simplificada.
@@ -50,9 +49,10 @@ function App() {
   );
 
   const reloadReview = useCallback(() => {
-    getReviewTransactions().then(setReviewTxs).catch(() => setReviewTxs([]));
-    // El AUDITOR corre solo (determinista, gratis) → badge ámbar sin que el dueño lo pida (FASE 9).
-    getAudit().then((f) => setAuditCount(f.length)).catch(() => setAuditCount(0));
+    // El AUDITOR corre solo (determinista, gratis) → badges sin que el bookkeeper lo pida (FASE 9/11).
+    getAuditSummary()
+      .then((s) => { setAuditCount(s.to_review); setProblemCount(s.problems); })
+      .catch(() => { setAuditCount(0); setProblemCount(0); });
   }, []);
 
   // Observa el login de Firebase. Al cerrar sesión, limpia el estado de la empresa.
@@ -60,7 +60,7 @@ function App() {
     if (DEV_UID) return;               // modo desarrollo: no se escucha a Firebase
     return onAuthStateChanged(auth, (u) => {
       setFbUser(u);
-      if (!u) { setCompany(null); setCompanies([]); setReviewTxs([]); }
+      if (!u) { setCompany(null); setCompanies([]); setProblemCount(0); setAuditCount(0); }
     });
   }, []);
 
@@ -79,7 +79,7 @@ function App() {
     setCompanies((prev) => [...prev, c]);
     setCompany(c);
     setView("dashboard");
-    setReviewTxs([]);
+    setProblemCount(0); setAuditCount(0);
   };
 
   // Tras el onboarding o renombrar: refleja nombre/sector en la empresa activa y en la lista.
@@ -160,7 +160,7 @@ function App() {
         companies={companies}
         onSwitch={switchCompany}
         onAdd={addCompany}
-        reviewCount={reviewTxs.length}
+        reviewCount={problemCount}
         auditCount={auditCount}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
@@ -234,21 +234,11 @@ function App() {
               </>
             )}
             {view === "audit" && (
-              <div className="space-y-4">
-                {/* FASE 11: las notas del libro van ARRIBA — son la entrada de los agentes. */}
-                <BookNotes />
-                {/* El equipo de agentes (④ redactor, ① revisor) sobre Nemotron. */}
-                <FormulaAgents
-                  onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
-                  onChanged={() => setAuditKey((k) => k + 1)}
-                />
-                <Audit
-                  key={auditKey}
-                  onOpenTransaction={(id) => { setFocusTxId(id); setView("transactions"); }}
-                  onCount={setAuditCount}
-                />
-                <Review items={reviewTxs} reload={reloadReview} />
-              </div>
+              // FASE 11 (8-oct): UNA herramienta — estado, flujo, notas, cola y detalle (`AuditWorkspace`).
+              <AuditWorkspace
+                onOpenSheet={() => setView("transactions")}
+                onStats={(s: AuditBoard["stats"]) => { setAuditCount(s.to_review); setProblemCount(s.problems); }}
+              />
             )}
             {view === "pnl" && <Pnl companyName={company.name} />}
             {view === "upload" && (

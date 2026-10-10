@@ -24,7 +24,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -32,6 +32,7 @@ from sqlmodel import Session, select
 
 import agent_calls
 import book_notes
+import book_review
 import formula
 import merchant_verifier
 import nemotron
@@ -254,6 +255,8 @@ class DraftRow(BaseModel):
     valid_from: Optional[date] = None
     valid_to: Optional[date] = None
     priority: Optional[int] = None
+    amount_min: Optional[float] = None
+    amount_max: Optional[float] = None
     account_type: Section
     category: str
     subcategory: Optional[str] = None
@@ -273,11 +276,16 @@ yourself. You only PROPOSE new rows; the bookkeeper approves or discards each on
 
 Hard rules:
 - Output ONLY JSON: {"rows": [...]}. Each row has exactly these fields: keyword, valid_from, valid_to,
-  priority, account_type, category, subcategory, explanation, from_notes, from_corrections. Never code.
+  priority, amount_min, amount_max, account_type, category, subcategory, explanation, from_notes,
+  from_corrections. Never code.
+- amount_min / amount_max: null, unless a NOTE gives an amount threshold (e.g. "over $50 is personal"
+  → amount_min 50.01 for that exception). You never see transaction amounts; never invent one.
 - keyword: copy it from a merchant "keyword" below, or a SHORTER stable part of it (e.g. "STARBUCKS"
   from "STARBUCKS STORE PITTSBURG"). Uppercase letters, digits, spaces and & ' . - / # * only.
   `*` means "anything in between". Never a bare generic word (PAYMENT, ONLINE, DEBIT) or only digits.
 - Placeholders like "PERSON 1" stand for private people: keep them EXACTLY as written; never guess a name.
+- Never propose a row for payments to a PERSON (merchant "person_payment": true) unless a note or the
+  bookkeeper's corrections say what those payments are: only the client knows.
 - valid_from / valid_to: always null here. Notes with a date period are handled by a separate step;
   never create date-window rows.
 - account_type and category MUST come from the chart of accounts below, and the category must belong
@@ -294,9 +302,10 @@ Hard rules:
 - Skip merchants already decided by a rule, unless corrections show that rule is wrong.
 - Do NOT duplicate an existing rule (same keyword, same window, same category).
 - Notes marked "dont_report" are not instructions to create rows.
-- explanation: WRITE IT IN {lang} (even though these instructions are in English). One or two short
-  sentences speaking directly to the bookkeeper (second person): what the row does and why (e.g. that
-  they corrected it to Materials 3 times). Never mention internal refs (C1, F2), ids or field names.
+- explanation: WRITE IT IN {lang} (even though these instructions are in English), with no English
+  words mixed in. ONE short sentence (max ~15 words) saying what the row DECIDES and why, e.g. in Spanish
+  "Lowe's va a Materials: lo corregiste así 3 veces." Do not say "this row", "the bookkeeper", ids,
+  refs (C1, F2) or field names.
 - from_notes: ids of the notes used ([] if none). from_corrections: ONLY refs that appear in the
   corrections list above ("C1"…), or [] if the row does not come from corrections. Never invent a ref.
 - At most {max_rows} rows. Every row must be justified by corrections, by a note, or by a recurring
@@ -315,8 +324,9 @@ during the trip → those are the owner's personal purchases → section NON_PL,
 Output ONLY JSON: {"rows": [...]}, one row per merchant the note applies to, each with exactly:
 keyword (copy the merchant keyword exactly), valid_from and valid_to (copy the note's period exactly,
 "YYYY-MM-DD"), priority (null), account_type and category (from the chart of accounts; the category must
-belong to that section), subcategory (null), explanation (one short sentence WRITTEN IN {lang}, speaking
-directly to the bookkeeper, saying it comes from their note; no ids), from_notes ([the note
+belong to that section), subcategory (null), explanation (ONE short sentence WRITTEN IN {lang}, no English words
+mixed in, saying what the row decides, e.g. in Spanish "Starbucks del 3 al 17 de agosto va a Retiro del
+dueño: compras personales del viaje."; no ids), from_notes ([the note
 id]), from_corrections ([]).
 If the note does not apply to any merchant, return {"rows": []}."""
 
@@ -333,7 +343,7 @@ Merchants seen ONLY during that period (rows = how many transactions):
 {json.dumps([{"keyword": m["keyword"], "rows": m["rows"]} for m in merchants], ensure_ascii=False)}"""
 
 
-def _draft_user(view: BookView, findings: list[dict]) -> str:
+def _draft_user(view: BookView, findings: list[dict], dismissed: Optional[list] = None) -> str:
     return f"""Business sector: {view.company.sector or "unknown"}
 
 Chart of accounts (section: categories):
@@ -352,7 +362,10 @@ Merchants in this book (no amounts; "categories" = how they are categorized toda
 {json.dumps(view.merchants, ensure_ascii=False)}
 
 Reviewer findings (from the reviewer agent; may be empty):
-{json.dumps(findings, ensure_ascii=False)}"""
+{json.dumps(findings, ensure_ascii=False)}
+
+Rows the bookkeeper DISMISSED before (never propose them again; learn from the reason):
+{json.dumps(dismissed or [], ensure_ascii=False)}"""
 
 
 @dataclass
@@ -361,6 +374,7 @@ class Proposal:
     matches: int
     test: dict
     web: list = field(default_factory=list)   # evidencia del ② verificador (Tavily)
+    notes: list = field(default_factory=list)  # las notas que la fila cita (texto original, para la pantalla)
 
 
 @dataclass
@@ -380,6 +394,7 @@ def history_test(view: BookView, row: formula.FormulaRow) -> dict:
     after_rules = formula.with_rows(before_rules, [row], view.company.id)
     changes: Counter = Counter()
     changed_ids, protected_ids, realigned_ids = [], [], []
+    changed: list[dict] = []   # el detalle para la pantalla (comercio limpio, fecha, monto, cuenta, de → a)
     agrees = disagrees = 0
     for t in view.ctx.txs:
         if view.cutoff and t.date >= view.cutoff:
@@ -405,8 +420,10 @@ def history_test(view: BookView, row: formula.FormulaRow) -> dict:
             continue
         changed_ids.append(t.id)
         changes[(before.category or "PENDING", after.category)] += 1
+        if len(changed) < 50:
+            changed.append({**book_review.tx_summary(t), "from": before.category or "PENDING", "to": after.category})
     return {
-        "changes": len(changed_ids), "changed_ids": changed_ids,
+        "changes": len(changed_ids), "changed_ids": changed_ids, "changed": changed,
         "by_pair": [{"from": a, "to": b, "rows": n} for (a, b), n in changes.most_common()],
         "protected_manual": len(protected_ids), "protected_ids": protected_ids,
         "realigned": len(realigned_ids), "realigned_ids": realigned_ids,
@@ -416,9 +433,12 @@ def history_test(view: BookView, row: formula.FormulaRow) -> dict:
 
 def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
           cutoff: Optional[date] = None, user_id: Optional[int] = None, record: bool = True,
-          model: Optional[str] = None) -> DraftResult:
-    """④ — UNA llamada a Nemotron. Devuelve las filas válidas con su prueba contra la historia y las
-    rechazadas con sus códigos. Guarda el costo en `agentcall` (salvo `record=False`, la medición)."""
+          model: Optional[str] = None, focus_tx_ids: Optional[list[int]] = None) -> DraftResult:
+    """④ — Nemotron propone filas. Devuelve las válidas con su prueba contra la historia y las
+    rechazadas con sus códigos. Guarda el costo en `agentcall` (salvo `record=False`, la medición).
+
+    `focus_tx_ids`: "pedirle al ④ una regla para ESTE comercio" (un grupo de Pendientes): una sola
+    llamada, centrada en ese comercio, y solo se devuelven filas que cazan esos movimientos."""
     if record:
         agent_calls.check_cap(session, company)
     view = build_view(session, company, cutoff=cutoff)
@@ -426,17 +446,29 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
     # filas del periodo de medición.
     findings = [] if cutoff else review_input(session, company, view)[0][:10]
     language = LANG_NAMES.get(lang, "Spanish")
+    # Lo que el bookkeeper ya descartó (con su motivo): no se vuelve a proponer (filtro en código) y el
+    # modelo lee los motivos como contexto.
+    gone = book_review.dismissals(session, company)
+    dismissed_keys = {(d.keyword.upper(), d.valid_from, d.valid_to, d.category) for d in gone}
+    dismissed_ctx = [{"keyword": view.names.mask(d.keyword), "category": d.category, "reason": d.reason_code,
+                      "comment": view.names.mask(d.reason_text) if d.reason_text else None} for d in gone[:30]]
+    focus = [t for t in view.ctx.txs if focus_tx_ids and t.id in set(focus_tx_ids)]
     calls: list[tuple[str, str]] = []
     # 1) Una llamada CORTA por cada nota con periodo que tenga comercios vistos solo en ese periodo.
     #    Un solo prompt con todo hacía que Nano copiara la categoría actual y que Super no propusiera
     #    nada (✅ medido el 7-oct); enfocado, el modelo chico decide una cosa a la vez.
-    for note in view.notes:
+    for note in ([] if focus else view.notes):
         if note["kind"] == "keep_in_mind" and any(m["only_seen_in_period"] for m in note.get("merchants_inside_period", [])):
             calls.append((_NOTE_SYSTEM.replace("{lang}", language), _note_user(view, note)))
     # 2) Correcciones + Pendientes recurrentes (sin ventanas de fechas).
-    calls.append((_DRAFT_SYSTEM.replace("{lang}", language).replace("{max_rows}", str(MAX_ROWS)),
-                  _draft_user(view, findings)))
+    user = _draft_user(view, findings, dismissed_ctx)
+    if focus:
+        keyword = _huella(focus[0], view.names)[1]
+        user += (f"\n\nFOCUS: the bookkeeper asked for a row for ONE merchant only: \"{keyword}\" "
+                 f"({len(focus)} pending transactions). Propose at most one row, for that merchant only.")
+    calls.append((_DRAFT_SYSTEM.replace("{lang}", language).replace("{max_rows}", str(MAX_ROWS)), user))
 
+    note_text = {n.id: n.text for n in book_notes.list_notes(session, company.id)}
     raw_rows, usages, outcome = [], [], "ok"
     for system, user in calls:
         if record and len(usages) > 0:
@@ -472,7 +504,30 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
         if key in seen:
             rejected.append({"raw": raw, "errors": ["repeated_in_proposal"]})
             continue
+        if key + (checked.row.category,) in dismissed_keys:
+            rejected.append({"raw": raw, "errors": ["dismissed_before"]})   # ya lo descartaste
+            continue
+        if focus:
+            rule = formula.to_rule(checked.row, company.id)
+            if not any(formula.match_rule([rule], formula.matchable_text(t.description, t.description_extra),
+                                          t.date, t.amount) for t in focus):
+                rejected.append({"raw": raw, "errors": ["outside_focus"]})
+                continue
         test = history_test(view, checked.row)
+        # Una fila que no cambia NADA no se le muestra al bookkeeper (Jose, 8-oct). En la medición sí se
+        # puntúa: una fila puede no tocar el pasado (lo escrito a mano manda) y acertar el futuro.
+        # (Las re-alineadas no cuentan: el motor las arregla con CUALQUIER aprobación, no con esta fila.)
+        if cutoff is None and test["changes"] == 0:
+            rejected.append({"raw": raw, "errors": ["no_effect"]})
+            continue
+        # Una regla para pagos a PERSONAS sin nota ni corrección que la respalde es una adivinanza: solo
+        # el cliente sabe qué fue ese Zelle (✅ 8-oct: el ④ propuso "PAYMENT TO DANIEL RIVERA → Owner Draw").
+        hit_ids = set(test["changed_ids"])
+        hit = [t for t in view.ctx.txs if t.id in hit_ids]
+        if hit and all(p2p_counterparty(t.description) for t in hit) \
+                and not checked.row.from_notes and not checked.row.from_changes:
+            rejected.append({"raw": raw, "errors": ["person_without_evidence"]})
+            continue
         # Una fila que CONTRADICE lo que el bookkeeper escribió a mano no se le muestra: lo escrito a mano
         # manda. Se garantiza aquí porque el prompt no basta (✅ 7-oct: Nano propuso SHELL → Vehicle Fuel
         # aunque las correcciones de Shell estaban en conflicto).
@@ -481,7 +536,8 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
             continue
         seen.add(key)
         proposals.append(Proposal(row=checked.row, matches=checked.matches, test=test,
-                                  web=web_evidence(view, checked.row)))
+                                  web=web_evidence(view, checked.row),
+                                  notes=[{"id": i, "text": note_text.get(i, "")} for i in checked.row.from_notes]))
     if record:
         session.commit()
     if outcome != "ok" and proposals:
@@ -537,7 +593,7 @@ def web_evidence(view: BookView, row: formula.FormulaRow) -> list[dict]:
         hit = view.web.get(t.id)
         if hit is None or hit.id in seen:
             continue
-        if formula.match_rule([rule], formula.matchable_text(t.description, t.description_extra), t.date):
+        if formula.match_rule([rule], formula.matchable_text(t.description, t.description_extra), t.date, t.amount):
             seen.add(hit.id)
             out.append({"query": hit.query, "business_type": hit.business_type, "confidence": hit.confidence,
                         "source_url": hit.source_url, "source_domain": hit.source_domain})
@@ -548,9 +604,12 @@ def proposal_dict(p: Proposal) -> dict:
     r = p.row
     return {"keyword": r.keyword.upper(), "valid_from": r.valid_from.isoformat() if r.valid_from else None,
             "valid_to": r.valid_to.isoformat() if r.valid_to else None, "priority": r.priority,
+            "amount_min": float(r.amount_min) if r.amount_min is not None else None,
+            "amount_max": float(r.amount_max) if r.amount_max is not None else None,
             "account_type": r.account_type.value, "category": r.category, "subcategory": r.subcategory,
             "explanation": r.explanation, "from_notes": r.from_notes, "from_changes": r.from_changes,
-            "matches": p.matches, "test": p.test, "web_evidence": p.web, "warnings": warnings(p)}
+            "matches": p.matches, "test": p.test, "web_evidence": p.web, "warnings": warnings(p),
+            "notes_used": p.notes, "corrections_used": len(p.row.from_changes)}
 
 
 def warnings(p: Proposal) -> list[str]:
@@ -600,9 +659,10 @@ Rules:
   bookkeeper does not want that reported (mark it legitimate).
 - Rows decided "manual" were set by the bookkeeper on purpose ("hand-written wins"). Disagreement among
   them is a reason to ask, not an error by itself.
-- observation: WRITE IT IN {lang} (even though these instructions are in English). One or two short
-  sentences, concrete and polite, speaking directly to the bookkeeper (second person). No amounts (you
-  don't have them), no internal refs (F1), no field names like NON_PL.
+- observation: WRITE IT IN {lang} (even though these instructions are in English), with no English
+  words mixed in (no "mismatch", no "bookkeeper"). ONE short sentence (max ~20 words), concrete, speaking
+  directly to the reader. No amounts (you don't have them), no internal refs (F1), no field names like
+  NON_PL or OPERATING_EXPENSE.
 - hint_for_drafter: a short note in English for the formula drafter if a new rule would fix it, else "".
 - Placeholders like "PERSON 1" stand for private people: keep them as written."""
 
@@ -621,85 +681,53 @@ def _notes_covering(view: BookView, txs: list[Transaction]) -> list[int]:
     return out
 
 
-def review_input(session: Session, company: Company, view: BookView) -> tuple[list[dict], int, dict]:
-    """Los hallazgos deterministas, en forma segura para el modelo (huella, categorías, quién decidió
-    cada fila y conteos; nunca descripciones ni montos), con los HECHOS ya calculados por el código
-    para que el modelo juzgue sin adivinar. Los que una nota 🚫 silencia por comercio se quitan AQUÍ,
-    en código. Devuelve (hallazgos, silenciados, ref → ids de transacción)."""
-    txs = view.ctx.txs
-    by_id = {t.id: t for t in txs}
-    items = [{"id": t.id, "description": t.description, "account_type": t.account_type.value if t.account_type else None,
-              "category": t.category, "is_inflow": t.is_inflow, "matched_rule_id": t.matched_rule_id,
-              "source": t.source} for t in txs]
-    rules = session.exec(select(CategoryRule).where(CategoryRule.company_id == company.id)).all()
-    rule_of = {r.id: r for r in rules}
-    rules_by_id = {r.id: {"match_text": r.match_text, "account_type": r.account_type.value if r.account_type else None,
-                          "category": r.category} for r in rules}
-    raw = [f for f in audit_categorization(items, rules_by_id) if f["type"] != "uncategorized"]
-
-    # Reglas que CHOCAN: cazan los mismos movimientos con categorías distintas (`rules.rule_overlaps`,
-    # de Movimientos). La que gana se lleva la fila; la otra queda medio muerta.
-    live = [t for t in txs if t.source != "manual"]
-    for rid, ov in rule_overlaps(view.ctx.rules, live).items():
-        winner = rule_of.get(rid)
-        for loser_id, n in ov["beats"].items():
-            loser = rule_of.get(loser_id)
-            # Una regla con VENTANA DE FECHAS que le gana a la general es una excepción a propósito
-            # ("STARBUCKS del 3 al 17-ago → Owner Draw"), no un choque (✅ 7-oct: falso positivo).
-            if winner and (winner.valid_from or winner.valid_to):
-                continue
-            if winner and loser and (winner.account_type, winner.category) != (loser.account_type, loser.category):
-                hit = [t for t in live if t.matched_rule_id == rid]
-                raw.append({"type": "rule_collision", "severity": "medium", "transaction_ids": [t.id for t in hit][:50],
-                            "_rules": (winner, loser, n)})
-
-    # El ② dice que el comercio es de USO PERSONAL (un gimnasio) y el libro lo tiene como gasto del
-    # negocio: el gasto personal camuflado. Solo con confianza alta o media.
-    personal: dict[int, list[Transaction]] = defaultdict(list)
-    for t in txs:
-        hit = view.web.get(t.id)
-        if (hit and hit.business_type in merchant_verifier.PERSONAL_TYPES and hit.confidence in ("high", "medium")
-                and t.account_type is not None and t.account_type.value != "NON_PL"):
-            personal[hit.id].append(t)
-    for _hid, group in personal.items():
-        raw.append({"type": "merchant_type_mismatch", "severity": "high",
-                    "transaction_ids": [t.id for t in group], "_web": view.web[group[0].id]})
-
+def review_input(session: Session, company: Company, view: BookView,
+                 findings: Optional[list] = None) -> tuple[list[dict], int, dict]:
+    """Los hallazgos ABIERTOS (tabla `finding`, `book_review.sync`) en forma segura para el modelo:
+    huella, categorías, quién decidió cada fila y conteos; nunca descripciones ni montos. Los HECHOS
+    los calcula el código, para que el modelo juzgue sin adivinar. Las observaciones del auditor
+    (nómina, datos que faltan) no se juzgan. Lo que una nota 🚫 silencia por comercio se quita AQUÍ,
+    en código. Devuelve (hallazgos, silenciados, ref → Finding)."""
+    import book_review
+    if findings is None:
+        findings = book_review.sync(session, company)
+    by_id = {t.id: t for t in view.ctx.txs}
     silencers = [n["merchant"] for n in view.notes if n["kind"] == "dont_report" and n["merchant"]]
     out, silenced, ids_of = [], 0, {}
-    for f in raw:
-        group = [by_id[i] for i in f["transaction_ids"] if i in by_id]
+    for f in findings:
+        if f.type in book_review.INFO_TYPES:
+            continue
+        group = [by_id[i] for i in (f.transaction_ids or []) if i in by_id]
         if not group:
             continue
+        p = f.payload or {}
         phrase = _huella(group[0], view.names)[1] or ""
-        if any(view.names.mask(s.upper()) in phrase.upper() for s in silencers):
+        if f.type == "rule_collision":
+            phrase = view.names.mask(p.get("losing_rule") or phrase)
+        if any(view.names.mask(x.upper()) in phrase.upper() for x in silencers):
             silenced += 1
             continue
         ref = f"F{len(out) + 1}"
-        ids_of[ref] = f["transaction_ids"]
+        ids_of[ref] = f
         facts: dict = {"rows": len(group),
                        "by_category_and_decider": dict(Counter(f"{_label(t)} decided by {t.source or 'pending'}"
                                                                for t in group))}
-        if f["type"] == "rule_deviation":
-            rule = rule_of.get(group[0].matched_rule_id)
-            if rule:
-                facts["rule_says"] = f"{view.names.mask(rule.match_text)} -> {rule.account_type.value}/{rule.category}"
-                facts["row_has"] = _label(group[0])
-                facts["meaning"] = "the row claims to follow the rule but no longer matches it (stale row)"
+        if f.type == "rule_deviation":
+            facts["rule_says"] = f"{view.names.mask(p.get('rule') or '')} -> {p.get('rule_says')}"
+            facts["row_has"] = p.get("row_has")
+            facts["meaning"] = "the row claims to follow the rule but no longer matches it (stale row)"
+        elif f.type == "rule_collision":
+            facts = {"winning_rule": f"{view.names.mask(p.get('winning_rule') or '')} -> {p.get('winning_then')}",
+                     "losing_rule": f"{view.names.mask(p.get('losing_rule') or '')} -> {p.get('losing_then')}",
+                     "rows_both_match": p.get("rows"),
+                     "meaning": "both rules match the same transactions with different categories; the winner takes them"}
+        elif f.type == "merchant_type_mismatch":
+            facts["meaning"] = ("the internet says this merchant is a business for PERSONAL use, but the book "
+                                "has it as a business expense")
         hit = view.web.get(group[0].id)
         if hit is not None and hit.confidence in ("high", "medium"):
             facts["web_business_type"] = f"{hit.business_type} ({hit.confidence} confidence, verified on the internet)"
-        if f["type"] == "merchant_type_mismatch":
-            facts["meaning"] = ("the internet says this merchant is a business for PERSONAL use, but the book "
-                                "has it as a business expense")
-        if f["type"] == "rule_collision":
-            w, l, n = f["_rules"]
-            facts = {"winning_rule": f"{view.names.mask(w.match_text)} -> {w.account_type.value}/{w.category}",
-                     "losing_rule": f"{view.names.mask(l.match_text)} -> {l.account_type.value}/{l.category}",
-                     "rows_both_match": n,
-                     "meaning": "both rules match the same transactions with different categories; the winner takes them"}
-            phrase = view.names.mask(l.match_text)
-        out.append({"ref": ref, "type": f["type"], "merchant": phrase, "facts": facts,
+        out.append({"ref": ref, "type": f.type, "merchant": phrase, "facts": facts,
                     "note_periods_covering_these_dates": _notes_covering(view, group)})
         if len(out) >= MAX_FINDINGS:
             break
@@ -712,14 +740,21 @@ class ReviewResult:
     silenced: int
     usage: Optional[nemotron.Usage]
     outcome: str = "ok"
+    reviewed: int = 0
 
 
 def review(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
-           user_id: Optional[int] = None, model: Optional[str] = None) -> ReviewResult:
-    """① — UNA llamada a Nemotron sobre los hallazgos deterministas. Sin hallazgos, no llama."""
+           user_id: Optional[int] = None, model: Optional[str] = None, force: bool = False) -> ReviewResult:
+    """① — UNA llamada a Nemotron sobre los hallazgos abiertos que todavía no tienen veredicto (con
+    `force`, sobre todos). El veredicto y la observación quedan GUARDADOS en el hallazgo: la pestaña
+    muestra una sola tarjeta por hallazgo. Sin nada que juzgar, no llama."""
+    import book_review
+    open_findings = book_review.sync(session, company)
     view = build_view(session, company)
-    findings, silenced, ids_of = review_input(session, company, view)
+    todo = open_findings if force else [f for f in open_findings if f.agent_verdict is None]
+    findings, silenced, ids_of = review_input(session, company, view, todo)
     if not findings:
+        session.commit()
         return ReviewResult(reviews=[], silenced=silenced, usage=None, outcome="nothing_to_review")
     agent_calls.check_cap(session, company)
     system = _REVIEW_SYSTEM.replace("{lang}", LANG_NAMES.get(lang, "Spanish"))
@@ -743,18 +778,22 @@ Findings to review:
             continue
         if ok.ref in ids_of:
             verdicts[ok.ref] = ok
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     reviews = []
-    for f in findings:
-        v = verdicts.get(f["ref"])
-        reviews.append({**f, "merchant": view.names.unmask(f["merchant"]), "transaction_ids": ids_of[f["ref"]],
-                        "verdict": v.verdict if v else "unsure",
-                        "observation": view.names.unmask(v.observation)[:400] if v else "",
-                        "hint_for_drafter": view.names.unmask(v.hint_for_drafter)[:300] if v else "",
-                        "answered": v is not None})
+    for item in findings:
+        f, v = ids_of[item["ref"]], verdicts.get(item["ref"])
+        if v is not None:
+            f.agent_verdict = v.verdict
+            f.agent_observation = view.names.unmask(v.observation)[:400]
+            f.agent_lang, f.agent_reviewed_at = lang, now
+            session.add(f)
+        reviews.append({"ref": item["ref"], "finding_id": f.id, "type": f.type, "merchant": f.merchant,
+                        "transaction_ids": f.transaction_ids, "verdict": v.verdict if v else "unsure",
+                        "observation": f.agent_observation or "", "answered": v is not None})
     agent_calls.record(session, company, "reviewer", reply.usage, user_id=user_id,
                        items_out=len(findings), items_valid=len(verdicts))
     session.commit()
-    return ReviewResult(reviews=reviews, silenced=silenced, usage=reply.usage)
+    return ReviewResult(reviews=reviews, silenced=silenced, usage=reply.usage, reviewed=len(verdicts))
 
 
 # ── Privacidad, medida (no supuesta) ─────────────────────────────────────────────────────────────

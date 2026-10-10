@@ -5,6 +5,7 @@ import {
   getRules, createRule, updateRule, deleteRule, previewRuleDelete, getCategories, importRules, applyRuleProposals,
   type Rule, type RuleStyle, type ChartOfAccounts,
 } from "../api";
+import RuleFormula from "./RuleFormula";
 import {
   CATEGORY_EDITOR, categoryEditors, sectionOfCategory, setEditorChart,
 } from "./CategoryEditor";
@@ -59,11 +60,22 @@ type ImportRow = {
   keyword: string; category: string; subcategory: string; account_type: string;
   priority: number | null; status: string; approved: boolean;
   valid_from?: string | null; valid_to?: string | null;
+  amount_min?: number | null; amount_max?: number | null;
 };
 
 // EXPORTAR: CSV con los mismos encabezados que el import reconoce sin IA (`_own_rule_columns` en
 // main.py) — lo que sale de aquí vuelve a entrar idéntico. BOM para que Excel lea bien el UTF-8.
-const EXPORT_HEADERS = ["Keyword", "Category", "Subcategory", "Section", "Priority", "From", "To"];
+const EXPORT_HEADERS = ["Keyword", "Category", "Subcategory", "Section", "Priority", "From", "To", "Min amount", "Max amount"];
+
+/** Monto de la condición escrito por el bookkeeper ("50", "$1,200.50") → número. "" → null (sin
+ *  límite). Ilegible o negativo → undefined. Es una MAGNITUD: el signo lo da entrada/salida. */
+function parseMoney(v: string): number | null | undefined {
+  const s = v.trim().replace(/[$,\s]/g, "");
+  if (!s) return null;
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return undefined;
+  return Number(s);
+}
+const AMOUNT_PROPS = ["amount_min", "amount_max"];
 
 /** Fecha de la ventana escrita por el bookkeeper → "YYYY-MM-DD". Acepta 2026-08-03 y 8/3/2026 (como
  *  la escribe un bookkeeper en EE. UU.). "" → null (sin límite). Ilegible → undefined. */
@@ -86,6 +98,7 @@ function downloadRulesCsv(rules: Rule[]) {
   const lines = [EXPORT_HEADERS, ...rules.map((r) => [
     r.match_text, r.category ?? "", r.subcategory ?? "", r.account_type ?? "",
     r.priority != null ? String(r.priority) : "", r.valid_from ?? "", r.valid_to ?? "",
+    r.amount_min != null ? String(r.amount_min) : "", r.amount_max != null ? String(r.amount_max) : "",
   ])];
   const csv = "\uFEFF" + lines.map((l) => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -118,6 +131,8 @@ export type RulesCommands = {
   restyle: (patch: Partial<RuleStyle> | "clear") => void; selectedCount: number;
   /** Eliminar la regla de la celda enfocada (Edición → Eliminar regla). */
   deleteRule: () => void; canDelete: boolean;
+  /** Ver / ocultar "Ver como fórmula" (menú Ver). */
+  toggleFormula: () => void; formulaOpen: boolean;
 };
 
 export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, formulaBar = true, onCommands,
@@ -143,7 +158,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   // en blanco arriba de la grilla y ahí se escribe, como agregar un renglón en Excel. La fila vive
   // solo en el frontend hasta tener palabra clave Y categoría; ahí se crea de verdad.
   const [draft, setDraft] = useState<{ match_text: string; category: string; subcategory: string;
-                                       valid_from?: string | null; valid_to?: string | null } | null>(null);
+                                       valid_from?: string | null; valid_to?: string | null;
+                                       amount_min?: number | null; amount_max?: number | null } | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
   useEffect(() => { getCategories().then((c) => { setChart(c); setEditorChart(c); }).catch(() => {}); }, []);
   const allCats = useMemo(
@@ -183,6 +199,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       subcategory: draft.subcategory || null, account_type: sectionOfCategory(draft.category),
       priority: null, matches: 0, scope: "COMPANY" as const, sector: null,
       valid_from: draft.valid_from ?? null, valid_to: draft.valid_to ?? null,
+      amount_min: draft.amount_min ?? null, amount_max: draft.amount_max ?? null,
       _scopeLabel: t("rules.thisBook", { defaultValue: "This book" }),
       _draft: true,
     } as Row] : []),
@@ -210,13 +227,21 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
    *  Devuelve false si no guardó nada. `reload=false` cuando son varias celdas (rango). */
   const saveCell = useCallback(async (model: any, prop: string, raw: unknown, reload = true): Promise<boolean> => {
     if (!model?.id) return false;
-    if (!["match_text", "category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop)) return false;
+    if (!["match_text", "category", "subcategory", "priority", "valid_from", "valid_to", ...AMOUNT_PROPS].includes(prop)) return false;
     const value = String(raw ?? "").trim();
     // FILA BORRADOR: se va llenando en memoria y se crea sola al tener palabra clave + categoría.
     if (model.id === -1) {
       // Las fechas de la ventana se ponen ANTES de la categoría: la regla se crea sola al tener
       // palabra clave + categoría, y "STARBUCKS" sin fechas chocaría con la general.
-      let cell: string | null = value;
+      let cell: string | number | null = value;
+      if (AMOUNT_PROPS.includes(prop)) {
+        const n = parseMoney(value);
+        if (n === undefined) {
+          setError(t("rules.amountInvalid", { defaultValue: "Write the amount as a number without a sign (e.g. 50 or 1200.50), or leave it blank." }));
+          return false;
+        }
+        cell = n;
+      }
       if (prop === "valid_from" || prop === "valid_to") {
         const day = parseDay(value);
         if (day === undefined) {
@@ -230,7 +255,11 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         setError(t("rules.windowBackwards", { defaultValue: "The start date is after the end date." }));
         return false;
       }
-      setDraft(next);
+      if (next.amount_min != null && next.amount_max != null && next.amount_min > next.amount_max) {
+        setError(t("rules.amountBackwards", { defaultValue: "The minimum amount is above the maximum." }));
+        return false;
+      }
+      setDraft(next as any);
       draftRef.current = next;
       const section = sectionOfCategory(next.category);
       if (next.match_text.trim().length >= 2 && section) {
@@ -241,6 +270,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
             // La subcategoría no queda vacía (Jose, 4-oct): sin escribirla, la sugerencia en gris.
             category: next.category, subcategory: next.subcategory.trim() || next.match_text.trim(),
             valid_from: next.valid_from ?? null, valid_to: next.valid_to ?? null,
+            amount_min: next.amount_min ?? null, amount_max: next.amount_max ?? null,
           });
           // Deshacer la creación = borrar la regla Y devolver lo que movió a como estaba.
           pushUndo({ label: t("rules.undoCreate", { defaultValue: "create rule {{k}}", k: next.match_text.trim() }),
@@ -284,6 +314,44 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         if (reload) load();
       } catch (err) {
         setError(String((err as Error)?.message ?? err));
+        load();
+      } finally { setSaving(null); }
+      return true;
+    }
+
+    // MONTO (8-oct): la regla solo vale si la magnitud del movimiento está en ese rango. Vacío = sin límite.
+    if (AMOUNT_PROPS.includes(prop)) {
+      const n = parseMoney(value);
+      if (n === undefined) {
+        setError(t("rules.amountInvalid", { defaultValue: "Write the amount as a number without a sign (e.g. 50 or 1200.50), or leave it blank." }));
+        load();
+        return false;
+      }
+      const key = prop as "amount_min" | "amount_max";
+      if (n === (before[key] ?? null)) return false;
+      const lo = key === "amount_min" ? n : (before.amount_min ?? null);
+      const hi = key === "amount_max" ? n : (before.amount_max ?? null);
+      if (lo != null && hi != null && lo > hi) {
+        setError(t("rules.amountBackwards", { defaultValue: "The minimum amount is above the maximum." }));
+        load();
+        return false;
+      }
+      setSaving(t("rules.saving", { defaultValue: "Saving…" }));
+      setError(null);
+      try {
+        const res = await updateRule(model.id, { [key]: n });
+        const prev = before[key] ?? null;
+        pushUndo({ label: t("rules.undoAmount", { defaultValue: "amount of {{k}}", k: before.match_text }),
+                   run: async () => { await updateRule(model.id, { [key]: prev }); load(); } });
+        setNote(res.released
+          ? t("rules.releasedAmount", { defaultValue: "{{count}} transactions fell outside the new amount and went back to the other rules.",
+                                        count: res.released })
+          : null);
+        if (reload) load();
+      } catch (err) {
+        setError((err as Error).message === "dup"
+          ? t("rules.dup", { defaultValue: "There is already a rule with that keyword and those conditions." })
+          : String((err as Error)?.message ?? err));
         load();
       } finally { setSaving(null); }
       return true;
@@ -492,8 +560,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     prop === "subcategory" ? (m.subcategory ?? "") : prop === "account_type"
       ? (m.account_type ?? "") : (m[prop] ?? ""));
   const editable = (m: any, prop: string) => m?._draft
-    ? ["match_text", "category", "subcategory", "valid_from", "valid_to"].includes(prop)
-    : ["category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop) && m?.scope === "COMPANY";
+    ? ["match_text", "category", "subcategory", "valid_from", "valid_to", ...AMOUNT_PROPS].includes(prop)
+    : ["category", "subcategory", "priority", "valid_from", "valid_to", ...AMOUNT_PROPS].includes(prop) && m?.scope === "COMPANY";
   const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
     const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
     const items: MenuItem[] = [
@@ -581,6 +649,19 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
           ? { display: "block", textAlign: "center", fontVariantNumeric: "tabular-nums", fontWeight: 600 }
           : { display: "block", textAlign: "center", color: "#b9b2a2" },
       }, p.model[k] ?? (p.model._draft ? "" : "—")),
+    })),
+    // MONTO: la magnitud del movimiento, inclusivo. Vacío = cualquier monto.
+    ...(["amount_min", "amount_max"] as const).map((k) => ({
+      prop: k, name: k === "amount_min" ? t("rules.amountMin", { defaultValue: "Min $" }) : t("rules.amountMax", { defaultValue: "Max $" }),
+      size: 96, sortable: true, editor: TEXT_EDITOR,
+      readonly: (p: any) => !p.model?._draft && p.model?.scope !== "COMPANY",
+      cellTemplate: (h: any, p: any) => h("span", {
+        title: t("rules.amountHint", { defaultValue: "The rule only applies when the transaction's amount (without sign) is in this range, inclusive. Blank = any amount." }),
+        style: p.model[k] != null
+          ? { display: "block", textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }
+          : { display: "block", textAlign: "center", color: "#b9b2a2" },
+      }, p.model[k] != null ? "$" + Number(p.model[k]).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : (p.model._draft ? "" : "—")),
     })),
     { prop: "_scopeLabel", name: t("rules.scope", { defaultValue: "Sector" }), size: 150,
       sortable: true, readonly: true,
@@ -671,7 +752,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       const res = await applyRuleProposals(applicable.map((r) => ({
         keyword: r.keyword, account_type: r.account_type, category: r.category,
         subcategory: r.subcategory || undefined, priority: r.priority ?? undefined,
-        valid_from: r.valid_from ?? null, valid_to: r.valid_to ?? null,
+        valid_from: r.valid_from ?? null, valid_to: r.valid_to ?? null, origin: "import" as const,
+        amount_min: r.amount_min ?? null, amount_max: r.amount_max ?? null,
       })));
       setNote(t("rules.imported", {
         defaultValue: "Imported {{c}} rules and aligned {{a}} transactions.", c: res.created, a: res.applied,
@@ -714,6 +796,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
                      match_text: snap.match_text, account_type: snap.account_type ?? "", category: snap.category,
                      subcategory: snap.subcategory ?? undefined, priority: snap.priority ?? null,
                      valid_from: snap.valid_from ?? null, valid_to: snap.valid_to ?? null,
+                     amount_min: snap.amount_min ?? null, amount_max: snap.amount_max ?? null,
                    });
                    if (snap.style) await updateRule(again.id, { style: snap.style });
                    load();
@@ -727,15 +810,10 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     } finally { setSaving(null); }
   }
 
-  // "IR A LA REGLA" desde la Hoja: cuando las reglas llegan, se selecciona esa fila y se desplaza ahí.
-  useEffect(() => {
-    if (!focusRule || !rules) return;
-    const y = rows.findIndex((r) => r.id === focusRule.id);
-    onFocusRuleDone?.();
-    if (y < 0) {
-      setError(t("rules.goMissing", { defaultValue: "The rule that decided this row no longer exists. Its transactions went back to the other rules or are Pending." }));
-      return;
-    }
+  /** Selecciona la fila de una regla y la deja a la vista. False si la regla no está. */
+  const selectRule = (id: number): boolean => {
+    const y = rows.findIndex((r) => r.id === id);
+    if (y < 0) return false;
     const grid = gridRef.current as any;
     setTimeout(async () => {
       try {
@@ -744,7 +822,21 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         await grid?.setCellsFocus?.({ x: 0, y }, { x: Math.max(0, cols.length - 1), y });
       } catch { /* la grilla aún no está lista */ }
     }, 120);
+    return true;
+  };
+
+  // "IR A LA REGLA" desde la Hoja: cuando las reglas llegan, se selecciona esa fila y se desplaza ahí.
+  useEffect(() => {
+    if (!focusRule || !rules) return;
+    onFocusRuleDone?.();
+    if (!selectRule(focusRule.id)) {
+      setError(t("rules.goMissing", { defaultValue: "The rule that decided this row no longer exists. Its transactions went back to the other rules or are Pending." }));
+    }
   }, [focusRule, rules]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // VER COMO FÓRMULA (8-oct): el libro entero como una cadena de SI, de solo lectura.
+  const [formulaOpen, setFormulaOpen] = useState(false);
+  const [picked, setPicked] = useState<number | null>(null);
 
   // Los menús de arriba (en la Hoja) usan estas mismas acciones.
   useEffect(() => {
@@ -756,6 +848,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       undo: () => void undo(), canUndo, lastUndo,
       restyle: (p) => void restyle(p), selectedCount: selected.length,
       deleteRule: () => { const r = focusedRule(); if (r) void removeRule(r); }, canDelete: !!focusedRule(),
+      toggleFormula: () => setFormulaOpen((o) => !o), formulaOpen,
     });
   });
   useEffect(() => () => onCommands?.(null), []);  // eslint-disable-line react-hooks/exhaustive-deps
@@ -781,6 +874,12 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         <button onClick={() => downloadRulesCsv((rules ?? []).filter((r) => r.scope === "COMPANY"))}
           disabled={!rules?.length} style={{ ...TOOL_BTN, opacity: rules?.length ? 1 : 0.5 }}>
           {t("rules.export", { defaultValue: "Export" })}
+        </button>
+        <button onClick={() => setFormulaOpen((o) => !o)} aria-pressed={formulaOpen}
+          style={{ ...TOOL_BTN, fontWeight: 600, color: "#1A8754", borderColor: formulaOpen ? "#1A8754" : undefined,
+                   background: formulaOpen ? "rgba(26,135,84,.08)" : undefined }}>
+          <span style={{ fontStyle: "italic", marginInlineEnd: 4 }}>ƒ</span>
+          {formulaOpen ? t("rules.formula.hide", { defaultValue: "Hide the formula" }) : t("rules.formula.show", { defaultValue: "View as formula" })}
         </button>
         <button onClick={() => { const r = focusedRule(); if (r) void removeRule(r); }} disabled={!focusedRule()}
           title={focusedRule() ? undefined : t("rules.deletePick", { defaultValue: "Select a cell of the rule to delete" })}
@@ -847,6 +946,11 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
           } : undefined}
           emptyLabel={t("sheet.formulaEmpty", { defaultValue: "Select a cell to see its full content" })}
           ariaLabel={t("sheet.formulaLabel", { defaultValue: "Cell content" })} />
+      )}
+
+      {formulaOpen && imp === null && rules && (
+        <RuleFormula rules={rules} selectedId={picked ?? focus?.id ?? null}
+          onPick={(id) => { setPicked(id); selectRule(id); }} onClose={() => setFormulaOpen(false)} />
       )}
 
       <div ref={hostRef} onContextMenu={(e) => void onContextMenu(e)}
@@ -962,10 +1066,12 @@ function ImportPreview({ rows, chart, allCats, onRow, applicable, busy, onCancel
                 <td style={{ ...td, textAlign: "center", color: r.priority != null ? undefined : "#b9b2a2" }}>
                   {r.priority ?? t("rules.priorityAuto", { defaultValue: "auto" })}
                 </td>
-                <td style={{ ...td, fontSize: 12.5, whiteSpace: "nowrap", color: r.valid_from || r.valid_to ? undefined : "#b9b2a2" }}>
+                <td style={{ ...td, fontSize: 12.5, whiteSpace: "nowrap", color: r.valid_from || r.valid_to || r.amount_min != null || r.amount_max != null ? undefined : "#b9b2a2" }}>
                   {r.valid_from || r.valid_to
                     ? `${r.valid_from ?? "…"} → ${r.valid_to ?? "…"}`
                     : t("rules.windowAny", { defaultValue: "any date" })}
+                  {(r.amount_min != null || r.amount_max != null) &&
+                    ` · $${r.amount_min ?? "0"}${r.amount_max != null ? `–$${r.amount_max}` : "+"}`}
                 </td>
                 <td style={td}>
                   {r.status !== "ok" && (
