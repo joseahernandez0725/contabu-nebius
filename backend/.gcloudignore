@@ -1,0 +1,29 @@
+# Lo que `gcloud run deploy --source .` NO sube a Cloud Build (14-oct-2026).
+# Con este archivo, gcloud ya no usa el .gitignore: todo lo que haga falta excluir va aquí.
+# Mismas reglas que .dockerignore (que manda dentro de la imagen); aquí además se evita que
+# los datos reales salgan de la PC hacia el bucket de Cloud Build.
+.gcloudignore
+.git/
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Secretos
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Datos REALES de clientes (los patrones distinguen mayúsculas: el extracto real termina en .CSV)
+private/
+Chase*
+*_Activity_*
+*.[cC][sS][vV]
+*.[xX][lL][sS]
+*.[xX][lL][sS][xX]
+*.[pP][dD][fF]
+*.[oO][fF][xX]
+*.[qQ][fF][xX]

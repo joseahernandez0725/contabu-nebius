@@ -1,8 +1,25 @@
 # No copiar a la imagen: entorno local, secretos y basura.
 .venv/
 __pycache__/
-*.pyc
+**/*.pyc
+.pytest_cache/
+
+# ===== Secretos (NUNCA en la imagen) =====
 .env
 .env.*
-*.csv
-.pytest_cache/
+**/*.key
+**/*.pem
+secrets/
+
+# ===== Datos REALES de clientes (NUNCA en la imagen) — 14-oct-2026 =====
+# Ojo: estos patrones distinguen mayúsculas, y el extracto real de Chase termina en .CSV.
+# Por eso los extractos van con [cC][sS][vV] y **/ (cualquier carpeta), no solo "*.csv".
+private/
+Chase*
+*_Activity_*
+**/*.[cC][sS][vV]
+**/*.[xX][lL][sS]
+**/*.[xX][lL][sS][xX]
+**/*.[pP][dD][fF]
+**/*.[oO][fF][xX]
+**/*.[qQ][fF][xX]

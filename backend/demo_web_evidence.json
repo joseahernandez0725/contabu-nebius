@@ -40,6 +40,16 @@
   "results_count": 5
  },
  {
+  "fingerprint": "AMEX EPAYMENT",
+  "query": "AMEX EPAYMENT",
+  "status": "ok",
+  "business_type": "bank_financial",
+  "confidence": "low",
+  "source_url": "https://www.americanexpress.com/en-ca/customer-service/payments-and-billings/faq.pay-card-bill.html",
+  "source_domain": "www.americanexpress.com",
+  "results_count": 5
+ },
+ {
   "fingerprint": "AMZN",
   "query": "AMZN",
   "status": "ok",
@@ -80,6 +90,16 @@
   "results_count": 5
  },
  {
+  "fingerprint": "BRIGHT",
+  "query": "BRIGHT",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
   "fingerprint": "CHEVRON",
   "query": "CHEVRON",
   "status": "ok",
@@ -97,6 +117,16 @@
   "confidence": "medium",
   "source_url": "https://en.wikipedia.org/wiki/Cintas",
   "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "COMCAST BUSINESS",
+  "query": "COMCAST BUSINESS",
+  "status": "ok",
+  "business_type": "telecom",
+  "confidence": "low",
+  "source_url": "https://business.comcast.com",
+  "source_domain": "business.comcast.com",
   "results_count": 5
  },
  {
@@ -147,6 +177,26 @@
   "confidence": "high",
   "source_url": "https://en.wikipedia.org/wiki/Ferguson_Enterprises",
   "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "GRAINGER",
+  "query": "GRAINGER",
+  "status": "ok",
+  "business_type": "industrial_supplies",
+  "confidence": "medium",
+  "source_url": "https://en.wikipedia.org/wiki/W._W._Grainger",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "HOBART SERVICE",
+  "query": "HOBART SERVICE",
+  "status": "ok",
+  "business_type": "restaurant",
+  "confidence": "low",
+  "source_url": "https://www.hobartcorp.com/office-new-york-ny",
+  "source_domain": "www.hobartcorp.com",
   "results_count": 5
  },
  {
@@ -240,6 +290,16 @@
   "results_count": 5
  },
  {
+  "fingerprint": "PETCO",
+  "query": "PETCO",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
   "fingerprint": "PGANDE WEB",
   "query": "PGANDE WEB",
   "status": "ok",
@@ -270,6 +330,26 @@
   "results_count": 5
  },
  {
+  "fingerprint": "SEPHORA",
+  "query": "SEPHORA",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
+  "fingerprint": "SFPUC WATER",
+  "query": "SFPUC WATER",
+  "status": "ok",
+  "business_type": "utility",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/San_Francisco_Public_Utilities_Commission",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
   "fingerprint": "SHELL OIL",
   "query": "SHELL OIL",
   "status": "ok",
@@ -287,6 +367,16 @@
   "confidence": "high",
   "source_url": "https://en.wikipedia.org/wiki/Smart_%26_Final",
   "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "SPOTIFY USA",
+  "query": "SPOTIFY USA",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
   "results_count": 5
  },
  {
@@ -350,12 +440,42 @@
   "results_count": 5
  },
  {
+  "fingerprint": "THUMBTACK LEAD",
+  "query": "THUMBTACK LEAD",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
   "fingerprint": "ULINE",
   "query": "ULINE",
   "status": "ok",
   "business_type": "packaging_shipping",
   "confidence": "high",
   "source_url": "https://www.linkedin.com/company/uline",
+  "source_domain": "www.linkedin.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "ULTA BEAUTY",
+  "query": "ULTA BEAUTY",
+  "status": "ok",
+  "business_type": "department_store",
+  "confidence": "low",
+  "source_url": "https://en.wikipedia.org/wiki/Ulta_Beauty",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "UNITED RENTALS",
+  "query": "UNITED RENTALS",
+  "status": "ok",
+  "business_type": "utility",
+  "confidence": "medium",
+  "source_url": "https://www.linkedin.com/company/united-rentals",
   "source_domain": "www.linkedin.com",
   "results_count": 5
  },
@@ -372,6 +492,26 @@
  {
   "fingerprint": "WALMART SUPERCENTER",
   "query": "WALMART SUPERCENTER",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
+  "fingerprint": "WEBSTAURANTSTORE",
+  "query": "WEBSTAURANTSTORE",
+  "status": "ok",
+  "business_type": "restaurant_supply",
+  "confidence": "medium",
+  "source_url": "https://en.wikipedia.org/wiki/WebstaurantStore",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "WORKSPACE SPARKLEC",
+  "query": "WORKSPACE SPARKLEC",
   "status": "ok",
   "business_type": null,
   "confidence": null,
