@@ -181,6 +181,7 @@ class Planted:
     action: Optional[tuple] = None    # ("manual", sección, categoría, comercio) | ("drift", categoría)
     expected: Optional[tuple] = None  # (sección, categoría) correcta; None = hay que preguntar / revisar
     story: Optional[str] = None       # "vacation_note" | "supermarket_note": la historia de una NOTA
+    truth: bool = True                # False = solo PREPARA filas correctas (no es un error, no va a la respuesta)
 
 
 def _pick(rows: list[tuple], spec: Planted) -> list[int]:
@@ -205,6 +206,15 @@ def _apply_errors(session: Session, owner: User, rows: list[tuple], ids: list[in
                 _, at, cat, sub = spec.action
                 _manual(session, tx, at, cat, sub, owner,
                         datetime.combine(tx.date + timedelta(days=3), datetime.min.time()), reason="planted_mistake")
+            elif spec.action[0] == "manual_ok":
+                # Filas de CONTEXTO que el bookkeeper escribió bien (el juego a ciegas): a mano, pero SIN
+                # fila en el historial. Si entraran, la medición de la F11 las listaría al aprender y el
+                # juego dejaría de ser ciego (14-oct).
+                _, at, cat, sub = spec.action
+                tx.account_type, tx.category, tx.subcategory = at, cat, sub.upper()
+                tx.source, tx.matched_rule_id = "manual", None
+                tx.confidence, tx.needs_review, tx.review_question = 1.0, False, None
+                session.add(tx)
             elif spec.action[0] == "drift":   # la regla se editó y esta fila quedó atrás
                 tx.category = spec.action[1]
                 session.add(tx)
@@ -231,7 +241,7 @@ def _seed_book(session: Session, firm: Firm, owner: User, name: str, sector: str
             tagged.setdefault(tag, []).append(session.get(Transaction, tid))
     # Los errores plantados van ANTES de `plant`: lo que se escribe a mano aquí queda fuera del historial
     # que `plant` arma después (así no se corren los índices de `_history`).
-    _apply_errors(session, owner, book.rows, ids, ERRORS.get(name, []))
+    _apply_errors(session, owner, book.rows, ids, ERRORS.get(name, []) + ERRORS_BLIND.get(name, []))
     plant(session, company, {r.match_text: r for r in made}, tagged, owner)
     # Las NOTAS del bookkeeper (tabla `booknote` de la F11, 8-oct): misma validación que la API.
     book_notes.seed_notes(session, company.id, DEMO_NOTES.get(name, []))
@@ -297,6 +307,7 @@ def _rivera() -> Book:
     b.add([date(2026, 8, 27)], "VERIZON WIRELESS PAYMENTS", 612.40)
     b.add(monthly(9), "NETFLIX.COM", 22.99)
     b.add([date(2026, 7, 23)], "TARGET T-2771 ANTIOCH CA", 186.45)
+    _blind_rows(b, "Rivera HVAC LLC")
     return b
 
 
@@ -377,6 +388,7 @@ def _sparkle() -> Book:
     b.add([date(2026, 7, 14)], "SAFEWAY #2213 SAN LEANDRO CA", 96.20)
     b.add([date(2026, 9, 9)], "SAFEWAY #2213 SAN LEANDRO CA", 71.35)
     b.add([date(2026, 9, 24)], "SQ *JANITEX SUPPLY", 1940.00)
+    _blind_rows(b, "Sparkle Cleaning Co.")
     return b
 
 
@@ -437,6 +449,7 @@ def _lupita() -> Book:
     b.add([date(2026, 8, 8)], "BEST BUY 00118 EMERYVILLE CA", 849.99)
     b.add([date(2026, 7, 18)], "AMC METREON 16 SAN FRANCISCO", 54.20)
     b.add(monthly(11), "DISNEY PLUS", 15.99)
+    _blind_rows(b, "Casa Lupita Taqueria")
     return b
 
 
@@ -541,6 +554,119 @@ ERRORS: dict[str, list[Planted]] = {
     ],
 }
 
+# ── EL SEGUNDO JUEGO, A CIEGAS (14-oct; pedido de la F11, aprobado por Jose) ──────────────────────────
+# Para un número honesto en el README: la F11 ajustó su auditor mirando el primer juego, así que este
+# NO lo ve antes de medir. Filas nuevas (otros comercios, otros montos, otras fechas), fecha y monto FIJOS
+# (no tocan el generador aleatorio: ni los montos ni `DEMO_TRUTH_ERRORS` cambian), y nada queda Pendiente
+# (así `DEMO_TRUTH_PENDING` tampoco cambia). Además de los tipos de siempre, tipos que el primero no tiene:
+# `duplicate_charge`, `transfer_as_expense`, `loan_as_revenue`, `owner_money_as_revenue`, `wrong_section`.
+_BLIND_ROWS: dict[str, list[tuple]] = {   # (fecha, descripción, monto, entra?)
+    "Rivera HVAC LLC": [
+        (date(2026, 7, 8), "ONDECK CAPITAL FUNDING DEPOSIT", 15000.00, True),
+        (date(2026, 7, 28), "UNITED RENTALS #C47 CONCORD CA", 1180.00, False),
+        (date(2026, 7, 30), "MONTHLY SERVICE FEE", 95.00, False),
+        (date(2026, 8, 3), "CHASE CREDIT CRD AUTOPAY PPD ID 4760039224", 1262.18, False),
+        (date(2026, 8, 22), "SEPHORA #1123 WALNUT CREEK CA", 78.40, False),
+        (date(2026, 9, 8), "GRAINGER 1043 HAYWARD CA", 318.77, False),
+        (date(2026, 9, 8), "GRAINGER 1043 HAYWARD CA", 318.77, False),
+    ],
+    "Sparkle Cleaning Co.": [
+        (date(2026, 7, 7), "GOOGLE *WORKSPACE SPARKLEC", 14.40, False),
+        (date(2026, 8, 7), "GOOGLE *WORKSPACE SPARKLEC", 14.40, False),
+        (date(2026, 9, 7), "GOOGLE *WORKSPACE SPARKLEC", 14.40, False),
+        (date(2026, 7, 19), "SPOTIFY USA", 11.99, False),
+        (date(2026, 8, 19), "SPOTIFY USA", 11.99, False),
+        (date(2026, 9, 19), "SPOTIFY USA", 11.99, False),
+        (date(2026, 7, 27), "AMEX EPAYMENT ACH PMT W3492", 842.33, False),
+        (date(2026, 8, 20), "SQ *BRIGHT MOPS CO", 214.60, False),
+        (date(2026, 8, 20), "SQ *BRIGHT MOPS CO", 214.60, False),
+        (date(2026, 9, 1), "THUMBTACK LEAD CREDITS", 96.00, False),
+        (date(2026, 9, 26), "PETCO 1432 OAKLAND CA", 64.18, False),
+    ],
+    "Casa Lupita Taqueria": [
+        (date(2026, 7, 2), "ONLINE TRANSFER FROM LUPITA ORTEGA PERSONAL", 5000.00, True),
+        (date(2026, 7, 13), "UBER EATS PAYOUT 7KQ2", 418.36, True),
+        (date(2026, 8, 10), "UBER EATS PAYOUT 7KQ2", 377.91, True),
+        (date(2026, 7, 29), "SFPUC WATER PAYMENT", 212.44, False),
+        (date(2026, 7, 29), "SFPUC WATER PAYMENT", 212.44, False),
+        (date(2026, 8, 4), "WEBSTAURANTSTORE.COM", 236.90, False),
+        (date(2026, 8, 31), "WEBSTAURANTSTORE.COM", 158.25, False),
+        (date(2026, 9, 21), "WEBSTAURANTSTORE.COM", 301.12, False),
+        (date(2026, 8, 13), "HOBART SERVICE 4471 SAN JOSE", 486.00, False),
+        (date(2026, 9, 12), "ULTA BEAUTY #741 EMERYVILLE", 63.70, False),
+        (date(2026, 7, 6), "COMCAST BUSINESS 8155 ACH", 119.95, False),
+        (date(2026, 8, 6), "COMCAST BUSINESS 8155 ACH", 119.95, False),
+        (date(2026, 8, 25), "COMCAST BUSINESS 8155 ACH", 642.80, False),
+        (date(2026, 9, 7), "COMCAST BUSINESS 8155 ACH", 119.95, False),
+    ],
+}
+
+
+def _blind_rows(b: "Book", name: str) -> None:
+    for d, desc, amount, inflow in _BLIND_ROWS[name]:
+        b.add([d], desc, amount, inflow=inflow)
+
+
+ERRORS_BLIND: dict[str, list[Planted]] = {
+    "Rivera HVAC LLC": [
+        Planted("loan_as_revenue", "Loan money received (OnDeck) typed as job revenue: it is a liability, not income.",
+                "ONDECK CAPITAL", action=("manual", REVENUE, "Construction Revenue", "OnDeck"), expected=(NON_PL, "Loan Proceeds")),
+        Planted("wrong_section", "Equipment rented for a job typed as overhead office expense; it is a direct job cost.",
+                "UNITED RENTALS", action=("manual", OPEX, "Office Expense", "United Rentals"), expected=(COGS, "Equipment Rental")),
+        Planted("unusual_amount", "The monthly bank fee is $15; one month shows $95 (overdraft or wire fees?).",
+                "MONTHLY SERVICE FEE", lambda r: -r[2] > 50),
+        Planted("transfer_as_expense", "Paying the credit card typed as office expense: the purchases are already expenses (double count).",
+                "CHASE CREDIT CRD AUTOPAY", action=("manual", OPEX, "Office Expense", "Chase Card"), expected=(NON_PL, "Credit Card Payment")),
+        Planted("personal_expense", "Sephora typed as office expense.",
+                "SEPHORA", action=("manual", OPEX, "Office Expense", "Sephora"), expected=(NON_PL, "Owner Draw")),
+        Planted("duplicate_charge", "Grainger charged the same $318.77 twice on the same day: one is a duplicate to dispute.",
+                "GRAINGER", [1], action=("manual", COGS, "Small Tools & Equipment", "Grainger")),
+        Planted("rule_deviation", "Decided by the STATE FARM rule but carries Vehicle Expenses (the rule changed later).",
+                "STATE FARM", [1], action=("drift", "Vehicle Expenses"), expected=(OPEX, "Insurance")),
+        Planted("setup", "", "GRAINGER", [0], action=("manual_ok", COGS, "Small Tools & Equipment", "Grainger"), truth=False),
+    ],
+    "Sparkle Cleaning Co.": [
+        Planted("merchant_two_categories", "Google Workspace is software; one month was typed as telephone & internet.",
+                "GOOGLE *WORKSPACE", [1], action=("manual", OPEX, "Telephone & Internet", "Google Workspace"), expected=(OPEX, "Software")),
+        Planted("personal_expense", "Spotify booked as business software.",
+                "SPOTIFY", action=("manual", OPEX, "Software", "Spotify"), expected=(NON_PL, "Owner Draw")),
+        Planted("transfer_as_expense", "Paying the Amex card typed as cleaning supplies (double count).",
+                "AMEX EPAYMENT", action=("manual", COGS, "Cleaning Supplies", "Amex"), expected=(NON_PL, "Credit Card Payment")),
+        Planted("duplicate_charge", "Bright Mops charged the same $214.60 twice on the same day.",
+                "SQ *BRIGHT MOPS", [1], action=("manual", COGS, "Cleaning Supplies", "Bright Mops")),
+        Planted("sign_mismatch", "Thumbtack lead credits (money OUT, marketing) typed as cleaning revenue.",
+                "THUMBTACK", action=("manual", REVENUE, "Cleaning Revenue", "Thumbtack"), expected=(OPEX, "Marketing")),
+        Planted("personal_expense", "Pet supplies typed as cleaning supplies.",
+                "PETCO", action=("manual", COGS, "Cleaning Supplies", "Petco"), expected=(NON_PL, "Owner Draw")),
+        Planted("rule_deviation", "Decided by the NEXT INSURANCE rule but carries Office Expense (the rule changed later).",
+                "NEXT INSURANCE", [1], action=("drift", "Office Expense"), expected=(OPEX, "Insurance")),
+        Planted("rule_deviation", "Decided by the bank-fee rule but carries Office Expense (the rule changed later).",
+                "MONTHLY SERVICE FEE", [2], action=("drift", "Office Expense"), expected=(OPEX, "Bank Fees")),
+        Planted("setup", "", "GOOGLE *WORKSPACE", [0, 2], action=("manual_ok", OPEX, "Software", "Google Workspace"), truth=False),
+        Planted("setup", "", "SQ *BRIGHT MOPS", [0], action=("manual_ok", COGS, "Cleaning Supplies", "Bright Mops"), truth=False),
+    ],
+    "Casa Lupita Taqueria": [
+        Planted("owner_money_as_revenue", "The owner put her own money in; it was typed as sales.",
+                "ONLINE TRANSFER FROM LUPITA ORTEGA", action=("manual", REVENUE, "Food & Beverage Sales", "Lupita Ortega"),
+                expected=(NON_PL, "Owner Contribution")),
+        Planted("sign_mismatch", "Uber Eats payouts (money IN, delivery sales) typed as food purchases.",
+                "UBER EATS PAYOUT", action=("manual", COGS, "Food Purchases", "Uber Eats"), expected=(REVENUE, "Food & Beverage Sales")),
+        Planted("duplicate_charge", "The water bill was paid twice on the same day.",
+                "SFPUC WATER", [1], action=("manual", OPEX, "Utilities", "SFPUC")),
+        Planted("merchant_two_categories", "WebstaurantStore is smallwares; one order was typed as food purchases.",
+                "WEBSTAURANTSTORE", [1], action=("manual", COGS, "Food Purchases", "WebstaurantStore"), expected=(OPEX, "Smallwares")),
+        Planted("wrong_section", "Hobart kitchen-equipment repair typed as food purchases (COGS); it is repairs & maintenance.",
+                "HOBART SERVICE", action=("manual", COGS, "Food Purchases", "Hobart"), expected=(OPEX, "Repairs & Maintenance")),
+        Planted("personal_expense", "Ulta Beauty typed as smallwares.",
+                "ULTA BEAUTY", action=("manual", OPEX, "Smallwares", "Ulta Beauty"), expected=(NON_PL, "Owner Draw")),
+        Planted("unusual_amount", "Comcast is $119.95 a month; one extra $642.80 charge (equipment? a past-due balance?).",
+                "COMCAST BUSINESS", lambda r: -r[2] > 300, action=("manual", OPEX, "Telephone & Internet", "Comcast")),
+        Planted("setup", "", "COMCAST BUSINESS", lambda r: -r[2] < 300, action=("manual_ok", OPEX, "Telephone & Internet", "Comcast"), truth=False),
+        Planted("setup", "", "SFPUC WATER", [0], action=("manual_ok", OPEX, "Utilities", "SFPUC"), truth=False),
+        Planted("setup", "", "WEBSTAURANTSTORE", [0, 2], action=("manual_ok", OPEX, "Smallwares", "WebstaurantStore"), truth=False),
+    ],
+}
+
 BOOKS = [
     ("Rivera HVAC LLC", "construction", "****4471", _rivera, _RIVERA_RULES, _plant_rivera),
     ("Sparkle Cleaning Co.", "cleaning", "****3390", _sparkle, _SPARKLE_RULES, _plant_sparkle),
@@ -608,13 +734,15 @@ DEMO_TRUTH_PENDING: dict[str, dict[str, dict]] = {
 }
 
 
-def _truth_errors() -> list[dict]:
+def _truth_errors(errors: dict[str, list[Planted]]) -> list[dict]:
     """Las filas EXACTAS de cada error plantado, sacadas de los mismos generadores (deterministas):
     fecha, descripción, monto y dirección, en el orden del libro."""
     out = []
     for name, _sector, _account, make, _rules, _plant in BOOKS:
         rows = sorted(make().rows, key=lambda r: (r[0], r[1]))
-        for spec in ERRORS.get(name, []):
+        for spec in errors.get(name, []):
+            if not spec.truth:
+                continue
             picked = [rows[i] for i in _pick(rows, spec)]
             out.append({
                 "book": name, "type": spec.type, "detail": spec.detail, "story": spec.story,
@@ -627,4 +755,7 @@ def _truth_errors() -> list[dict]:
 
 
 # DEMO_TRUTH_ERRORS: los errores plantados para el revisor ①, uno por entrada (puede cubrir varias filas).
-DEMO_TRUTH_ERRORS: list[dict] = _truth_errors()
+DEMO_TRUTH_ERRORS: list[dict] = _truth_errors(ERRORS)
+
+# DEMO_TRUTH_ERRORS_BLIND: el segundo juego, a ciegas (14-oct). Misma forma. La F11 lo mide sin abrirlo antes.
+DEMO_TRUTH_ERRORS_BLIND: list[dict] = _truth_errors(ERRORS_BLIND)
