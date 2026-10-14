@@ -667,7 +667,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       sortable: true, readonly: true,
       cellTemplate: (h: any, p: any) => h("span", {
         style: {
-          fontSize: "11.5px", fontWeight: 700, padding: "1px 8px", borderRadius: 5,
+          fontSize: "11.5px", fontWeight: 700, padding: "1px 8px", borderRadius: "5px",
           background: p.model.scope === "SECTOR" ? "rgba(244,180,0,.18)" : "rgba(26,135,84,.12)",
           color: p.model.scope === "SECTOR" ? "#7a5b00" : "#15803d",
         },

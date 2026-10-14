@@ -519,6 +519,7 @@
       "out": "out"
     },
     "notReviewed": "Not reviewed by ① yet.",
+    "staleVerdict": "The reviewer wrote this in another language; “Review the book” redoes it in English.",
     "okNote": "Why it's fine (optional)",
     "act": {
       "backToRule": "Back to the rule ({{s}})",
@@ -767,17 +768,7 @@
     "still": "Not verified yet — check your spam folder."
   },
   "sheet": {
-    "obs": {
-      "signMismatch": "{{section}} but the money came {{dir}}",
-      "in": "IN",
-      "out": "OUT",
-      "ruleDeviation": "Doesn't match its rule — should be {{s}}",
-      "merchantInconsistency": "Same merchant categorized differently ({{m}})",
-      "uncategorized": "Not categorized yet",
-      "bankRemoved": "The bank withdrew this transaction — keep it or delete it (right-click)"
-    },
     "saving": "Saving…",
-    "fixing": "Fixing…",
     "following": "Looking up the rule…",
     "noRule": "No rule covers this transaction. Create one in the Rules tab.",
     "date": "Date",
@@ -787,8 +778,6 @@
     "fromRule": "Comes from a rule — click to see which",
     "manualClick": "Written by hand — click to follow the rule again",
     "subcategory": "Subcategory",
-    "observation": "Observation",
-    "fix": "Fix",
     "note": "Note",
     "notePlaceholder": "add a note…",
     "formulaLabel": "Cell content",
@@ -840,7 +829,6 @@
     "undo": "Undo",
     "undoWhat": "Undo: {{what}}",
     "undoCell": "{{col}} of {{what}}",
-    "undoFix": "fix → {{c}}",
     "undoFollow": "follow the rule",
     "undoChanged": "That row changed after this edit, so it wasn't undone.",
     "notInChart": "“{{v}}” isn't an account in this book's chart.",

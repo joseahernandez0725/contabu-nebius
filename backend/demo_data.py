@@ -34,6 +34,7 @@ from sqlmodel import Session, select
 
 import book_notes
 import corrections
+import demo_web_evidence
 from ingestion import ingest_parsed, make_fingerprint
 from models import AccountType, CategoryRule, Company, Firm, RuleScope, Transaction, User
 
@@ -398,5 +399,8 @@ def seed_demo_books(session: Session, firm: Firm, owner: User) -> list[Company]:
     """Los 3 libros del demo dentro de `firm`. Solo `flush()`: el commit es de quien llama."""
     books = [_seed_book(session, firm, owner, name, sector, account, make(), rules, plant)
              for name, sector, account, make, rules, plant in BOOKS]
+    # Las verificaciones de comercios (agente ②, F11) ya buscadas UNA vez: cada visitante las recibe en la
+    # caché de SU oficina y "Verificar comercios" no gasta créditos de Tavily (deuda #24, 13-oct).
+    demo_web_evidence.seed_lookups(session, firm)
     session.flush()
     return books

@@ -161,6 +161,7 @@ def note_case(ctx: BookContext, rows: list[FormulaRow]) -> dict | None:
     expected = {t.id for t in ctx.txs
                 if case["contains"] in (t.description or "").upper() and case["from"] <= t.date <= case["to"]}
     hit = extra = 0
+    extras: list[str] = []
     for t in ctx.txs:
         if t.source == "manual":
             continue
@@ -170,7 +171,8 @@ def note_case(ctx: BookContext, rows: list[FormulaRow]) -> dict | None:
             hit += 1
         elif t.id not in expected and goes and formula.decide(ctx.rules, t) != d:
             extra += 1
-    return {"note": case["note"], "expected": len(expected), "hit": hit, "extra": extra}
+            extras.append(f"{t.date} {t.description}")
+    return {"note": case["note"], "expected": len(expected), "hit": hit, "extra": extra, "extra_examples": extras[:6]}
 
 
 def measure_book(session: Session, company: Company, cutoff: date) -> dict:
@@ -229,6 +231,8 @@ def _print_agent(results: list[dict], base: list[dict], privacy: dict) -> None:
         if r["note_case"]:
             n = r["note_case"]
             print(f"    caso de nota ({n['note']}): {n['hit']}/{n['expected']} filas esperadas · {n['extra']} de más")
+            for ex in n.get("extra_examples", []):
+                print(f"      + de más: {ex}")
         if u:
             print(f"    costo: {u.prompt_tokens} tokens de entrada / {u.completion_tokens} de salida "
                   f"(razonamiento≈{u.reasoning_tokens_est}) · ${u.cost_usd or 0:.6f} · {u.latency_ms} ms")
@@ -298,8 +302,11 @@ def main() -> int:
                 firm = Firm(name="MEASURE DEMO", owner_user_id=owner.id)
                 session.add(firm); session.flush()
                 books = demo_data.seed_demo_books(session, firm, owner)
-                for b in books:
-                    book_notes.seed_notes(session, b.id, demo_data.DEMO_NOTES.get(b.name, []))
+                # Las notas ya las siembra `demo_data.seed_demo_books` (Movimientos, 8-oct); sembrarlas aquí
+                # otra vez las DUPLICABA (✅ 13-oct: la nota de las vacaciones salía dos veces).
+                # Las verificaciones del ② del demo, como las recibe cada visitante (sin red ni créditos).
+                import demo_web_evidence
+                demo_web_evidence.seed_lookups(session, firm)
                 session.flush()
             else:
                 book = session.get(Company, args.company)

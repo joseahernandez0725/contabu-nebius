@@ -1315,27 +1315,6 @@ def _company_audit(session: Session, company_id: int) -> list[dict]:
     return audit_categorization(items, rules_by_id)
 
 
-def _audit_by_transaction(session: Session, company_id: int) -> dict[int, dict]:
-    """Invierte la salida del AUDITOR (hallazgos por GRUPO, con `transaction_ids`) a un mapa
-    **por transacción** → la "observación" de la hoja (FASE 10, paso 6).
-
-    El auditor agrupa (una inconsistencia cubre varias transacciones del mismo comercio); la hoja
-    necesita un renglón por fila. Si una transacción cae en varios hallazgos, gana el más severo.
-    """
-    order = {"high": 3, "medium": 2, "low": 1}
-    by_tx: dict[int, dict] = {}
-    for f in _company_audit(session, company_id):
-        # Se pasa TODO el hallazgo menos lo voluminoso: el frontend traduce por `type` usando los
-        # campos estructurados (account_type, direction, merchant…), no el texto crudo.
-        obs = {k: v for k, v in f.items() if k not in ("transaction_ids", "examples")}
-        obs["text"] = f.get("detail")
-        for tid in f.get("transaction_ids", []):
-            prev = by_tx.get(tid)
-            if prev is None or order.get(obs["severity"], 0) > order.get(prev["severity"], 0):
-                by_tx[tid] = obs
-    return by_tx
-
-
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 # LA HOJA (FASE 10): etiquetas con significado + formato libre de celda.
 # Son dos cosas a propósito: la etiqueta es DATO (se filtra, la IA la lee); el formato es
@@ -1634,10 +1613,12 @@ class DismissalIn(BaseModel):
 
 
 @app.get("/api/companies/{company_id}/audit/board")
-def audit_board(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+def audit_board(company_id: int, lang: Optional[str] = None, user: User = Depends(current_user),
+                session: Session = Depends(get_session)):
+    """`lang`: el idioma de la pantalla — un veredicto del ① guardado en otro idioma se marca viejo."""
     import book_review
     company = console_company(company_id, user, session)
-    return book_review.board(session, company)
+    return book_review.board(session, company, lang)
 
 
 @app.get("/api/companies/{company_id}/audit/summary")
@@ -1991,15 +1972,16 @@ def delete_pnl_report(
 @app.get("/api/companies/{company_id}/transactions")
 def list_transactions(
     company_id: int,
-    with_audit: bool = False,
+    for_sheet: bool = False,
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
     """Lista las transacciones de una empresa (más recientes primero).
 
-    `with_audit=true` adjunta a cada fila su **observación** del agente auditor (la 6ª columna de la
-    hoja, FASE 10). Se calcula en memoria sobre los datos vivos — determinista y sin IA, así que no
-    cuesta nada; por eso va en la misma llamada en vez de obligar al frontend a cruzar dos listas.
+    `for_sheet=true` (la Hoja) adjunta a cada fila sus **etiquetas** y su **formato de celda**.
+    🔄 13-oct: antes se llamaba `with_audit` y además corría el auditor entero en cada recarga para la
+    columna Observación; Firm quitó esa columna (la marca de revisión sale de `GET /transactions/flags`),
+    así que el auditor ya no corre aquí.
     """
     # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
     # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
@@ -2009,9 +1991,8 @@ def list_transactions(
         .where(Transaction.company_id == company_id)
         .order_by(Transaction.date.desc())
     ).all()
-    if not with_audit:
+    if not for_sheet:
         return txs
-    obs = _audit_by_transaction(session, company_id)
 
     # Etiquetas aplicadas (dato) y formato de celda (presentación) — en la MISMA llamada para que
     # la hoja pinte de una sola vez y no encadene tres peticiones al abrir.
@@ -2039,13 +2020,9 @@ def list_transactions(
             "font_size": cf.font_size, "font_family": cf.font_family,
         }
 
-    # El banco vinculado RETIRÓ la fila después de registrarla (aviso `removed` de Plaid): manda sobre
-    # lo del auditor, porque el bookkeeper tiene que decidir si se queda (Movimientos, 4-oct).
-    removed_obs = {"type": "bank_removed", "severity": "high",
-                   "text": "The linked bank withdrew this transaction after it was recorded."}
+    # (Lo que el banco vinculado retiró va en `bank_removed_at`; la marca de la Hoja sale de `flags`.)
     return [{
         **t.model_dump(),
-        "observation": removed_obs if t.bank_removed_at else obs.get(t.id),
         "labels": by_tx.get(t.id, []),
         "formats": fmts.get(t.id, {}),
     } for t in txs]

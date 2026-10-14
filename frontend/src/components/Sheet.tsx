@@ -570,13 +570,13 @@ export default function Sheet({ onNavigate, menuRight }: {
           }, ` - ${p.model.description_extra}`));
         } else {
           kids.push(h("span", {
-            style: { marginInlineStart: 6, color: "#c9c2b2", fontStyle: "italic", fontSize: "12px" },
+            style: { marginInlineStart: "6px", color: "#c9c2b2", fontStyle: "italic", fontSize: "12px" },
           }, t("sheet.addText", { defaultValue: "+ add" })));
         }
         for (const l of (p.model.labels ?? []) as SheetLabel[]) {
           kids.push(h("span", {
             title: l.name,
-            style: { marginInlineStart: 6, background: l.color, color: "#fff", borderRadius: 4,
+            style: { marginInlineStart: "6px", background: l.color, color: "#fff", borderRadius: "4px",
                      padding: "0 6px", fontSize: "10.5px", fontWeight: 700, whiteSpace: "nowrap" },
           }, l.name));
         }
@@ -606,13 +606,13 @@ export default function Sheet({ onNavigate, menuRight }: {
         if (fromRule) kids.push(h("span", {
           title: t("sheet.fromRule", { defaultValue: "Comes from a rule — click to see which" }),
           style: { color: "#1A8754", fontWeight: 700, fontStyle: "italic",
-                   marginInlineEnd: 5, fontSize: "12px" } }, "\u0192"));
+                   marginInlineEnd: "5px", fontSize: "12px" } }, "\u0192"));
         else if (manual) kids.push(h("button", {
           title: t("sheet.manualClick", {
             defaultValue: "Written by hand — click to follow the rule again" }),
           onClick: (e: MouseEvent) => { e.stopPropagation(); void backToRuleRef.current(p.model.id); },
           style: { border: 0, background: "transparent", cursor: "pointer", padding: 0,
-                   color: "#b9b2a2", marginInlineEnd: 5, fontSize: "11px", lineHeight: 1 },
+                   color: "#b9b2a2", marginInlineEnd: "5px", fontSize: "11px", lineHeight: 1 },
         }, "\u270e"));
         // PENDIENTE (decisión de Jose, 27-sep): una celda sin categoría se ve en ROJO y lo dice.
         // Es la base visual de "toda la categorización sale de las reglas": lo que ninguna regla
@@ -623,7 +623,7 @@ export default function Sheet({ onNavigate, menuRight }: {
               defaultValue: "No rule covers this yet — pick a category or create a rule" }),
             style: {
               background: "rgba(220,38,38,.10)", color: "#991b1b", fontWeight: 700,
-              padding: "1px 8px", borderRadius: 5, fontSize: "12.5px",
+              padding: "1px 8px", borderRadius: "5px", fontSize: "12.5px",
               border: "1px dashed rgba(220,38,38,.45)",
             },
           }, t("sheet.pending", { defaultValue: "Pending" }));

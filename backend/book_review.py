@@ -47,6 +47,28 @@ _PAYROLL_RE = re.compile(r"\b(GUSTO|ADP|PAYCHEX|PAYROLL|ONLINE PAYROLL|DIR(?:ECT
 _PAYROLL_TAX_RE = re.compile(r"\b(IRS|EFTPS|USATAXPYMT|USA TAX PYMT|TAX PAYMT|TAXPAYMENT|EDD|IRS TREAS)\b")
 
 
+_ES_WORDS = {"el", "la", "los", "las", "de", "del", "que", "es", "está", "pero", "como", "una", "un", "por", "para",
+             "con", "debería", "parece", "aparece", "se", "su", "sus", "y", "o", "no"}
+_EN_WORDS = {"the", "is", "are", "but", "as", "it", "should", "be", "this", "of", "and", "to", "for", "with",
+             "appears", "seems", "looks", "an", "a", "not", "or"}
+
+
+def text_lang(text: Optional[str]) -> Optional[str]:
+    """¿En qué idioma está una observación? Cuenta palabras frecuentes de cada idioma (sin IA). None si
+    no alcanza para decidir. Sirve para no mostrar un veredicto en inglés con la app en español (13-oct)."""
+    words = re.findall(r"[a-záéíóúñü]+", (text or "").lower())
+    es, en = sum(w in _ES_WORDS for w in words), sum(w in _EN_WORDS for w in words)
+    if es == en or max(es, en) < 2:
+        return None
+    return "es" if es > en else "en"
+
+
+def observation_stale(f: Finding, lang: Optional[str]) -> bool:
+    """Un veredicto guardado en OTRO idioma que el de la pantalla está viejo: no se muestra su texto y el
+    próximo "Revisar el libro" lo rehace en el idioma actual."""
+    return bool(f.agent_observation and lang and f.agent_lang and f.agent_lang != lang)
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -56,7 +78,8 @@ def merchant_name(t: Transaction) -> str:
     número de tienda ni referencias (la del bookkeeper: aquí sí va el nombre de la persona)."""
     person = p2p_counterparty(t.description)
     if person:
-        return f"PAYMENT TO {person}"
+        # La dirección según el banco: entró = "PAYMENT FROM", salió = "PAYMENT TO" (13-oct).
+        return f"PAYMENT {'FROM' if t.is_inflow else 'TO'} {person}"
     if is_check(t.description):
         return "CHECK"
     return suggest_keyword(t.description) or merchant_signature(t.description) or (t.description or "")[:40]
@@ -260,12 +283,15 @@ def pending_groups(txs: list[Transaction], web: dict) -> list[dict]:
     return out
 
 
-def finding_dict(f: Finding, by_id: dict, web: dict) -> dict:
+def finding_dict(f: Finding, by_id: dict, web: dict, lang: Optional[str] = None) -> dict:
     hit = next((web[i] for i in f.transaction_ids if i in web), None)
+    stale = observation_stale(f, lang)
     return {
+        "observation_stale": stale,
         "id": f.id, "key": f.key, "type": f.type, "severity": f.severity, "merchant": f.merchant,
         "payload": f.payload or {}, "status": f.status,
-        "agent_verdict": f.agent_verdict, "agent_observation": f.agent_observation, "agent_lang": f.agent_lang,
+        "agent_verdict": f.agent_verdict, "agent_observation": None if stale else f.agent_observation,
+        "agent_lang": f.agent_lang,
         "agent_reviewed_at": f.agent_reviewed_at.isoformat() if f.agent_reviewed_at else None,
         "web": {"business_type": hit.business_type, "confidence": hit.confidence,
                 "source_url": hit.source_url, "source_domain": hit.source_domain} if hit else None,
@@ -291,7 +317,7 @@ def seconds_since_review(session: Session, company: Company) -> Optional[int]:
     return int(v) if v is not None else None
 
 
-def board(session: Session, company: Company) -> dict:
+def board(session: Session, company: Company, lang: Optional[str] = None) -> dict:
     """Todo lo que muestra la pestaña Auditoría, en una llamada: el encabezado de estado, la lista
     única de hallazgos y lo Pendiente agrupado."""
     open_findings = sync(session, company)
@@ -304,7 +330,7 @@ def board(session: Session, company: Company) -> dict:
     silencers = [n.merchant.upper() for n in book_notes.list_notes(session, company.id)
                  if n.kind == "dont_report" and n.merchant]
     shown = [f for f in open_findings if not any(x in (f.merchant or "").upper() for x in silencers)]
-    findings = [finding_dict(f, by_id, web) for f in shown]
+    findings = [finding_dict(f, by_id, web, lang) for f in shown]
     reviewed = last_review_at(session, company)
     return {
         "stats": {

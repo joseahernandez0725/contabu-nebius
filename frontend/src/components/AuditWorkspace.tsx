@@ -72,17 +72,20 @@ export default function AuditWorkspace({
 
   // ── Carga ────────────────────────────────────────────────────────────────────────────────────
   const loadBoard = useCallback(async () => {
-    const b = await getAuditBoard();
+    const b = await getAuditBoard(lang);
     setBoard(b);
     onStats?.(b.stats);
     return b;
-  }, [onStats]);
+  }, [onStats, lang]);
 
   useEffect(() => {
-    void loadBoard().catch((e) => setError(errText(e)));
     getCategories().then(setChart).catch(() => {});
     getAgentUsage().then(setUsage).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
+  // Se recarga al cambiar de idioma: un veredicto del ① en otro idioma pasa a "pendiente de rehacer".
+  useEffect(() => {
+    void loadBoard().catch((e) => setError(errText(e)));
+  }, [lang]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const catToType = useMemo(() => {
     const m: Record<string, string> = {};
@@ -470,7 +473,9 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
         f.agent_verdict ? (
           <div className="flex items-start gap-2">
             <Badge cls={VERDICT_STYLE[f.agent_verdict]}>① {t(`agents.verdict.${f.agent_verdict}`)}</Badge>
-            <span className="text-sm text-slate-600">{f.agent_observation}</span>
+            {f.observation_stale
+              ? <span className="text-xs text-slate-400 italic">{t("auditView.staleVerdict")}</span>
+              : <span className="text-sm text-slate-600">{f.agent_observation}</span>}
           </div>
         ) : <p className="text-xs text-slate-400">{t("auditView.notReviewed")}</p>
       )}

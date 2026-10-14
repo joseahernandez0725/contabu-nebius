@@ -149,11 +149,10 @@ export async function getTransactions(): Promise<Transaction[]> {
   return res.json();
 }
 
-/** Transacciones + la observación del auditor por fila (la hoja, FASE 10).
- *  El auditor es determinista y corre en memoria, así que viene en la MISMA llamada:
- *  no cuesta nada y evita que el frontend tenga que cruzar dos listas. */
+/** Transacciones + sus etiquetas y su formato de celda (la hoja, FASE 10). Sin el auditor desde el
+ *  13-oct: la marca de revisión de cada fila sale de `GET /transactions/flags`. */
 export async function getSheetRows(): Promise<SheetRow[]> {
-  const res = await fetch(`${API}/api/companies/${cid()}/transactions?with_audit=true`, {
+  const res = await fetch(`${API}/api/companies/${cid()}/transactions?for_sheet=true`, {
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error("No se pudieron cargar las transacciones");
@@ -924,6 +923,7 @@ export interface BoardFinding {
   id: number; key: string; type: string; severity: "high" | "medium" | "low" | "info"; merchant: string | null;
   payload: Record<string, unknown>; status: string;
   agent_verdict: "problem" | "legitimate" | "unsure" | null; agent_observation: string | null;
+  observation_stale: boolean;
   agent_reviewed_at: string | null;
   web: { business_type: string; confidence: string | null; source_url: string | null; source_domain: string | null } | null;
   transactions: TxSummary[]; rows: number; is_info: boolean;
@@ -954,7 +954,9 @@ async function auditFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-export const getAuditBoard = () => auditFetch<AuditBoard>("/audit/board");
+/** `lang`: el idioma de la pantalla — un veredicto del ① guardado en otro idioma llega marcado viejo. */
+export const getAuditBoard = (lang?: string) =>
+  auditFetch<AuditBoard>(`/audit/board${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`);
 export const getAuditSummary = () => auditFetch<AuditBoard["stats"]>("/audit/summary");
 
 /** "Está bien" (no vuelve a salir) o reabrir. */

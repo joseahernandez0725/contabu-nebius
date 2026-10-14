@@ -92,6 +92,9 @@ class BookView:
     persons_in_txs: set[str] = field(default_factory=set)
     cutoff: Optional[date] = None   # medición: el agente (y sus filtros) solo ven lo anterior
     web: dict = field(default_factory=dict)   # tx.id → MerchantLookup (② verificador, caché de la oficina)
+    # id de corrección → (movimiento, dónde terminó "SECCIÓN/Categoría"): para comprobar que la evidencia
+    # que cita el ④ es de ESE comercio y que son 2+ movimientos (13-oct).
+    change_info: dict = field(default_factory=dict)
 
 
 def _shorten_if_full(phrase: str, full_descriptions: set[str]) -> str:
@@ -107,10 +110,14 @@ def _shorten_if_full(phrase: str, full_descriptions: set[str]) -> str:
 def _huella(t: Transaction, names: Pseudonyms) -> tuple[str, str]:
     """(llave de agrupación, frase visible) de un movimiento. La frase es corta y estable: la que el
     motor usaría como palabra clave (`suggest_keyword`), sin número de tienda ni referencias. Para un
-    pago a persona, la frase es el canal + el marcador ("ZELLE PAYMENT TO PERSON 2")."""
+    pago a persona, la frase dice la DIRECCIÓN + el marcador: "PAYMENT TO PERSON 2" si el dinero salió,
+    "PAYMENT FROM PERSON 2" si entró. (Hasta el 13-oct decía siempre "TO": el ④ recibía al revés el
+    dinero que ENTRÓ de una persona — un cliente que paga parecía un pago a un trabajador.) La dirección
+    va también en la llave: lo que te pagó y lo que le pagaste a la misma persona no se mezclan."""
     person = p2p_counterparty(t.description)
     if person:
-        return f"P2P:{person}", names.mask(f"PAYMENT TO {person}")
+        way = "FROM" if t.is_inflow else "TO"
+        return f"P2P:{way}:{person}", names.mask(f"PAYMENT {way} {person}")
     if is_check(t.description):
         return "CHECK", "CHECK"
     sig = merchant_signature(t.description)
@@ -181,6 +188,8 @@ def build_view(session: Session, company: Company, *, cutoff: Optional[date] = N
     destinations: dict[str, set] = defaultdict(set)
     for (phrase, _b, after) in pairs:
         destinations[phrase].add(after)
+    change_info = {ch.id: (t.id, f"{chs[-1].account_type_after}/{chs[-1].category_after}")
+                   for (_p, _b, _a), items in pairs.items() for chs, t in items for ch in chs}
     corrections, correction_ids = [], {}
     for i, ((phrase, before, after), items) in enumerate(sorted(pairs.items(), key=lambda kv: -len(kv[1])), 1):
         ref = f"C{i}"
@@ -227,7 +236,7 @@ def build_view(session: Session, company: Company, *, cutoff: Optional[date] = N
 
     return BookView(company=company, ctx=ctx, names=names, merchants=merchants, corrections=corrections,
                     correction_ids=correction_ids, notes=notes, rules=rules, chart=ctx.chart,
-                    persons_in_txs=persons, cutoff=cutoff, web=web)
+                    persons_in_txs=persons, cutoff=cutoff, web=web, change_info=change_info)
 
 
 def _label(t: Transaction) -> str:
@@ -294,8 +303,9 @@ Hard rules:
   when a merchant ended_as the same SECTION/Category in 2 or more transactions; use exactly that
   section and category (never the "from"). If "conflict" is true, the bookkeeper put that merchant in
   different categories: do NOT propose a row for it.
-- Recurring merchants that are still PENDING (2+ rows, no rule, no correction): you may propose a row
-  with the most likely category for this sector; say in the explanation that it has no history yet.
+- Recurring merchants that are still PENDING (2+ rows, no rule, no correction): propose a row ONLY if
+  the merchant carries "web" evidence with confidence high or medium, and pick the category that fits
+  that business type; otherwise do not propose it (only the bookkeeper knows).
 - A merchant may carry "web": its business type as verified on the internet, with a confidence. With
   confidence high or medium, use it as evidence for the category (e.g. cleaning_supplies → a supplies
   category) and say so in the explanation. With low confidence, do not rely on it.
@@ -522,11 +532,34 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
             continue
         # Una regla para pagos a PERSONAS sin nota ni corrección que la respalde es una adivinanza: solo
         # el cliente sabe qué fue ese Zelle (✅ 8-oct: el ④ propuso "PAYMENT TO DANIEL RIVERA → Owner Draw").
-        hit_ids = set(test["changed_ids"])
-        hit = [t for t in view.ctx.txs if t.id in hit_ids]
-        if hit and all(p2p_counterparty(t.description) for t in hit) \
-                and not checked.row.from_notes and not checked.row.from_changes:
+        # Se miran TODAS las filas que la regla caza, no solo las que cambia: en la medición, antes de la
+        # fecha de corte puede no cambiar ninguna y el control no se aplicaba (✅ 13-oct: pasó
+        # "PAYMENT TO MARIA LOPEZ → Subcontractors").
+        rule = formula.to_rule(checked.row, company.id)
+        hit = [t for t in view.ctx.txs
+               if (view.cutoff is None or t.date < view.cutoff)
+               and formula.match_rule([rule], formula.matchable_text(t.description, t.description_extra),
+                                      t.date, t.amount)]
+        # Las correcciones citadas cuentan solo si son de movimientos que ESTA fila caza y terminaron en
+        # ESTA categoría; y "una corrección no es un patrón": hacen falta 2+ movimientos (la misma vara que
+        # la línea base). ✅ 13-oct: ULINE y Ecolab se proponían con UNA corrección del pasado.
+        hit_ids = {t.id for t in hit}
+        target = f"{checked.row.account_type.value}/{checked.row.category}"
+        backing = {view.change_info[c][0] for c in checked.row.from_changes
+                   if c in view.change_info and view.change_info[c][0] in hit_ids and view.change_info[c][1] == target}
+        if checked.row.from_changes and not checked.row.from_notes and len(backing) < 2:
+            rejected.append({"raw": raw, "errors": ["unrelated_evidence" if not backing else "weak_evidence"]})
+            continue
+        no_history = not checked.row.from_notes and not checked.row.from_changes
+        if hit and all(p2p_counterparty(t.description) for t in hit) and no_history:
             rejected.append({"raw": raw, "errors": ["person_without_evidence"]})
+            continue
+        # Una fila sin nota ni corrección tuya ES una adivinanza del sector: solo pasa con evidencia de
+        # internet (② con confianza alta o media) sobre ese comercio (✅ 13-oct: 4 de las 5 filas que la
+        # medición daba como mal cambiadas eran esto: GUSTO, ULINE, Restaurant Depot, Ecolab).
+        web_ok = any(view.web.get(t.id) is not None and view.web[t.id].confidence in ("high", "medium") for t in hit)
+        if no_history and not web_ok:
+            rejected.append({"raw": raw, "errors": ["no_evidence"]})
             continue
         # Una fila que CONTRADICE lo que el bookkeeper escribió a mano no se le muestra: lo escrito a mano
         # manda. Se garantiza aquí porque el prompt no basta (✅ 7-oct: Nano propuso SHELL → Vehicle Fuel
@@ -751,7 +784,9 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: b
     import book_review
     open_findings = book_review.sync(session, company)
     view = build_view(session, company)
-    todo = open_findings if force else [f for f in open_findings if f.agent_verdict is None]
+    # Sin veredicto, o con un veredicto guardado en OTRO idioma (se rehace en el de la pantalla, 13-oct).
+    todo = open_findings if force else [f for f in open_findings
+                                        if f.agent_verdict is None or book_review.observation_stale(f, lang)]
     findings, silenced, ids_of = review_input(session, company, view, todo)
     if not findings:
         session.commit()
@@ -785,7 +820,10 @@ Findings to review:
         if v is not None:
             f.agent_verdict = v.verdict
             f.agent_observation = view.names.unmask(v.observation)[:400]
-            f.agent_lang, f.agent_reviewed_at = lang, now
+            # El idioma que se guarda es el que TIENE el texto (comprobado), no el que se pidió: si el modelo
+            # contestó en otro idioma, queda marcado viejo y se rehace la próxima vez.
+            f.agent_lang = book_review.text_lang(f.agent_observation) or lang
+            f.agent_reviewed_at = now
             session.add(f)
         reviews.append({"ref": item["ref"], "finding_id": f.id, "type": f.type, "merchant": f.merchant,
                         "transaction_ids": f.transaction_ids, "verdict": v.verdict if v else "unsure",

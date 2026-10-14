@@ -755,6 +755,7 @@
       "out": "salió"
     },
     "notReviewed": "El ① todavía no lo revisó.",
+    "staleVerdict": "El ① lo escribió en otro idioma; “Revisar el libro” lo rehace en español.",
     "okNote": "Por qué está bien (opcional)",
     "act": {
       "backToRule": "Volver a la regla ({{s}})",
@@ -861,8 +862,6 @@
     "count": "{{n}} transacciones",
     "date": "Fecha",
     "description": "Descripción",
-    "fix": "Arreglar",
-    "fixing": "Arreglando…",
     "following": "Buscando la regla…",
     "fromRule": "Viene de una regla",
     "hint": "Escribe para empezar a editar · Enter o las flechas confirman · arrastra para seleccionar un rango · clic derecho en una celda para más opciones · Ctrl+Z deshace. Editar una celda cambia solo esa transacción — no reescribe tus reglas.",
@@ -888,16 +887,6 @@
     "editorPlaceholder": "Escribe para filtrar o crear…",
     "editorNoMatch": "Ninguna cuenta coincide con “<b>{{q}}</b>”. Créala en:",
     "editorEmpty": "Escribe para buscar en tu plan de cuentas.",
-    "obs": {
-      "in": "ENTRÓ",
-      "merchantInconsistency": "El mismo comercio categorizado distinto ({{m}})",
-      "out": "SALIÓ",
-      "ruleDeviation": "No coincide con su regla — debería ser {{s}}",
-      "signMismatch": "{{section}} pero el dinero {{dir}}",
-      "uncategorized": "Sin categorizar",
-      "bankRemoved": "El banco retiró este movimiento — mantenlo o elimínalo (clic derecho)"
-    },
-    "observation": "Observación",
     "onlyFlagged": "Por revisar ({{n}})",
     "saving": "Guardando…",
     "search": "Buscar…",
@@ -921,7 +910,6 @@
     "undo": "Deshacer",
     "undoWhat": "Deshacer: {{what}}",
     "undoCell": "{{col}} de {{what}}",
-    "undoFix": "arreglo → {{c}}",
     "undoFollow": "seguir la regla",
     "undoChanged": "Esa fila cambió después de esta edición, así que no se deshizo.",
     "notInChart": "“{{v}}” no es una cuenta del plan de este libro.",
