@@ -14,6 +14,12 @@ Lo que el auditor sabe de contabilidad (sin IA; observa, nunca categoriza):
 - **Nómina neta** (`payroll_net_only`): Gusto, ADP, PAYROLL SERVICE, depósitos directos, remesas
   IRS/EFTPS. El banco solo ve la nómina NETA que pagó; los salarios brutos y los impuestos del empleador
   salen del resumen de payroll.
+- **Monto inusual** (`unusual_amount`, 13-oct): un cargo de un comercio que es 3 veces o más lo normal
+  de ESE comercio (la mediana de sus otros cargos, con 3+ de historia) y más que cualquiera anterior.
+  No es un error: es una pregunta para el cliente. El ① no lo juzga (nunca ve montos).
+- **Lo que dice una nota** (`note_check`, 13-oct): la nota 📌 traducida por Nemotron a un chequeo
+  (`note_checks.py`) se aplica AQUÍ, en código: comercios o tipos, monto mínimo escrito en la nota y la
+  ventana de la nota. Lo pidió el bookkeeper: el ① no lo vuelve a juzgar.
 - **Datos que faltan no son pérdidas** (`coverage_gap`, `bank_disconnected`): un mes sin movimientos en
   una cuenta, o un banco desconectado, es "faltan datos", nunca "el negocio perdió dinero".
 
@@ -32,15 +38,20 @@ from sqlmodel import Session, func, select
 
 import book_notes
 import merchant_verifier
+import note_checks
 from audit import audit_categorization
 from company_profile import p2p_counterparty
 from models import (AgentCall, BankConnection, CategoryRule, Company, Finding, ProposalDismissal,
                     Transaction)
-from rules import is_check, load_rules, merchant_signature, rule_overlaps, suggest_keyword
+from rules import is_check, load_rules, matchable_text, merchant_signature, rule_overlaps, suggest_keyword
 
 SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 # Tipos que son una OBSERVACIÓN del auditor, no un posible error: el ① no los juzga.
-INFO_TYPES = {"payroll_net_only", "coverage_gap", "bank_disconnected"}
+INFO_TYPES = {"payroll_net_only", "coverage_gap", "bank_disconnected", "unusual_amount"}
+# Lo que el ① no juzga: las observaciones y lo que el bookkeeper pidió en una nota.
+UNJUDGED_TYPES = INFO_TYPES | {"note_check"}
+# Monto inusual: N veces la mediana del comercio, por encima de todo lo anterior, con historia mínima.
+UNUSUAL_TIMES, UNUSUAL_MIN_HISTORY, UNUSUAL_MIN_AMOUNT = 3, 3, Decimal("100")
 
 _PAYROLL_RE = re.compile(r"\b(GUSTO|ADP|PAYCHEX|PAYROLL|ONLINE PAYROLL|DIR(?:ECT)? ?DEP(?:OSIT)?|INTUIT PAYROLL|"
                          r"QUICKBOOKS PAYROLL|PAYLOCITY|RIPPLING|TRINET|JUSTWORKS)\b")
@@ -184,6 +195,8 @@ def detect(session: Session, company: Company, txs: list[Transaction]) -> list[d
                     "merchant": merchant, "transaction_ids": [t.id for t in group][:50],
                     "payload": {"kind": kind, "rows": len(group)}})
 
+    out.extend(_unusual_amounts(txs))
+    out.extend(_note_checks(session, company, txs, web))
     # Datos que faltan: un mes sin movimientos en una cuenta, dentro del periodo del libro.
     out.extend(_coverage(txs))
     for conn in session.exec(select(BankConnection).where(BankConnection.company_id == company.id)).all():
@@ -192,6 +205,65 @@ def detect(session: Session, company: Company, txs: list[Transaction]) -> list[d
                         "merchant": conn.institution_name or "Bank", "transaction_ids": [], "payload": {
                             "institution": conn.institution_name, "error": conn.last_error,
                             "last_synced": conn.last_synced_at.isoformat() if conn.last_synced_at else None}})
+    return out
+
+
+def _note_checks(session: Session, company: Company, txs: list[Transaction], web: dict) -> list[dict]:
+    """Los chequeos de las notas 📌 (vigentes y que valen), aplicados en código. Uno por nota y comercio."""
+    out = []
+    for n in book_notes.active_notes(session, company.id):
+        c = n.audit_check or {}
+        if n.kind != "keep_in_mind" or not c.get("applies") or not note_checks.is_current(n):
+            continue
+        kws, types, over = c.get("merchants") or [], set(c.get("business_types") or []), c.get("amount_over")
+        groups: dict[str, list[Transaction]] = defaultdict(list)
+        for t in txs:
+            if (c.get("direction") == "out" and t.is_inflow) or (c.get("direction") == "in" and not t.is_inflow):
+                continue
+            if (n.valid_from and t.date < n.valid_from) or (n.valid_to and t.date > n.valid_to):
+                continue
+            if over is not None and abs(Decimal(t.amount)) <= Decimal(str(over)):
+                continue
+            # "Es personal": solo lo que está como gasto o ingreso DEL NEGOCIO (lo Pendiente va aparte).
+            if c.get("meaning") == "personal" and (t.account_type is None or t.account_type.value == "NON_PL"):
+                continue
+            hit = web.get(t.id)
+            by_type = bool(hit and hit.business_type in types and hit.confidence in ("high", "medium"))
+            text = matchable_text(t.description, t.description_extra).upper()
+            if by_type or any(k in text for k in kws):
+                groups[merchant_name(t)].append(t)
+        for merchant, group in groups.items():
+            out.append({"key": f"note:{n.id}:{merchant}", "type": "note_check", "severity": "medium",
+                        "merchant": merchant, "transaction_ids": [t.id for t in group][:50], "payload": {
+                            "note_id": n.id, "note": n.text[:200], "meaning": c.get("meaning"),
+                            "amount_over": over, "rows": len(group),
+                            "categories": sorted({f"{t.account_type.value}/{t.category}" for t in group
+                                                  if t.account_type})}})
+    return out
+
+
+def _unusual_amounts(txs: list[Transaction]) -> list[dict]:
+    """Cargos (salidas) muy por encima de lo normal de SU comercio. Aritmética de código sobre los montos
+    del banco; ningún monto sale de aquí hacia un modelo."""
+    by_merchant: dict[str, list[Transaction]] = defaultdict(list)
+    for t in txs:
+        sig = merchant_signature(t.description or "") if not t.is_inflow else ""
+        if sig and t.amount is not None:
+            by_merchant[sig].append(t)
+    out = []
+    for sig, group in by_merchant.items():
+        if len(group) < UNUSUAL_MIN_HISTORY + 1:
+            continue
+        for t in group:
+            others = sorted(abs(Decimal(o.amount)) for o in group if o.id != t.id)
+            amount = abs(Decimal(t.amount))
+            mid = len(others) // 2
+            usual = others[mid] if len(others) % 2 else (others[mid - 1] + others[mid]) / 2
+            if amount >= UNUSUAL_MIN_AMOUNT and usual > 0 and amount >= UNUSUAL_TIMES * usual and amount > others[-1]:
+                out.append({"key": f"unusual:{t.id}", "type": "unusual_amount", "severity": "info",
+                            "merchant": merchant_name(t), "transaction_ids": [t.id], "payload": {
+                                "amount": float(amount), "usual": float(round(usual, 2)),
+                                "times": float(round(amount / usual, 1)), "history": len(others)}})
     return out
 
 

@@ -11,8 +11,10 @@ No cruza nada entre oficinas reales: es un dato sintético que se COPIA a cada o
 sigue siendo por oficina). Solo se guarda el dato estructurado (tipo de la lista cerrada, confianza,
 enlace), como en cualquier búsqueda.
 
-Regenerar (gasta ~34 créditos de Tavily; hacerlo solo si cambian los comercios de `demo_data.py`):
+Completar (busca SOLO los comercios que faltan en el archivo: 1 crédito de Tavily por comercio):
     .venv/bin/python demo_web_evidence.py --refresh
+Rehacer todo (~40 créditos; solo si cambia el clasificador de `merchant_verifier`):
+    .venv/bin/python demo_web_evidence.py --refresh --all
 Comprobar que el archivo cubre todos los comercios buscables del demo (sin red):
     .venv/bin/python demo_web_evidence.py --check
 """
@@ -57,14 +59,18 @@ def _seed_books(session: Session):
     return firm, demo_data.seed_demo_books(session, firm, owner)
 
 
-def refresh() -> None:
-    """Busca de verdad (Tavily) los comercios de los 3 libros y guarda el resultado. Todo dentro de una
+def refresh(everything: bool = False) -> None:
+    """Busca de verdad (Tavily) los comercios de los 3 libros y guarda el resultado. Sin `everything`,
+    lo que ya está en el archivo se siembra primero y no se vuelve a buscar. Todo dentro de una
     transacción que se DESHACE: en la base no queda nada; solo el archivo."""
     import merchant_verifier
     from db import engine
     with Session(engine) as s:
         try:
             firm, books = _seed_books(s)
+            if not everything:
+                seed_lookups(s, firm)
+                s.flush()
             rows, credits = {}, 0
             for b in books:
                 r = merchant_verifier.verify(s, b, record=False, limit=50)
@@ -102,7 +108,7 @@ def check() -> int:
 
 if __name__ == "__main__":
     if "--refresh" in sys.argv:
-        refresh()
+        refresh(everything="--all" in sys.argv)
     elif "--check" in sys.argv:
         sys.exit(check())
     else:

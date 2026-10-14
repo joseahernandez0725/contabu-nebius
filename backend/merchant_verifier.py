@@ -85,9 +85,17 @@ BUSINESS_TYPES: dict[str, tuple[str, ...]] = {
     "payment_processor": ("payment processing", "point of sale", "payments company"),
     "property_management": ("property management", "homeowners association", "hoa management"),
     "bank_financial": ("bank", "credit union", "financial services"),
+    # 13-oct: los comercios de gasto personal del examen del demo no tenían tipo (salió de mirar el examen
+    # por TIPOS de comercio, no por filas): streaming y cine, tienda por departamentos, electrónica.
+    "streaming_entertainment": ("streaming service", "video streaming", "streaming platform", "movie theater",
+                                "movie theatre", "cinema", "cinemas"),
+    "department_store": ("department store", "department stores", "discount retailer", "general merchandise",
+                         "off-price"),
+    "consumer_electronics": ("consumer electronics", "electronics retailer", "electronics store"),
 }
-# Tipos que en un libro de NEGOCIO suelen ser gasto PERSONAL del dueño (para el ① revisor).
-PERSONAL_TYPES = {"gym_fitness"}
+# Tipos que en un libro de NEGOCIO suelen ser gasto PERSONAL del dueño (para el ① revisor). Tienda por
+# departamentos y electrónica NO: pueden ser material de oficina o equipo (que lo juzgue el bookkeeper).
+PERSONAL_TYPES = {"gym_fitness", "streaming_entertainment"}
 
 _TYPE_RE = {t: re.compile(r"\b(" + "|".join(re.escape(w) for w in words) + r")\b", re.IGNORECASE)
             for t, words in BUSINESS_TYPES.items()}

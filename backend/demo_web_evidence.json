@@ -30,6 +30,16 @@
   "results_count": 5
  },
  {
+  "fingerprint": "AMC METREON",
+  "query": "AMC METREON",
+  "status": "ok",
+  "business_type": "tolls_parking",
+  "confidence": "low",
+  "source_url": "https://spothero.com/destination/san-francisco/amc-metreon-16-parking",
+  "source_domain": "spothero.com",
+  "results_count": 5
+ },
+ {
   "fingerprint": "AMZN",
   "query": "AMZN",
   "status": "ok",
@@ -60,6 +70,16 @@
   "results_count": 5
  },
  {
+  "fingerprint": "BEST BUY",
+  "query": "BEST BUY",
+  "status": "ok",
+  "business_type": "consumer_electronics",
+  "confidence": "low",
+  "source_url": "https://en.wikipedia.org/wiki/Best_Buy",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
   "fingerprint": "CHEVRON",
   "query": "CHEVRON",
   "status": "ok",
@@ -87,6 +107,16 @@
   "confidence": "low",
   "source_url": "https://www.costco.com",
   "source_domain": "www.costco.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "DISNEY PLUS",
+  "query": "DISNEY PLUS",
+  "status": "ok",
+  "business_type": "streaming_entertainment",
+  "confidence": "low",
+  "source_url": "https://en.wikipedia.org/wiki/Disney%2B",
+  "source_domain": "en.wikipedia.org",
   "results_count": 5
  },
  {
@@ -180,6 +210,16 @@
   "results_count": 5
  },
  {
+  "fingerprint": "NETFLIX",
+  "query": "NETFLIX",
+  "status": "ok",
+  "business_type": "streaming_entertainment",
+  "confidence": "high",
+  "source_url": "https://www.netflix.com",
+  "source_domain": "www.netflix.com",
+  "results_count": 5
+ },
+ {
   "fingerprint": "NEXT INSURANCE",
   "query": "NEXT INSURANCE",
   "status": "ok",
@@ -187,6 +227,16 @@
   "confidence": "high",
   "source_url": "https://www.linkedin.com/company/nextinsurance",
   "source_domain": "www.linkedin.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "NORDSTROM RACK",
+  "query": "NORDSTROM RACK",
+  "status": "ok",
+  "business_type": "grocery",
+  "confidence": "low",
+  "source_url": "https://www.instagram.com/nordstromrack?hl=en",
+  "source_domain": "www.instagram.com",
   "results_count": 5
  },
  {
@@ -287,6 +337,16 @@
   "confidence": "high",
   "source_url": "https://en.wikipedia.org/wiki/Metro_by_T-Mobile",
   "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "TARGET",
+  "query": "TARGET",
+  "status": "ok",
+  "business_type": "grocery",
+  "confidence": "low",
+  "source_url": "https://www.instagram.com/target?hl=en",
+  "source_domain": "www.instagram.com",
   "results_count": 5
  },
  {

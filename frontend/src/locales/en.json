@@ -497,7 +497,9 @@
       "merchant_type_mismatch": "Personal-use merchant booked as a business expense",
       "payroll_net_only": "Payroll: the bank only sees the net",
       "coverage_gap": "Missing data",
-      "bank_disconnected": "Bank disconnected"
+      "bank_disconnected": "Bank disconnected",
+      "unusual_amount": "Unusual amount",
+      "note_check": "What your note asks"
     },
     "say": {
       "rule_deviation": "Your rule “{{rule}}” says {{says}}, but this row has {{has}}.",
@@ -512,6 +514,11 @@
       "payroll_net": "This book only sees the NET payroll the bank paid. Gross wages and the employer's taxes come from the payroll summary.",
       "payroll_tax": "Payroll tax payment (IRS / EFTPS). The full payroll tax picture comes from the payroll summary, not from the bank.",
       "coverage_gap": "No movements in {{month}} in account {{account}}. This is missing data, not a loss: ask for that statement.",
+      "unusual_amount": "{{amount}} here; this merchant is usually about {{usual}} ({{times}}× more). Ask the client what it was.",
+      "note_check_personal_one": "Your note says this is usually personal: “{{note}}”. {{count}} movement is booked as business: {{cats}}.",
+      "note_check_personal_other": "Your note says these are usually personal: “{{note}}”. {{count}} movements are booked as business: {{cats}}.",
+      "note_check_one": "Your note asks to review this: “{{note}}”. {{count}} movement, booked as {{cats}}.",
+      "note_check_other": "Your note asks to review these: “{{note}}”. {{count}} movements, booked as {{cats}}.",
       "bank_disconnected": "The bank {{bank}} is disconnected ({{error}}): newer movements may be missing."
     },
     "dir": {

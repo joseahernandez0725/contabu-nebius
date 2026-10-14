@@ -21,6 +21,9 @@ Uso:
     .venv/bin/python measure.py --demo --agent         # + el agente ④ REAL (Nemotron), contra la misma
                                                        # línea base; mide tokens, costo y privacidad
     .venv/bin/python measure.py --demo --agent --reasoning   # el mismo, dejándolo razonar
+    .venv/bin/python measure.py --demo --audit         # donde la IA APORTA (13-oct): el ④ sobre lo Pendiente
+                                                       # y el ① sobre errores plantados, contra respuestas
+                                                       # escritas ANTES (demo_data.DEMO_TRUTH_*, Movimientos)
 """
 
 import argparse
@@ -28,6 +31,7 @@ import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -252,6 +256,230 @@ def _print_agent(results: list[dict], base: list[dict], privacy: dict) -> None:
           f"montos: {privacy['amounts']} · nombres de persona: {privacy['person_names']}\n")
 
 
+# ── Donde la IA aporta (13-oct): respuestas escritas ANTES por OTRA área ──────────────────────────
+# El examen lo escribió Movimientos en `demo_data.py` (no este chat: así no lo arma quien lo rinde). Este
+# lector se adapta a SU formato; el contenido del examen no se toca.
+#   DEMO_TRUTH_PENDING = {libro: {comienzo_de_la_descripción: {account_type, category, status, why}}}
+#     status "known"     → hay respuesta: cuenta en precisión y cobertura.
+#     status "ambiguous" → "no se sabe sin el cliente": NO cuenta ni a favor ni en contra (fuera de
+#                          precisión y de cobertura). Se informa aparte cuántas categorizó el agente.
+#     status "split"     → "la fila mezcla dos cosas y hay que partirla": ninguna regla de UNA categoría
+#                          acierta. Si el agente la categoriza, cuenta EN CONTRA de la precisión; si no la
+#                          toca, no entra en la cobertura (no hay respuesta de una sola categoría).
+#   DEMO_TRUTH_ERRORS = [{book, type, detail, story, expected{account_type, category},
+#                         rows[{description, date, amount, is_inflow}]}]
+#     Un error está "encontrado" si alguna alerta toca alguna de SUS filas (descripción + fecha + monto +
+#     dirección exactos).
+
+def _truth(name: str):
+    import demo_data
+    pending = (getattr(demo_data, "DEMO_TRUTH_PENDING", {}) or {}).get(name)
+    errors = [e for e in (getattr(demo_data, "DEMO_TRUTH_ERRORS", []) or []) if e.get("book") == name]
+    return pending, (errors or None)
+
+
+def _pending_entry(truth: dict, t: Transaction):
+    """La entrada del examen de este movimiento: la llave es el COMIENZO de la descripción (la más larga
+    que calce, por si dos llaves empiezan igual)."""
+    desc = (t.description or "").upper()
+    keys = [k for k in truth if desc.startswith(k.upper())]
+    return truth[max(keys, key=len)] if keys else None
+
+
+def _row_key(description, day, amount, inflow) -> tuple:
+    return ((description or "").strip().upper(), str(day), f"{abs(float(amount)):.2f}", bool(inflow))
+
+
+def measure_pending(session: Session, company: Company, truth: dict, *, model=None) -> dict:
+    """(a) El ④ sobre lo PENDIENTE: precisión de lo que categorizaría y cobertura de lo que tiene
+    respuesta. Con el motor real (`formula.decide`) y TODAS las filas propuestas juntas."""
+    import agents
+    ctx = BookContext(session, company)
+    res = agents.draft(session, company, record=False, model=model)
+    rules = formula.with_rows(ctx.rules, [p.row for p in res.proposals], company.id)
+    pending = [t for t in ctx.txs if not t.category or t.account_type is None]
+    c = Counter()
+    wrong: list[str] = []
+    for t in pending:
+        e = _pending_entry(truth, t)
+        status = e["status"] if e else "unanswered"
+        if status == "known":
+            c["known"] += 1
+        d = formula.decide(rules, t)
+        if d.source != "rule":
+            continue
+        if status == "known":
+            c["decided"] += 1
+            if (d.account_type, d.category) == (e["account_type"], e["category"]):
+                c["right"] += 1
+            elif len(wrong) < 6:
+                wrong.append(f"{t.description[:38]} → {d.category} (respuesta: {e['category']})")
+        elif status == "split":
+            c["decided"] += 1          # cuenta en contra: una sola categoría no acierta una fila mezclada
+            c["split_decided"] += 1
+            if len(wrong) < 6:
+                wrong.append(f"{t.description[:38]} → {d.category} (era una fila MEZCLADA: hay que partirla)")
+        elif status == "ambiguous":
+            c["ambiguous_decided"] += 1
+        else:
+            c["unanswered_decided"] += 1
+    return {"book": company.name, "known": c["known"], "decided": c["decided"], "right": c["right"],
+            "split_decided": c["split_decided"], "ambiguous_decided": c["ambiguous_decided"],
+            "decided_unanswered": c["unanswered_decided"], "wrong": wrong, "usage": res.usage,
+            "proposals": len(res.proposals), "rows": [p.row for p in res.proposals]}
+
+
+def drafter_alerts(session: Session, company: Company, rows: list) -> list[tuple[set, dict]]:
+    """Las propuestas del ④ que CAMBIARÍAN filas ya categorizadas (no las manuales: esas no las toca
+    ninguna regla) también son alertas: la pestaña las muestra con su prueba sobre el historial. Una alerta
+    por propuesta: (filas que cambia, {id → (account_type, category) que les pondría})."""
+    ctx = BookContext(session, company)
+    out = []
+    for row in rows:
+        rules = formula.with_rows(ctx.rules, [row], company.id)
+        changed = {}
+        for t in ctx.txs:
+            if t.source == "manual" or t.account_type is None:
+                continue
+            d = formula.decide(rules, t)
+            if d.source == "rule" and (d.account_type, d.category) != (t.account_type.value, t.category) \
+                    and d != formula.decide(ctx.rules, t):
+                changed[t.id] = (d.account_type, d.category)
+        if changed:
+            out.append((set(changed), changed))
+    return out
+
+
+def measure_review(session: Session, company: Company, truth: list[dict], *, model=None,
+                   draft_rows: Optional[list] = None) -> dict:
+    """(b) El ① sobre ERRORES plantados. Alerta del auditor SOLO = todo hallazgo abierto (incluidas las
+    observaciones, como la nómina neta: el examen las pide; sin los chequeos de las notas, que son IA).
+    Alerta CON el ① = los hallazgos que el ① NO llama "legítimo" (problema o inseguro) + lo que el ① no
+    juzga (observaciones y chequeos de las notas). Cobertura = errores que toca alguna alerta.
+    Precisión = alertas que tocan una fila de algún error. Se mide también al auditor solo."""
+    import agents
+    import book_review
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    by_key: dict[tuple, list[int]] = {}
+    for t in txs:
+        by_key.setdefault(_row_key(t.description, t.date, t.amount, t.is_inflow), []).append(t.id)
+    planted = {}
+    for i, e in enumerate(truth):
+        ids = {tid for r in e.get("rows", []) for tid in by_key.get(
+            _row_key(r["description"], r["date"], r["amount"], r["is_inflow"]), [])}
+        planted[f"{e['type']}#{i + 1}"] = ids
+    unmatched = [k for k, ids in planted.items() if not ids]
+    all_planted = set().union(*planted.values()) if planted else set()
+    # El ① primero: antes de revisar traduce las notas 📌 a chequeos, y `sync` ya los aplica.
+    rev = agents.review(session, company, lang="en", force=True, model=model)
+    findings = book_review.sync(session, company)
+    # Sigue alertando lo que el ① NO despacha: "problema" e "inseguro" piden mirar; solo "legítimo" dice
+    # "se puede saltar" (decidido el 13-oct ANTES de medir el cambio; en la línea base "inseguro" era 0).
+    flagged = [f for f in findings if f.type in book_review.UNJUDGED_TYPES or f.agent_verdict in ("problem", "unsure")]
+
+    def score_of(alerts):
+        touching = [f for f in alerts if set(f.transaction_ids or []) & all_planted]
+        found = [k for k, ids in planted.items() if ids and any(set(f.transaction_ids or []) & ids for f in alerts)]
+        return {"alerts": len(alerts), "true_alerts": len(touching), "found": len(found),
+                "missed": [k for k in planted if k not in found]}
+    # Cómo JUZGA el ① cada hallazgo, según toque o no un error plantado (las observaciones no las juzga).
+    judged = {}
+    for f in findings:
+        if f.type in book_review.UNJUDGED_TYPES:
+            continue
+        side = "true" if set(f.transaction_ids or []) & all_planted else "false"
+        k = f"{side}:{f.agent_verdict or 'none'}"
+        judged[k] = judged.get(k, 0) + 1
+    # ④ — sus propuestas sobre filas YA categorizadas (del mismo `draft` que se midió en lo Pendiente).
+    d_alerts = drafter_alerts(session, company, draft_rows or [])
+    d_found = [k for k, ids in planted.items() if ids and any(a & ids for a, _ in d_alerts)]
+    # ¿Y con la corrección que el examen espera? (solo los errores que traen "expected")
+    d_fixed = [k for i, (k, ids) in enumerate(planted.items()) if ids and truth[i].get("expected")
+               and any(fix.get(tid) == (truth[i]["expected"]["account_type"], truth[i]["expected"]["category"])
+                       for _, fix in d_alerts for tid in ids)]
+    drafter = {"alerts": len(d_alerts), "true_alerts": sum(1 for a, _ in d_alerts if a & all_planted),
+               "found": len(d_found), "fixed": len(d_fixed), "missed": []}
+    together = set(d_found) | {k for k, ids in planted.items() if ids and any(
+        set(f.transaction_ids or []) & ids for f in flagged)}
+    return {"book": company.name, "planted": len(planted), "unmatched": unmatched, "judged": judged,
+            "drafter": drafter, "together": len(together),
+            # El auditor SOLO es sin IA: los chequeos de las notas los tradujo Nemotron (van con la IA).
+            "auditor": score_of([f for f in findings if f.type != "note_check"]), "reviewer": score_of(flagged),
+            "notes": score_of([f for f in findings if f.type == "note_check"]), "usage": rev.usage,
+            "note_usage": rev.note_usage, "by_type": dict(Counter(f.type for f in findings)),
+            "dismissed_true": [f"{f.type}:{f.merchant}" for f in findings if f.agent_verdict == "legitimate"
+                               and set(f.transaction_ids or []) & all_planted],
+            "false_alerts": [f"{f.type}:{f.merchant}" for f in flagged
+                             if not (set(f.transaction_ids or []) & all_planted)][:8]}
+
+
+def _pct(a: int, b: int) -> str:
+    return f"{a}/{b} ({100 * a / b:.0f} %)" if b else f"{a}/0"
+
+
+def _print_audit(pend: list[dict], revs: list[dict], privacy: dict) -> None:
+    print("\nDONDE LA IA APORTA · respuestas escritas ANTES por Movimientos (demo_data.DEMO_TRUTH_*)\n")
+    cost = 0.0
+    P = {"known": 0, "decided": 0, "right": 0, "split_decided": 0, "ambiguous_decided": 0, "decided_unanswered": 0}
+    for r in pend:
+        covered = r["decided"] - r["split_decided"]
+        print(f"■ ④ {r['book']}: {r['proposals']} filas · precisión {_pct(r['right'], r['decided'])} · cobertura "
+              f"{_pct(covered, r['known'])} de los Pendientes con respuesta · categorizaría además "
+              f"{r['ambiguous_decided']} ambiguos (no cuentan) y {r['decided_unanswered']} sin respuesta")
+        for w in r["wrong"]:
+            print(f"      ✗ {w}")
+        for k in P:
+            P[k] += r[k]
+        cost += (r["usage"].cost_usd or 0) if r["usage"] else 0
+    A = {"planted": 0, "a_alerts": 0, "a_true": 0, "a_found": 0, "r_alerts": 0, "r_true": 0, "r_found": 0,
+         "d_alerts": 0, "d_true": 0, "d_found": 0, "d_fixed": 0, "together": 0}
+    for r in revs:
+        a, v = r["auditor"], r["reviewer"]
+        print(f"■ ① {r['book']}: {r['planted']} errores plantados · AUDITOR SOLO: encuentra {_pct(a['found'], r['planted'])}"
+              f", precisión {_pct(a['true_alerts'], a['alerts'])} · CON EL ①: encuentra {_pct(v['found'], r['planted'])}"
+              f", precisión {_pct(v['true_alerts'], v['alerts'])}")
+        nc = r["notes"]
+        print(f"      📌 notas → chequeos (Nemotron traduce, el código aplica): {nc['alerts']} alertas, tocan "
+              f"{_pct(nc['found'], r['planted'])} de los errores, precisión {_pct(nc['true_alerts'], nc['alerts'])}")
+        d = r["drafter"]
+        print(f"      ④ sus propuestas sobre lo ya categorizado: {d['alerts']} alertas, tocan {_pct(d['found'], r['planted'])}"
+              f" de los errores ({d['fixed']} con la corrección esperada), precisión {_pct(d['true_alerts'], d['alerts'])}"
+              f" · AUDITOR + ① + ④: encuentra {_pct(r['together'], r['planted'])}")
+        if r["unmatched"]:
+            print(f"      ⚠️ errores del examen sin filas en el libro (no se pueden encontrar): {', '.join(r['unmatched'])}")
+        if v["missed"]:
+            print(f"      no encontró: {', '.join(v['missed'])}")
+        if r["dismissed_true"]:
+            print(f"      el ① llamó legítimo a un error: {', '.join(r['dismissed_true'])}")
+        for fa in r["false_alerts"]:
+            print(f"      falsa alarma: {fa}")
+        A["planted"] += r["planted"]
+        for pre, key in (("a", "auditor"), ("r", "reviewer")):
+            A[f"{pre}_alerts"] += r[key]["alerts"]; A[f"{pre}_true"] += r[key]["true_alerts"]; A[f"{pre}_found"] += r[key]["found"]
+        cost += (r["note_usage"].cost_usd or 0) if r.get("note_usage") else 0
+        A["d_alerts"] += r["drafter"]["alerts"]; A["d_true"] += r["drafter"]["true_alerts"]
+        A["d_found"] += r["drafter"]["found"]; A["d_fixed"] += r["drafter"]["fixed"]; A["together"] += r["together"]
+        cost += (r["usage"].cost_usd or 0) if r["usage"] else 0
+    print(f"\nTOTAL ④ PENDIENTES · precisión {_pct(P['right'], P['decided'])} · cobertura "
+          f"{_pct(P['decided'] - P['split_decided'], P['known'])} · ambiguos que categorizaría (no cuentan): "
+          f"{P['ambiguous_decided']}")
+    print(f"TOTAL ① ERRORES · auditor solo: encuentra {_pct(A['a_found'], A['planted'])}, precisión "
+          f"{_pct(A['a_true'], A['a_alerts'])} · con el ①: encuentra {_pct(A['r_found'], A['planted'])}, precisión "
+          f"{_pct(A['r_true'], A['r_alerts'])}")
+    print(f"TOTAL ④ SOBRE LO CATEGORIZADO · toca {_pct(A['d_found'], A['planted'])} de los errores ({A['d_fixed']} con "
+          f"la corrección esperada), precisión {_pct(A['d_true'], A['d_alerts'])} · AUDITOR + ① + ④: encuentra "
+          f"{_pct(A['together'], A['planted'])}")
+    J = {}
+    for r in revs:
+        for k, n in r["judged"].items():
+            J[k] = J.get(k, 0) + n
+    row = lambda side: " · ".join(f"{v} {J.get(f'{side}:{v}', 0)}" for v in ("problem", "unsure", "legitimate", "none"))
+    print(f"JUICIO DEL ① · sobre hallazgos que SÍ tocan un error: {row('true')}")
+    print(f"               sobre hallazgos que NO tocan ninguno: {row('false')}")
+    print(f"COSTO · ${cost:.6f} · PRIVACIDAD de lo enviado a Nebius · descripciones completas: "
+          f"{privacy['descriptions']} · montos: {privacy['amounts']} · nombres de persona: {privacy['person_names']}\n")
+
+
 def _print(results: list[dict], cutoff: date) -> None:
     print(f"\nLÍNEA BASE SIN IA · corte {cutoff.isoformat()} (aprende antes, se mide desde ahí)\n")
     tot = Score()
@@ -286,6 +514,8 @@ def main() -> int:
     ap.add_argument("--agent", action="store_true", help="corre también el agente ④ real (Nemotron)")
     ap.add_argument("--reasoning", action="store_true", help="deja razonar al modelo (más tokens)")
     ap.add_argument("--model", help="otro modelo de Nebius (por defecto NEBIUS_MODEL)")
+    ap.add_argument("--audit", action="store_true",
+                    help="donde la IA aporta: ④ sobre lo Pendiente y ① sobre errores plantados (DEMO_TRUTH_*)")
     args = ap.parse_args()
     if not args.demo and args.company is None:
         ap.error("usa --demo o --company ID")
@@ -314,6 +544,32 @@ def main() -> int:
                     print(f"No existe el libro {args.company}", file=sys.stderr)
                     return 1
                 books = [book]
+            if args.audit:
+                if not args.demo:
+                    ap.error("--audit necesita --demo (las respuestas son de los libros del demo)")
+                import agents
+                import merchant_verifier
+                import nemotron
+                # El ① guarda su veredicto y hace commit: aquí todo se DESHACE al final (nada queda en la base).
+                session.commit = session.flush  # type: ignore[method-assign]
+                nemotron.SENT.clear()
+                pend, revs = [], []
+                for b in books:
+                    tp, te = _truth(b.name)
+                    if tp is None and te is None:
+                        print(f"⏸️  {b.name}: todavía no hay DEMO_TRUTH_* en demo_data.py (Movimientos)")
+                        continue
+                    rows = None
+                    if tp:
+                        pend.append(measure_pending(session, b, tp, model=args.model))
+                        rows = pend[-1]["rows"]
+                    if te:
+                        revs.append(measure_review(session, b, te, model=args.model, draft_rows=rows))
+                txs = [t for b in books for t in session.exec(
+                    select(Transaction).where(Transaction.company_id == b.id)).all()]
+                _print_audit(pend, revs, agents.privacy_scan(list(nemotron.SENT), txs,
+                                                             merchant_verifier.protected_names(txs)))
+                return 0
             base = [measure_book(session, b, args.cutoff) for b in books]
             _print(base, args.cutoff)
             if args.agent:

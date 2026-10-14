@@ -384,6 +384,11 @@ export function useAuditText() {
         return t("auditView.say.merchant_type_mismatch", { type: t(`agents.webType.${p.business_type}`, { defaultValue: String(p.business_type) }), cats: ((p.categories as string[]) ?? []).map(label).join(" · ") });
       case "payroll_net_only":
         return t(p.kind === "tax" ? "auditView.say.payroll_tax" : "auditView.say.payroll_net");
+      case "note_check":
+        return t(p.meaning === "personal" ? "auditView.say.note_check_personal" : "auditView.say.note_check",
+          { note: p.note, count: Number(p.rows ?? 0), cats: ((p.categories as string[]) ?? []).map(label).join(" · ") });
+      case "unusual_amount":
+        return t("auditView.say.unusual_amount", { amount: money(Number(p.amount)), usual: money(Number(p.usual)), times: p.times });
       case "coverage_gap":
         return t("auditView.say.coverage_gap", { month: fmtMonth(String(p.month)), account: p.account });
       case "bank_disconnected":

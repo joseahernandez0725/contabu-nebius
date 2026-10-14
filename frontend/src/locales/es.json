@@ -733,7 +733,9 @@
       "merchant_type_mismatch": "Comercio de uso personal cargado como gasto del negocio",
       "payroll_net_only": "Nómina: el banco solo ve lo neto",
       "coverage_gap": "Faltan datos",
-      "bank_disconnected": "Banco desconectado"
+      "bank_disconnected": "Banco desconectado",
+      "unusual_amount": "Monto inusual",
+      "note_check": "Lo que pide tu nota"
     },
     "say": {
       "rule_deviation": "Tu regla “{{rule}}” dice {{says}}, pero esta fila tiene {{has}}.",
@@ -748,6 +750,11 @@
       "payroll_net": "Este libro solo ve la nómina NETA que pagó el banco. Los salarios brutos y los impuestos del empleador salen del resumen de payroll.",
       "payroll_tax": "Pago de impuestos de nómina (IRS / EFTPS). El detalle completo de esos impuestos sale del resumen de payroll, no del banco.",
       "coverage_gap": "No hay movimientos de {{month}} en la cuenta {{account}}. Faltan datos, no es una pérdida: pide ese extracto.",
+      "unusual_amount": "Aquí hay {{amount}}; este comercio suele ser de unos {{usual}} ({{times}} veces más). Pregúntale al cliente qué fue.",
+      "note_check_personal_one": "Tu nota dice que esto suele ser personal: “{{note}}”. {{count}} movimiento está como gasto del negocio: {{cats}}.",
+      "note_check_personal_other": "Tu nota dice que esto suele ser personal: “{{note}}”. {{count}} movimientos están como del negocio: {{cats}}.",
+      "note_check_one": "Tu nota pide revisar esto: “{{note}}”. {{count}} movimiento, como {{cats}}.",
+      "note_check_other": "Tu nota pide revisar esto: “{{note}}”. {{count}} movimientos, como {{cats}}.",
       "bank_disconnected": "El banco {{bank}} está desconectado ({{error}}): pueden faltar movimientos recientes."
     },
     "dir": {

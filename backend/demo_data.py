@@ -26,6 +26,7 @@ encontrar (lo escrito a mano, el historial de correcciones, la fila que se sali�
 """
 
 import random
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Callable, Optional
@@ -43,6 +44,7 @@ END = date(2026, 9, 30)
 
 OPEX, COGS, REVENUE, NON_PL = (AccountType.OPERATING_EXPENSE, AccountType.COGS,
                                AccountType.REVENUE, AccountType.NON_PL)
+OTHER_EXPENSE = AccountType.OTHER_EXPENSE
 
 # ── Las NOTAS del bookkeeper ────────────────────────────────────────────────────────────────────
 # Se siembran en la tabla `booknote` (F11) con `book_notes.seed_notes`, en `_seed_book`. Por nombre
@@ -164,6 +166,50 @@ def _history(session: Session, company: Company, owner: User, plan: list[tuple])
                         datetime.combine(tx.date + timedelta(days=2), datetime.min.time()))
 
 
+# ── Errores plantados para el revisor ① (13-oct) ─────────────────────────────────────────────────
+# Cada error dice QUÉ filas (inicio de la descripción + cuáles de ellas, en el orden del libro), de qué
+# TIPO es, qué haría falta (`expected`) y, si hay que sembrarlo, cómo (`action`). Con lo mismo se arma la
+# respuesta escondida `DEMO_TRUTH_ERRORS`, que el agente NUNCA ve.
+
+@dataclass
+class Planted:
+    type: str                 # personal_expense | sign_mismatch | merchant_two_categories |
+                              # unusual_amount | rule_deviation | payroll_net_only
+    detail: str               # en inglés: por qué es un error (lo lee la medición, no el visitante)
+    prefix: str               # inicio de la descripción del banco
+    which: object = "all"     # "all" | [índices entre las filas con ese inicio] | función(fila) -> bool
+    action: Optional[tuple] = None    # ("manual", sección, categoría, comercio) | ("drift", categoría)
+    expected: Optional[tuple] = None  # (sección, categoría) correcta; None = hay que preguntar / revisar
+    story: Optional[str] = None       # "vacation_note" | "supermarket_note": la historia de una NOTA
+
+
+def _pick(rows: list[tuple], spec: Planted) -> list[int]:
+    """Índices (en `rows`, ya ordenadas como el libro) de las filas de un error."""
+    idx = [i for i, r in enumerate(rows) if r[1].startswith(spec.prefix)]
+    if spec.which == "all":
+        return idx
+    if callable(spec.which):
+        return [i for i in idx if spec.which(rows[i])]
+    return [idx[n] for n in spec.which if n < len(idx)]
+
+
+def _apply_errors(session: Session, owner: User, rows: list[tuple], ids: list[int], specs: list[Planted]) -> None:
+    """Siembra los errores que necesitan una acción (lo demás ya sale mal solo: una regla que caza de más,
+    un monto raro). Lo escrito a mano va con `reason="planted_mistake"`: la medición no lo toma por verdad."""
+    for spec in specs:
+        if not spec.action:
+            continue
+        for i in _pick(rows, spec):
+            tx = session.get(Transaction, ids[i])
+            if spec.action[0] == "manual":
+                _, at, cat, sub = spec.action
+                _manual(session, tx, at, cat, sub, owner,
+                        datetime.combine(tx.date + timedelta(days=3), datetime.min.time()), reason="planted_mistake")
+            elif spec.action[0] == "drift":   # la regla se editó y esta fila quedó atrás
+                tx.category = spec.action[1]
+                session.add(tx)
+
+
 def _seed_book(session: Session, firm: Firm, owner: User, name: str, sector: str, account: str,
                book: Book, rules: list[tuple], plant: Callable) -> Company:
     company = Company(name=name, sector=sector, user_id=owner.id, firm_id=firm.id)
@@ -183,6 +229,9 @@ def _seed_book(session: Session, firm: Firm, owner: User, name: str, sector: str
     for (_d, _desc, _s, tag), tid in zip(book.rows, ids):
         if tag:
             tagged.setdefault(tag, []).append(session.get(Transaction, tid))
+    # Los errores plantados van ANTES de `plant`: lo que se escribe a mano aquí queda fuera del historial
+    # que `plant` arma después (así no se corren los índices de `_history`).
+    _apply_errors(session, owner, book.rows, ids, ERRORS.get(name, []))
     plant(session, company, {r.match_text: r for r in made}, tagged, owner)
     # Las NOTAS del bookkeeper (tabla `booknote` de la F11, 8-oct): misma validación que la API.
     book_notes.seed_notes(session, company.id, DEMO_NOTES.get(name, []))
@@ -238,6 +287,16 @@ def _rivera() -> Book:
     b.add(monthly(20), "ONLINE TRANSFER TO SAVINGS XXXXXX1209", 1000)
     b.add(monthly(25), "ONLINE TRANSFER TO CREDIT CARD XXXXXX8823", 650, 1400)
     b.add(spread(5, b.rng), "ZELLE PAYMENT TO DANIEL RIVERA", 1200, 1800)
+    # Lo que trae un libro real (13-oct), con fechas y montos FIJOS (no tocan el generador aleatorio, así
+    # nada de lo anterior cambia): la comisión de QuickBooks Payments, un cliente que pagó por Zelle, una
+    # compra grande, un mes de teléfonos nuevos, suscripciones y compras de la casa.
+    for d, a in ((date(2026, 7, 31), 38.42), (date(2026, 8, 31), 51.17), (date(2026, 9, 30), 44.90)):
+        b.add([d], "INTUIT QB PAYMENTS FEE RIVERA HVAC", a)
+    b.add([date(2026, 8, 19)], "ZELLE PAYMENT FROM MARCUS OKAFOR JPM51K", 850, inflow=True)
+    b.add([date(2026, 9, 28)], "THE HOME DEPOT #0628 ANTIOCH CA", 4850.00)
+    b.add([date(2026, 8, 27)], "VERIZON WIRELESS PAYMENTS", 612.40)
+    b.add(monthly(9), "NETFLIX.COM", 22.99)
+    b.add([date(2026, 7, 23)], "TARGET T-2771 ANTIOCH CA", 186.45)
     return b
 
 
@@ -311,6 +370,13 @@ def _sparkle() -> Book:
     b.add(monthly(15), "T-MOBILE PCS SVC", 95)
     b.add(monthly(28), "MONTHLY SERVICE FEE", 12)
     b.add(monthly(22), "ONLINE TRANSFER TO SAVINGS XXXXXX5530", 500)
+    # Lo que trae un libro real (13-oct), con fechas y montos fijos.
+    b.add([date(2026, 8, 12)], "ZELLE PAYMENT FROM BRIGHTWAY REALTY JPM40Q", 640, inflow=True)
+    b.add([date(2026, 9, 2)], "T-MOBILE PCS SVC", 389.00)
+    b.add([date(2026, 8, 5)], "NORDSTROM RACK #0512 OAKLAND CA", 142.80)
+    b.add([date(2026, 7, 14)], "SAFEWAY #2213 SAN LEANDRO CA", 96.20)
+    b.add([date(2026, 9, 9)], "SAFEWAY #2213 SAN LEANDRO CA", 71.35)
+    b.add([date(2026, 9, 24)], "SQ *JANITEX SUPPLY", 1940.00)
     return b
 
 
@@ -362,6 +428,15 @@ def _lupita() -> Book:
     b.add(biweekly(date(2026, 7, 9)), "ADP PAYROLL FEES NET PAY", 4200, 5600)
     b.add(monthly(28), "MONTHLY SERVICE FEE", 15)
     b.add(monthly(24), "ONLINE TRANSFER TO CREDIT CARD XXXXXX4410", 900, 1700)
+    # Lo que trae un libro real (13-oct), con fechas y montos fijos: el préstamo de Square Capital (sale
+    # por la misma "SQUARE INC" de las ventas), un recibo de luz atrasado, un pedido grande, compras de casa.
+    for d, a in ((date(2026, 7, 21), 310.00), (date(2026, 8, 18), 310.00), (date(2026, 9, 15), 310.00)):
+        b.add([d], "SQUARE INC LOAN PMT 8YH2K", a)
+    b.add([date(2026, 9, 2)], "PGANDE WEB ONLINE PG&E", 1840.17)
+    b.add([date(2026, 8, 26)], "SYSCO SAN FRANCISCO INC", 4920.55)
+    b.add([date(2026, 8, 8)], "BEST BUY 00118 EMERYVILLE CA", 849.99)
+    b.add([date(2026, 7, 18)], "AMC METREON 16 SAN FRANCISCO", 54.20)
+    b.add(monthly(11), "DISNEY PLUS", 15.99)
     return b
 
 
@@ -388,6 +463,84 @@ def _plant_lupita(session, company, rules, tagged, owner) -> None:
     ])
 
 
+_FOREIGN = lambda r: r[1].split()[-1] in ("FR", "ES", "IT")  # noqa: E731
+_OVER_50 = lambda r: -r[2] >= 50  # noqa: E731
+
+ERRORS: dict[str, list[Planted]] = {
+    "Rivera HVAC LLC": [
+        Planted("rule_deviation", "Decided by the PG&E rule but no longer carries the rule's category (the rule was edited later).",
+                "PGANDE WEB ONLINE PG&E", [0], expected=(OPEX, "Utilities")),
+        Planted("merchant_two_categories", "Shell is service-van fuel; half the rows were typed as equipment fuel.",
+                "SHELL OIL 57444", [1, 3, 5], expected=(OPEX, "Vehicle Fuel")),
+        Planted("personal_expense", "Coffee bought in Europe during the owner's vacation (Aug 3–17): personal, not Meals.",
+                "STARBUCKS", _FOREIGN, expected=(NON_PL, "Owner Draw"), story="vacation_note"),
+        Planted("sign_mismatch", "QuickBooks Payments processing FEE (money out) caught by the revenue rule: it is a bank fee.",
+                "INTUIT QB PAYMENTS FEE", expected=(OPEX, "Bank Fees")),
+        Planted("sign_mismatch", "A customer paid by Zelle (money IN) and it was typed as a subcontractor expense.",
+                "ZELLE PAYMENT FROM MARCUS OKAFOR", action=("manual", COGS, "Subcontractors", "Marcus Okafor"),
+                expected=(REVENUE, "Construction Revenue")),
+        Planted("unusual_amount", "$4,850 at Home Depot when it is usually $85–940: equipment? personal? a duplicate? Ask.",
+                "THE HOME DEPOT #0628", lambda r: -r[2] > 2000, action=("manual", COGS, "Materials", "Home Depot")),
+        Planted("unusual_amount", "Verizon is $148.32 every month; one extra charge of $612.40 (new phones?).",
+                "VERIZON WIRELESS", lambda r: -r[2] > 300),
+        Planted("personal_expense", "Netflix booked as a business subscription.",
+                "NETFLIX.COM", action=("manual", OPEX, "Dues & Subscriptions", "Netflix"), expected=(NON_PL, "Owner Draw")),
+        Planted("personal_expense", "A Target run (household items) typed as office expense.",
+                "TARGET T-2771", action=("manual", OPEX, "Office Expense", "Target"), expected=(NON_PL, "Owner Draw")),
+        Planted("payroll_net_only", "Payroll shows only NET pay (Gusto) and the IRS remittances: gross wages and the employer tax split are missing.",
+                "GUSTO PAYROLL NET PAY"),
+        Planted("payroll_net_only", "IRS payroll-tax remittances: part employee withholding (wages), part employer tax.",
+                "IRS USATAXPYMT"),
+    ],
+    "Sparkle Cleaning Co.": [
+        Planted("personal_expense", "Gym membership typed as office expense.",
+                "24 HOUR FITNESS", expected=(NON_PL, "Owner Draw")),
+        Planted("merchant_two_categories", "Uline is cleaning supplies; one row was typed as office expense.",
+                "PAYPAL *ULINE", [2], expected=(COGS, "Cleaning Supplies")),
+        Planted("sign_mismatch", "A client paid by Zelle (money IN) and it was typed as a subcontractor expense.",
+                "ZELLE PAYMENT FROM BRIGHTWAY REALTY", action=("manual", COGS, "Subcontractors", "Brightway Realty"),
+                expected=(REVENUE, "Cleaning Revenue")),
+        Planted("unusual_amount", "T-Mobile is $95 a month; a $389 charge (a phone?).",
+                "T-MOBILE PCS SVC", lambda r: -r[2] > 200, action=("manual", OPEX, "Telephone & Internet", "T-Mobile")),
+        Planted("personal_expense", "Clothes from Nordstrom Rack typed as uniforms.",
+                "NORDSTROM RACK", action=("manual", OPEX, "Uniforms", "Nordstrom Rack"), expected=(NON_PL, "Owner Draw")),
+        Planted("personal_expense", "Groceries at Safeway typed as cleaning supplies (supplies come from Costco).",
+                "SAFEWAY #2213", action=("manual", COGS, "Cleaning Supplies", "Safeway"), expected=(NON_PL, "Owner Draw")),
+        Planted("rule_deviation", "Decided by the COSTCO rule but carries Office Expense (the rule changed later).",
+                "COSTCO WHSE", [2], action=("drift", "Office Expense"), expected=(COGS, "Cleaning Supplies")),
+        Planted("merchant_two_categories", "Shell is fuel for the van (rule: Vehicle Fuel); one row typed as Transportation.",
+                "SHELL OIL 12093", [3], action=("manual", COGS, "Transportation", "Shell"), expected=(OPEX, "Vehicle Fuel")),
+        Planted("unusual_amount", "$1,940 at Janitex when it is usually $140–520: a bulk order, or a mistake?",
+                "SQ *JANITEX", lambda r: -r[2] > 1000, action=("manual", COGS, "Cleaning Supplies", "Janitex Supply")),
+    ],
+    "Casa Lupita Taqueria": [
+        Planted("personal_expense", "Supermarket purchases over $50 (the bookkeeper's note): usually personal.",
+                "SAFEWAY #1711", _OVER_50, expected=(NON_PL, "Owner Draw"), story="supermarket_note"),
+        Planted("personal_expense", "Supermarket purchases over $50 (the bookkeeper's note): usually personal.",
+                "WALMART SUPERCENTER", _OVER_50, expected=(NON_PL, "Owner Draw"), story="supermarket_note"),
+        Planted("merchant_two_categories", "Restaurant Depot is food purchases; one row was typed as paper & packaging.",
+                "RESTAURANT DEPOT", [9], expected=(COGS, "Food Purchases")),
+        Planted("merchant_two_categories", "Ecolab pest control typed two ways; the contract-cleaning row is the odd one.",
+                "ECOLAB", [0], expected=(OPEX, "Repairs & Maintenance")),
+        Planted("sign_mismatch", "Square Capital LOAN payment (money out) caught by the SQUARE INC sales rule.",
+                "SQUARE INC LOAN PMT", expected=(NON_PL, "Loan Principal Payment")),
+        Planted("unusual_amount", "PG&E is $410–690 a month; one $1,840 bill (past-due catch-up?).",
+                "PGANDE WEB ONLINE PG&E", lambda r: -r[2] > 1000),
+        Planted("unusual_amount", "Sysco is $620–1,480 a week; one $4,920 order.",
+                "SYSCO SAN FRANCISCO", lambda r: -r[2] > 3000),
+        Planted("personal_expense", "Best Buy (a TV?) typed as smallwares.",
+                "BEST BUY", action=("manual", OPEX, "Smallwares", "Best Buy"), expected=(NON_PL, "Owner Draw")),
+        Planted("personal_expense", "Movie tickets typed as marketing.",
+                "AMC METREON", action=("manual", OPEX, "Marketing", "AMC"), expected=(NON_PL, "Owner Draw")),
+        Planted("personal_expense", "Disney+ booked as a business subscription.",
+                "DISNEY PLUS", action=("manual", OPEX, "Dues & Subscriptions", "Disney+"), expected=(NON_PL, "Owner Draw")),
+        Planted("rule_deviation", "Decided by the SYSCO rule but carries Paper & Packaging (the rule changed later).",
+                "SYSCO SAN FRANCISCO", [6], action=("drift", "Paper & Packaging"), expected=(COGS, "Food Purchases")),
+        Planted("payroll_net_only", "Payroll shows only NET pay (ADP) and NO tax remittance at all: gross wages and payroll taxes are missing.",
+                "ADP PAYROLL"),
+    ],
+}
+
 BOOKS = [
     ("Rivera HVAC LLC", "construction", "****4471", _rivera, _RIVERA_RULES, _plant_rivera),
     ("Sparkle Cleaning Co.", "cleaning", "****3390", _sparkle, _SPARKLE_RULES, _plant_sparkle),
@@ -404,3 +557,74 @@ def seed_demo_books(session: Session, firm: Firm, owner: User) -> list[Company]:
     demo_web_evidence.seed_lookups(session, firm)
     session.flush()
     return books
+
+
+# ── LA RESPUESTA ESCONDIDA (13-oct, para MEDIR al auditor donde la IA aporta) ───────────────────────
+# El agente NUNCA ve esto: no está en la base ni en ningún prompt. Lo leen solo las mediciones de la F11.
+#
+# DEMO_TRUTH_PENDING: para cada comercio que queda Pendiente, la categoría correcta y su sección.
+# `status`: "known" (hay respuesta) · "ambiguous" (de verdad no se sabe sin el cliente: no se inventa) ·
+# "split" (la fila mezcla dos cosas y hay que partirla).
+def _t(at: Optional[AccountType], category: Optional[str], status: str, why: str) -> dict:
+    return {"account_type": at.value if at else None, "category": category, "status": status, "why": why}
+
+
+DEMO_TRUTH_PENDING: dict[str, dict[str, dict]] = {
+    "Rivera HVAC LLC": {
+        "ACH DEBIT BAYSIDE PROPERTIES LLC RENT": _t(OPEX, "Office Rent", "known", "Shop / office rent."),
+        "CHEVRON": _t(OPEX, "Vehicle Fuel", "known", "Service-van fuel."),
+        "FERGUSON HVAC SUPPLY": _t(COGS, "Materials", "known", "HVAC parts for jobs."),
+        "JOHNSTONE SUPPLY": _t(COGS, "Materials", "known", "HVAC parts for jobs."),
+        "THE HOME DEPOT": _t(COGS, "Materials", "known", "Job materials (one $4,850 row is a planted unusual amount)."),
+        "GUSTO PAYROLL NET PAY": _t(COGS, "Direct Labor", "known", "Technicians' net pay (the gross is not in the bank)."),
+        "IRS USATAXPYMT": _t(OTHER_EXPENSE, "Taxes & Licenses", "split",
+                             "Payroll-tax remittance: employee withholding (part of wages) + employer tax."),
+        "MOBILE DEPOSIT REF": _t(None, None, "ambiguous", "A deposited check: probably a customer, but could be a loan or the owner."),
+        "ZELLE PAYMENT TO DANIEL RIVERA": _t(NON_PL, "Owner Draw", "known", "The owner paying himself."),
+    },
+    "Sparkle Cleaning Co.": {
+        "ACH CREDIT OAKMONT PROPERTY MGMT": _t(REVENUE, "Cleaning Revenue", "known", "A client's monthly contract."),
+        "SQ DEP": _t(REVENUE, "Cleaning Revenue", "known", "Card sales paid out by Square."),
+        "PAYPAL *ULINE": _t(COGS, "Cleaning Supplies", "known", "Supplies."),
+        "PAYPAL *ZOROTOOLS": _t(COGS, "Small Tools & Equipment", "known", "Tools."),
+        "SQ *BAYCITY UNIFORMS": _t(OPEX, "Uniforms", "known", "Staff uniforms."),
+        "SQ *JANITEX SUPPLY": _t(COGS, "Cleaning Supplies", "known", "Janitorial supplies."),
+        "T-MOBILE PCS SVC": _t(OPEX, "Telephone & Internet", "known", "Business phone line."),
+        "TST* EL FAROLITO": _t(OPEX, "Meals", "known", "Crew lunch."),
+        "ZELLE PAYMENT TO MARIA LOPEZ": _t(None, None, "ambiguous", "A person: subcontractor or employee? Only the client knows."),
+        "ZELLE PAYMENT TO ANA GUTIERREZ": _t(None, None, "ambiguous", "A person: subcontractor or employee? Only the client knows."),
+        "ZELLE PAYMENT TO JOSE MARTINEZ": _t(None, None, "ambiguous", "A person: subcontractor or employee? Only the client knows."),
+    },
+    "Casa Lupita Taqueria": {
+        "ACH DEBIT MISSION ST PROPERTIES RENT": _t(OPEX, "Rent", "known", "Restaurant rent."),
+        "ADP PAYROLL FEES NET PAY": _t(OPEX, "Kitchen Wages", "known", "Kitchen staff net pay (the gross and the taxes are not in the bank)."),
+        "CINTAS CORP LINEN SVC": _t(OPEX, "Linens", "known", "Linen service."),
+        "DOORDASH INC PAYMENT": _t(REVENUE, "Food & Beverage Sales", "known", "Delivery sales paid out net of DoorDash fees."),
+        "ECOLAB PEST ELIM": _t(OPEX, "Repairs & Maintenance", "known", "Pest control service."),
+        "MONTHLY SERVICE FEE": _t(OPEX, "Bank Fees", "known", "Bank fee (this book has no rule for it)."),
+        "RESTAURANT DEPOT": _t(COGS, "Food Purchases", "known", "Food for the kitchen."),
+        "SMART & FINAL": _t(COGS, "Food Purchases", "known", "Food for the kitchen."),
+    },
+}
+
+
+def _truth_errors() -> list[dict]:
+    """Las filas EXACTAS de cada error plantado, sacadas de los mismos generadores (deterministas):
+    fecha, descripción, monto y dirección, en el orden del libro."""
+    out = []
+    for name, _sector, _account, make, _rules, _plant in BOOKS:
+        rows = sorted(make().rows, key=lambda r: (r[0], r[1]))
+        for spec in ERRORS.get(name, []):
+            picked = [rows[i] for i in _pick(rows, spec)]
+            out.append({
+                "book": name, "type": spec.type, "detail": spec.detail, "story": spec.story,
+                "expected": ({"account_type": spec.expected[0].value, "category": spec.expected[1]}
+                             if spec.expected else None),
+                "rows": [{"date": d.isoformat(), "description": desc, "amount": float(abs(a)), "is_inflow": a > 0}
+                         for d, desc, a, _tag in picked],
+            })
+    return out
+
+
+# DEMO_TRUTH_ERRORS: los errores plantados para el revisor ①, uno por entrada (puede cubrir varias filas).
+DEMO_TRUTH_ERRORS: list[dict] = _truth_errors()

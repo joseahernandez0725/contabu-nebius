@@ -685,9 +685,14 @@ Rules:
   which one wins or change one).
 - merchant_type_mismatch: a merchant verified on the internet as personal use (e.g. a gym) booked as a
   business expense → PROBLEM unless a note explains it (e.g. a gym that is the client's business).
-- inconsistent_merchant: legitimate if the merchant really sells different things (a hardware store) or
-  if the rows are different destinations; if the bookkeeper split it by hand, say it is deliberate but
-  suggest confirming the criterion.
+- sign_mismatch: the bank direction contradicts the section → PROBLEM. If money came IN from a supplier
+  booked against a cost (it may be a refund) → UNSURE. LEGITIMATE only if a note explains it.
+- inconsistent_merchant: you cannot see what was bought, so the merchant "could sell different things"
+  is NOT evidence. LEGITIMATE only with evidence: a note that explains the split, or every differing row
+  set by hand ("differing_rows_set_by_hand" equals "rows_differing_from_majority"). If the rows fall in
+  different P&L sections ("different_pnl_sections") without such evidence → PROBLEM. Otherwise → UNSURE
+  (the bookkeeper must confirm).
+- UNSURE means "the bookkeeper must look at it"; LEGITIMATE means "it can be skipped". When in doubt, UNSURE.
 - Use the bookkeeper notes: "keep_in_mind" notes tell you what to watch; "dont_report" notes mean the
   bookkeeper does not want that reported (mark it legitimate).
 - Rows decided "manual" were set by the bookkeeper on purpose ("hand-written wins"). Disagreement among
@@ -725,18 +730,21 @@ def review_input(session: Session, company: Company, view: BookView,
     if findings is None:
         findings = book_review.sync(session, company)
     by_id = {t.id: t for t in view.ctx.txs}
+    # Las frases que ve el ① pasan por el MISMO acortador que las del ④ (✅ 13-oct: "ECOLAB PEST ELIM" —
+    # huella y descripción completa a la vez— llegaba entera; la revisión de privacidad lo encontró).
+    full = {(t.description or "").strip().upper() for t in view.ctx.txs if t.description}
     silencers = [n["merchant"] for n in view.notes if n["kind"] == "dont_report" and n["merchant"]]
     out, silenced, ids_of = [], 0, {}
     for f in findings:
-        if f.type in book_review.INFO_TYPES:
+        if f.type in book_review.UNJUDGED_TYPES:
             continue
         group = [by_id[i] for i in (f.transaction_ids or []) if i in by_id]
         if not group:
             continue
         p = f.payload or {}
-        phrase = _huella(group[0], view.names)[1] or ""
+        phrase = _shorten_if_full(_huella(group[0], view.names)[1] or "", full)
         if f.type == "rule_collision":
-            phrase = view.names.mask(p.get("losing_rule") or phrase)
+            phrase = _shorten_if_full(view.names.mask(p.get("losing_rule") or phrase), full)
         if any(view.names.mask(x.upper()) in phrase.upper() for x in silencers):
             silenced += 1
             continue
@@ -746,14 +754,27 @@ def review_input(session: Session, company: Company, view: BookView,
                        "by_category_and_decider": dict(Counter(f"{_label(t)} decided by {t.source or 'pending'}"
                                                                for t in group))}
         if f.type == "rule_deviation":
-            facts["rule_says"] = f"{view.names.mask(p.get('rule') or '')} -> {p.get('rule_says')}"
+            facts["rule_says"] = f"{_shorten_if_full(view.names.mask(p.get('rule') or ''), full)} -> {p.get('rule_says')}"
             facts["row_has"] = p.get("row_has")
             facts["meaning"] = "the row claims to follow the rule but no longer matches it (stale row)"
         elif f.type == "rule_collision":
-            facts = {"winning_rule": f"{view.names.mask(p.get('winning_rule') or '')} -> {p.get('winning_then')}",
-                     "losing_rule": f"{view.names.mask(p.get('losing_rule') or '')} -> {p.get('losing_then')}",
+            facts = {"winning_rule": f"{_shorten_if_full(view.names.mask(p.get('winning_rule') or ''), full)} -> {p.get('winning_then')}",
+                     "losing_rule": f"{_shorten_if_full(view.names.mask(p.get('losing_rule') or ''), full)} -> {p.get('losing_then')}",
                      "rows_both_match": p.get("rows"),
                      "meaning": "both rules match the same transactions with different categories; the winner takes them"}
+        elif f.type == "sign_mismatch":
+            # ✅ 13-oct: el ① no tenía hechos ni regla para este tipo y lo llamaba "legítimo" (salió de mirar
+            # en la medición qué TIPOS descartaba el ①, no filas concretas).
+            facts["bank_direction"] = "money came IN" if p.get("direction") == "in" else "money went OUT"
+            facts["booked_in_section"] = p.get("account_type")
+            facts["meaning"] = ("the bank direction contradicts the P&L section: money IN booked as a cost, "
+                                "or money OUT booked as income")
+        elif f.type == "inconsistent_merchant":
+            odd, manual = set(p.get("odd_ids") or []), set(p.get("manual_ids") or [])
+            sections = {t.account_type.value for t in group if t.account_type}
+            facts["rows_differing_from_majority"] = len(odd)
+            facts["differing_rows_set_by_hand"] = len(odd & manual)
+            facts["different_pnl_sections"] = len(sections) > 1
         elif f.type == "merchant_type_mismatch":
             facts["meaning"] = ("the internet says this merchant is a business for PERSONAL use, but the book "
                                 "has it as a business expense")
@@ -774,6 +795,7 @@ class ReviewResult:
     usage: Optional[nemotron.Usage]
     outcome: str = "ok"
     reviewed: int = 0
+    note_usage: Optional[nemotron.Usage] = None   # la traducción de las notas a chequeos (si hubo)
 
 
 def review(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
@@ -782,15 +804,19 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: b
     `force`, sobre todos). El veredicto y la observación quedan GUARDADOS en el hallazgo: la pestaña
     muestra una sola tarjeta por hallazgo. Sin nada que juzgar, no llama."""
     import book_review
-    open_findings = book_review.sync(session, company)
     view = build_view(session, company)
+    # Antes de revisar: las notas 📌 nuevas o cambiadas se traducen a chequeos del auditor (una llamada,
+    # solo si hay alguna), para que `sync` ya los aplique.
+    import note_checks
+    note_usage = note_checks.refresh(session, company, view, model=model, user_id=user_id)
+    open_findings = book_review.sync(session, company)
     # Sin veredicto, o con un veredicto guardado en OTRO idioma (se rehace en el de la pantalla, 13-oct).
     todo = open_findings if force else [f for f in open_findings
                                         if f.agent_verdict is None or book_review.observation_stale(f, lang)]
     findings, silenced, ids_of = review_input(session, company, view, todo)
     if not findings:
         session.commit()
-        return ReviewResult(reviews=[], silenced=silenced, usage=None, outcome="nothing_to_review")
+        return ReviewResult(note_usage=note_usage, reviews=[], silenced=silenced, usage=None, outcome="nothing_to_review")
     agent_calls.check_cap(session, company)
     system = _REVIEW_SYSTEM.replace("{lang}", LANG_NAMES.get(lang, "Spanish"))
     user = f"""Bookkeeper notes:
@@ -804,7 +830,7 @@ Findings to review:
         agent_calls.record(session, company, "reviewer", e.usage, outcome=e.code, user_id=user_id,
                            model=model or nemotron.model_name())
         session.commit()
-        return ReviewResult(reviews=[], silenced=silenced, usage=e.usage, outcome=e.code)
+        return ReviewResult(note_usage=note_usage, reviews=[], silenced=silenced, usage=e.usage, outcome=e.code)
     verdicts = {}
     for v in (reply.data.get("reviews") if isinstance(reply.data, dict) else []) or []:
         try:
@@ -831,7 +857,7 @@ Findings to review:
     agent_calls.record(session, company, "reviewer", reply.usage, user_id=user_id,
                        items_out=len(findings), items_valid=len(verdicts))
     session.commit()
-    return ReviewResult(reviews=reviews, silenced=silenced, usage=reply.usage, reviewed=len(verdicts))
+    return ReviewResult(note_usage=note_usage, reviews=reviews, silenced=silenced, usage=reply.usage, reviewed=len(verdicts))
 
 
 # ── Privacidad, medida (no supuesta) ─────────────────────────────────────────────────────────────
