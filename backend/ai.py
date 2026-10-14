@@ -1,284 +1,231 @@
 """
-ContaBu — capa de IA (Gemini).
+ContaBu — la IA para IMPORTAR archivos (FASE 11, Auditoría / IA). Desde el 13-oct-2026 corre sobre
+**Nemotron en Nebius Token Factory** (`nemotron.py`), como el resto de la IA de ContaBu. Antes, Gemini.
 
-Tres capacidades, todas con STRUCTURED OUTPUT (JSON estricto vía Pydantic):
-- map_columns(): mapea encabezados desordenados de un extracto a date / description / amount.
-- map_rule_columns(): lo mismo para un archivo de reglas que se importa.
-- propose_rules(): PROPONE reglas que el bookkeeper aprueba (nunca escribe una categoría).
+Dos capacidades, con JSON estricto:
+- `map_columns()`: qué columna de un extracto bancario es la fecha, la descripción, el monto (o
+  Debit/Credit), la cuenta y el estado.
+- `map_rule_columns()`: lo mismo para un archivo de REGLAS que el bookkeeper importa.
 
-Reglas de oro:
-- La IA NO categoriza, por ningún camino (Jose, 1-oct): `categorize_transaction`, `categorize_batch`
-  y `recategorize_with_answer` se borraron el 4-oct (deuda #16). Solo mapea y propone; NUNCA calcula.
-- Datos y categorías en INGLÉS.
-- Cada llamada se REGISTRA (log) → evidencia de "AI-native operations" para el concurso.
-- Reintenta ante errores transitorios (503/429/5xx) → robustez en producción.
+`propose_rules()` (el viejo proponedor de reglas) se BORRÓ el 13-oct: su pantalla ya no la montaba
+nadie y el agente ④ redactor (`agents.draft`) hace ese trabajo, con validador y prueba contra la historia.
+
+🔒 Privacidad (la regla del 8-oct para todo lo que va a Nebius: nunca descripciones completas, montos
+ni nombres de personas). Hasta el 13-oct se mandaban las primeras filas del archivo TAL CUAL. Ahora:
+1. **Primero sin IA:** si los encabezados son los de siempre (Date, Description, Amount, Debit/Credit…),
+   el mapeo lo hace el código, gratis.
+2. **Si no**, al modelo van los ENCABEZADOS y un PERFIL de cada columna que calcula el código ("fecha en
+   3 de 3", "número con signo", "texto de ~40 caracteres", "parece categoría contable"), nunca los
+   valores. Los encabezados son nombres de columna, no datos del cliente.
+3. El mapeo se recuerda por libro y encabezados: la subida por lotes llama una vez por lote y no paga
+   cada vez.
+
+La IA no categoriza ni calcula: solo dice qué columna es cuál. Cada llamada queda en `agentcall`.
 """
 
 import logging
-import os
-import time
+import re
+from typing import Optional
 
-from dotenv import load_dotenv
-from google import genai
-from google.genai import errors as genai_errors
-from google.genai import types
 from pydantic import BaseModel
+from sqlmodel import Session
 
-from categories import format_for_prompt  # plan de cuentas cerrado por sector
-from models import AccountType  # enum estándar de secciones del P&L (fuente única)
-
-load_dotenv()
+import nemotron
+from models import Company
 
 logger = logging.getLogger("contabu.ai")
 
-# Modelo de Gemini. Configurable por entorno (GEMINI_MODEL) para A/B sin tocar código.
-# flash-lite = más barato/rápido; flash = razona mejor en casos difíciles. Ver docs/FASE.
-MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-
-# Backend de Gemini, configurable por entorno (sin tocar código):
-# - VERTEX AI (GEMINI_USE_VERTEX=true): factura como servicio de GCP → lo cubre el crédito de $300.
-#   Autentica con Application Default Credentials (NO API key): en local `gcloud auth
-#   application-default login`; en Cloud Run, la service account con rol `roles/aiplatform.user`.
-# - AI STUDIO (por defecto): usa GEMINI_API_KEY; se cobra de los créditos PREPAGADOS de Gemini.
-#
-# El cliente se crea la PRIMERA VEZ QUE SE USA, no al importar (4-oct, pedido de Firm en el 📬 Buzón):
-# creado al importar, sin `GEMINI_API_KEY` el backend entero no arrancaba (`ValueError`), aunque nadie
-# fuera a llamar a Gemini.
-_client = None
-
-
-def _gemini():
-    global _client
-    if _client is None:
-        if os.getenv("GEMINI_USE_VERTEX", "").lower() in ("1", "true", "yes"):
-            _client = genai.Client(
-                vertexai=True,
-                project=os.getenv("GOOGLE_CLOUD_PROJECT", "contabu-prod"),
-                location=os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"),
-            )
-        else:
-            _client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-    return _client
-
-# Códigos HTTP transitorios que vale la pena reintentar (saturación, límites temporales).
-_RETRY_CODES = {429, 500, 502, 503, 504}
-
 
 class ColumnMapping(BaseModel):
-    """Qué encabezado del archivo corresponde a cada campo que necesitamos.
+    """Qué encabezado del archivo corresponde a cada campo que necesitamos ("" = no existe).
 
-    `account_column` / `account_label` permiten detectar la CUENTA BANCARIA de origen:
-    - account_column: encabezado con la cuenta por fila (export de agregadores tipo Plaid/Mint).
-      "" si el archivo no trae una columna de cuenta.
-    - account_label: nombre/identificador de la cuenta para TODO el archivo, inferido de los
-      encabezados o filas de muestra (ej. "Checking #4471"). "" si no se puede determinar.
+    `account_column`: encabezado con la cuenta por fila (exports de agregadores). `account_label`: el
+    nombre de la cuenta de todo el archivo, SOLO si sale de los encabezados (ya no se leen filas).
     """
     date_column: str
     description_column: str
-    # Monto con signo en UNA columna. "" si el banco usa Debit/Credit separadas (ver abajo).
-    amount_column: str = ""
-    # Algunos bancos NO traen monto con signo, sino DOS columnas: Debit (salida) y Credit (entrada).
-    # Si las hay, devolver sus nombres EXACTOS; si el banco usa una sola columna de monto, dejar "".
+    amount_column: str = ""      # monto con signo en UNA columna; "" si el banco usa Debit/Credit
     debit_column: str = ""
     credit_column: str = ""
     account_column: str = ""
     account_label: str = ""
-    # Columna de estado del movimiento (pending/posted), si el archivo la trae. "" si no existe.
-    status_column: str = ""
+    status_column: str = ""      # pending/posted, si el archivo la trae
 
 
 class RuleColumnMapping(BaseModel):
-    """Mapea las columnas de un archivo de REGLAS del usuario (keyword→categoría) a nuestros campos.
-    El bookkeeper sube su Excel/CSV **como sea**; la IA identifica qué columna es cada cosa."""
-    keyword_column: str            # comercio/keyword/patrón a matchear (requerida)
-    category_column: str           # categoría / cuenta contable (requerida)
-    account_type_column: str = ""  # SECCIÓN del P&L (REVENUE/COGS/…), "" si no existe
-    subcategory_column: str = ""   # beneficiario/subcategoría, "" si no existe
+    """Mapea las columnas de un archivo de REGLAS (keyword → categoría) a nuestros campos."""
+    keyword_column: str
+    category_column: str
+    account_type_column: str = ""
+    subcategory_column: str = ""
 
 
-class ProposedRule(BaseModel):
-    """Una regla COMPANY que el AGENTE PROPONEDOR sugiere (el usuario la aprueba). El proponedor toma
-    los comercios recurrentes sin regla y propone reglas: mergeando variantes de marca, evitando
-    duplicar reglas existentes, marcando gas/super como `skip` (los manejan las bandas de monto)."""
-    reasoning: str            # 1 frase: por qué / qué candidatos junta
-    keyword: str              # match_text específico (puede usar `*` como comodín)
-    account_type: AccountType
-    category: str
-    covers: list[str]         # firmas de candidato que esta regla cubre (auditar el merge)
-    kind: str                 # "rule" (proponer regla) | "skip" (gas/super→banda, o ya cubierto)
+# ── El perfil de una columna (lo ÚNICO que ve el modelo además del encabezado) ─────────────────
+
+_DATE_RE = re.compile(r"^\s*(\d{1,4}[/-]\d{1,2}[/-]\d{1,4}|\d{4}-\d{2}-\d{2}|[A-Za-z]{3,9}\.? \d{1,2},? \d{2,4})")
+_NUM_RE = re.compile(r"^\s*\(?-?\$?\s*-?[\d,]+(\.\d+)?\)?\s*$")
+_ACCOUNT_RE = re.compile(r"(\*{2,}|X{2,}|x{2,})\s*\d{3,4}|\b(checking|savings|credit card)\b", re.IGNORECASE)
+_STATUS_WORDS = {"pending", "posted", "cleared", "settled", "completed", "processing"}
+_SECTION_WORDS = {"revenue", "income", "cogs", "expense", "operating_expense", "operating expense", "opex",
+                  "other_income", "other_expense", "non_pl", "transfer", "cost of goods sold"}
 
 
-def _generate(contents, schema, *, model: str = MODEL, max_retries: int = 4):
-    """Llama a Gemini con structured output (schema puede ser un modelo o una lista de modelos).
-    `contents` puede ser un prompt de texto o una lista multimodal (p. ej. [imagen, texto]).
-    `model` permite sobre-escribir el modelo por llamada.
-    Reintenta ante errores transitorios (backoff)."""
-    delay = 2.0
-    for attempt in range(1, max_retries + 1):
-        try:
-            return _gemini().models.generate_content(
-                model=model,
-                contents=contents,
-                config={
-                    "response_mime_type": "application/json",
-                    "response_schema": schema,
-                },
-            )
-        except genai_errors.APIError as e:
-            code = getattr(e, "code", None)
-            if code not in _RETRY_CODES or attempt == max_retries:
-                raise  # error no transitorio, o se agotaron los reintentos
-            logger.warning(
-                "Gemini %s (intento %d/%d); reintentando en %.0fs", code, attempt, max_retries, delay
-            )
-            time.sleep(delay)
-            delay *= 2  # espera progresiva: 2s, 4s, 8s…
+def column_profile(headers: list[str], rows: list[list[str]],
+                   known_categories: Optional[set[str]] = None) -> list[dict]:
+    """Para cada columna, conteos y formas — calculados aquí, sin copiar ningún valor."""
+    out = []
+    for i, h in enumerate(headers):
+        vals = [(r[i] if i < len(r) else "").strip() for r in rows]
+        filled = [v for v in vals if v]
+        nums = [v for v in filled if _NUM_RE.match(v)]
+        neg = sum(1 for v in nums if v.startswith("-") or v.startswith("(") or "-" in v[:3])
+        prof = {
+            "header": h, "rows": len(vals), "filled": len(filled),
+            "date_like": sum(1 for v in filled if _DATE_RE.match(v)),
+            "number_like": len(nums), "negative_numbers": neg, "positive_numbers": len(nums) - neg,
+            "account_like": sum(1 for v in filled if _ACCOUNT_RE.search(v)),
+            "status_like": sum(1 for v in filled if v.lower() in _STATUS_WORDS),
+            "avg_text_length": round(sum(len(v) for v in filled) / len(filled)) if filled else 0,
+            "distinct_values": len(set(filled)),
+        }
+        if known_categories is not None:
+            prof["matches_known_category"] = sum(1 for v in filled if v.lower() in known_categories)
+            prof["matches_pl_section"] = sum(1 for v in filled if v.lower() in _SECTION_WORDS)
+        out.append(prof)
+    return out
 
 
-def _facts_block(profile_facts: str) -> str:
-    """Bloque de HECHOS del dueño (entrevista del bookkeeper, FASE 9 Paso 5) para los prompts.
-    Hechos, no heurísticas (idea #5): la IA sigue razonando desde la descripción/monto."""
-    if not profile_facts:
-        return ""
-    return f"""
-FACTS from the owner (company profile — treat as ground truth about THIS business):
-{profile_facts}
-"""
+# ── 1. Sin IA, cuando los encabezados son los de siempre ───────────────────────────────────────
+
+_H = {
+    "date": ("date", "posting date", "transaction date", "trans date", "post date", "posted date", "fecha"),
+    "description": ("description", "memo", "payee", "transaction description", "descripción", "descripcion",
+                    "concepto"),
+    "amount": ("amount", "transaction amount", "monto", "importe"),
+    "debit": ("debit", "debits", "withdrawal", "withdrawals", "cargo", "cargos"),
+    "credit": ("credit", "credits", "deposit", "deposits", "abono", "abonos"),
+    "account": ("account", "account name", "account number", "cuenta"),
+    "status": ("status", "estado"),
+}
 
 
-def propose_rules(
-    candidates: list[dict], existing_keywords: list[str], sector: str, profile_facts: str = "",
-) -> list[ProposedRule]:
-    """AGENTE PROPONEDOR (1 llamada): toma los candidatos deterministas (`rules.find_rule_candidates`)
-    y devuelve reglas COMPANY propuestas para que el usuario apruebe. Mergea variantes de marca,
-    no duplica las reglas existentes, usa `*` para transferencias/ACH, y marca gas/super como `skip`."""
-    if not candidates:
-        return []
-    cand_lines = "\n".join(
-        f"- signature={c['signature']} count={c['count']} sign={c['sign']} "
-        f"suggested={c['suggested_account_type']}/{c['suggested_category']} examples={c['examples']}"
-        for c in candidates
-    )
-    existing = ", ".join(existing_keywords) or "(none yet)"
-    prompt = f"""You are a bookkeeping rule-proposer for a "{sector}" small business. From the recurring
-merchants below (each seen >=2 times and NOT yet covered by a rule), propose COMPANY categorization
-rules for the owner to approve.
-{_facts_block(profile_facts)}
+def _by_name(headers: list[str], profile: list[dict]) -> Optional[ColumnMapping]:
+    """El mapeo determinista: exige UNA fecha (que de verdad tenga fechas), UNA descripción y un monto
+    (o Debit/Credit) por nombre. Si algo falta o es ambiguo, devuelve None y decide el modelo."""
+    low = {h: h.strip().lower() for h in headers}
+    prof = {p["header"]: p for p in profile}
 
-Rules of the game:
-- MERGE brand variants into ONE rule. "CHEVRONSAN", "CHEVRONBAY", "CHEVRONCONCORD" are all Chevron ->
-  one rule. Drop store numbers and city/state from the keyword.
-- keyword construction (how matching works: the keyword must appear as WHOLE words in the bank
-  description; `*` means "anything in between, in order"):
-  * Anchor on the STABLE words of the description and use `*` to skip the dynamic junk (ref numbers,
-    dates, IDs, store numbers). Prefer MORE stable anchor words joined with `*` over one short word:
-    "PAYCHEX TPS*TAXES" beats "PAYCHEX"; "ONLINE TRANSFER*TO*XXXX2961" beats "TRANSFER".
-  * The keyword MUST match EVERY example description of the candidates it covers — check them one by
-    one; if a word is not in all examples, drop it or wildcard it.
-  * Use the truncated form exactly as the bank prints it (POS cuts names: "HOBBYLO", not "HOBBYLOBBY").
-  * Keep processor prefixes when they identify the merchant ("SQ *JOES" -> "SQ*JOES"); masked accounts
-    need the EXACT digits as printed ("XXXX2961" — a wrong X-count makes the keyword dead).
-  * Never anchor only on numbers, dates or generic words (PAYMENT, ONLINE, DEBIT): too generic
-    keywords catch OTHER merchants (false matches destroy trust).
-- account_type: exactly one of REVENUE, COGS, OPERATING_EXPENSE, OTHER_INCOME, OTHER_EXPENSE, NON_PL.
-- category: from the closed chart of accounts below; it MUST belong to the account_type. Use the
-  suggested category unless it is clearly wrong.
-- Do NOT duplicate an existing rule keyword (listed below); if a merchant is already covered or
-  conflicts, set kind="skip".
-- GAS STATIONS and SUPERMARKETS are handled by amount bands -> set kind="skip" for them.
-- NEVER propose a blanket rule for ambiguous PERSON-TO-PERSON payments (Zelle/Venmo/Quickpay/Cash App
-  to or from a PERSON): the same channel can be a customer payment, a subcontractor, an owner draw or a
-  contribution -> set kind="skip" (those go to human review). Only propose a rule when the counterparty
-  is a clear BUSINESS/vendor name (e.g. "Zelle to ABC Plumbing" is fine; "Zelle to/from <person>" is not)
-  — EXCEPTION: if the owner's profile facts above CONFIRM that person's role (e.g. a confirmed
-  subcontractor or customer), DO propose the rule for that person with the matching category.
-- covers: list the candidate signatures this entry merges.
+    def pick(kind: str, need=None) -> Optional[str]:
+        hits = [h for h in headers if low[h] in _H[kind] and (need is None or need(prof[h]))]
+        return hits[0] if len(hits) == 1 else None
 
-Existing rule keywords (do not duplicate): {existing}
-
-Chart of accounts for "{sector}":
-{format_for_prompt(sector)}
-
-Recurring merchants (candidates):
-{cand_lines}
-
-Return one object per proposed rule (kind="rule") or per merchant to skip (kind="skip")."""
-
-    response = _generate(prompt, list[ProposedRule])
-    result = response.parsed
-    logger.info(
-        "propose_rules | sector=%s candidates=%d -> proposed=%d",
-        sector, len(candidates), len([r for r in result if r.kind == "rule"]),
-    )
-    return result
+    date = pick("date", lambda p: p["date_like"] >= max(1, p["filled"] // 2))
+    desc = pick("description", lambda p: p["filled"] > 0)
+    amount = pick("amount", lambda p: p["number_like"] >= max(1, p["filled"] // 2))
+    debit, credit = pick("debit"), pick("credit")
+    if not date or not desc or not (amount or (debit and credit)):
+        return None
+    return ColumnMapping(date_column=date, description_column=desc, amount_column=amount or "",
+                         debit_column="" if amount else debit or "", credit_column="" if amount else credit or "",
+                         account_column=pick("account") or "", status_column=pick("status") or "")
 
 
-def map_columns(headers: list[str], sample_rows: list[list[str]]) -> ColumnMapping:
-    """Mapea encabezados de un CSV bancario desordenado a date/description/amount y, si es
-    posible, detecta la cuenta bancaria de origen (columna por fila o etiqueta de todo el archivo)."""
-    sample = "\n".join(str(r) for r in sample_rows)
-    prompt = f"""A user uploaded a messy bank CSV. Map its columns to the fields we need.
+# ── 2. Con Nemotron, cuando no ──────────────────────────────────────────────────────────────────
 
-Column headers: {headers}
-Example data rows:
-{sample}
-
-Return the EXACT header names as given:
-- date_column: header holding the transaction date.
-- description_column: header holding the description.
-- amount_column: header holding the SIGNED transaction amount (one column). If the bank instead uses
-  TWO separate columns (one for money out, one for money in), leave amount_column "" and fill the next two:
-- debit_column: header for money OUT (withdrawals/charges/debits). "" if there is a single amount column.
-- credit_column: header for money IN (deposits/credits). "" if there is a single amount column.
-
-Also detect the originating BANK ACCOUNT (a business may have several: checking, savings, cards):
-- account_column: if a column identifies the account PER ROW (common in aggregator exports
-  like Plaid/Mint), return that EXACT header name. Otherwise return "".
-- account_label: if the whole file belongs to ONE account and you can read a name or number
-  for it from the headers or sample rows (e.g. "Checking ****4471"), return a short label.
-  Otherwise return "". Do NOT guess; return "" when there is no clear account information.
-- status_column: if a column holds the transaction STATUS (e.g. "pending" vs "posted/cleared/
-  settled"), return that EXACT header name. Otherwise return ""."""
-
-    response = _generate(prompt, ColumnMapping)
-    result = response.parsed
-    logger.info(
-        "map_columns | headers=%s -> date=%r description=%r amount=%r debit=%r credit=%r "
-        "account_column=%r account_label=%r status_column=%r",
-        headers, result.date_column, result.description_column, result.amount_column,
-        result.debit_column, result.credit_column,
-        result.account_column, result.account_label, result.status_column,
-    )
-    return result
+_CACHE: dict[tuple, BaseModel] = {}   # (libro, tipo, encabezados) → mapeo: un lote no vuelve a pagar
 
 
-def map_rule_columns(headers: list[str], sample_rows: list[list[str]]) -> RuleColumnMapping:
-    """Mapea las columnas de un archivo de REGLAS del usuario (lo sube como sea) a
-    keyword / category / (opcional) account_type / subcategory. La IA lee headers + filas de muestra."""
-    sample = "\n".join(str(r) for r in sample_rows)
-    prompt = f"""A bookkeeper uploaded their existing RULES file: a list mapping a merchant/keyword to a
-bookkeeping category. Map its columns to the fields we need.
+def _ask(kind: str, system: str, user: str, schema: type[BaseModel], headers: list[str],
+         session: Optional[Session], company: Optional[Company]) -> dict:
+    """Una llamada a Nemotron, medida en `agentcall` cuando hay libro. Devuelve el JSON (sin validar)."""
+    import agent_calls
+    try:
+        reply = nemotron.chat_json(system, user, schema, max_tokens=600)
+    except nemotron.NemotronError as e:
+        if session is not None and company is not None:
+            agent_calls.record(session, company, kind, e.usage, outcome=e.code, model=nemotron.model_name())
+            session.commit()
+        raise
+    if session is not None and company is not None:
+        agent_calls.record(session, company, kind, reply.usage, items_out=len(headers))
+        session.commit()
+    logger.info("%s | %d encabezados · %d/%d tokens · $%s", kind, len(headers), reply.usage.prompt_tokens,
+                reply.usage.completion_tokens, f"{reply.usage.cost_usd:.6f}" if reply.usage.cost_usd else "?")
+    return reply.data if isinstance(reply.data, dict) else {}
 
-Column headers: {headers}
-Example data rows:
-{sample}
 
-Return the EXACT header names as given:
-- keyword_column: the column holding the MERCHANT or keyword/pattern to match in bank descriptions
-  (e.g. "Home Depot", "SHELL", "ONLINE TRANSFER*TO*XXXX2961"). Required.
-- category_column: the column holding the CATEGORY / account name (e.g. "Materials", "Rent"). Required.
-- account_type_column: if a column holds the P&L SECTION (REVENUE, COGS, OPERATING_EXPENSE,
-  OTHER_INCOME, OTHER_EXPENSE, NON_PL, or words like "income"/"expense"/"COGS"), return that EXACT
-  header. Otherwise "".
-- subcategory_column: if a column holds a sub-detail / payee, return that EXACT header. Otherwise "".
+def _only_headers(data: dict, headers: list[str], fields: list[str]) -> dict:
+    """El modelo solo puede devolver encabezados que EXISTEN; cualquier otra cosa queda en "" (y quien
+    llama ya maneja "no se encontró la columna")."""
+    return {f: (data.get(f) if data.get(f) in headers else "") for f in fields}
 
-Do NOT guess; return "" for optional columns that are not clearly present."""
 
-    response = _generate(prompt, RuleColumnMapping)
-    result = response.parsed
-    logger.info(
-        "map_rule_columns | headers=%s -> keyword=%r category=%r account_type=%r subcategory=%r",
-        headers, result.keyword_column, result.category_column,
-        result.account_type_column, result.subcategory_column,
-    )
-    return result
+_COLUMNS_SYSTEM = """You map the columns of a bank statement export. You never see the data: only each
+column's header and a profile computed from the first rows (how many look like dates, numbers, negative
+numbers, account masks, statuses; average text length; distinct values).
+
+Return ONLY JSON with exactly these fields, each the EXACT header name or "":
+- date_column: the transaction date.
+- description_column: the merchant/description text (usually the longest text column).
+- amount_column: ONE signed amount column (has both negative and positive numbers). If the bank uses two
+  columns instead (money out / money in), leave it "" and fill debit_column and credit_column.
+- debit_column / credit_column: money out / money in, only when there is no single signed amount column.
+- account_column: a column that identifies the bank account per row (account masks), else "".
+- account_label: a short account name ONLY if a header itself names the account (e.g. "Checking 4471"),
+  else "". Never guess.
+- status_column: a column with statuses like pending/posted, else "".
+A running balance column is NOT the amount."""
+
+_RULES_SYSTEM = """You map the columns of a bookkeeper's RULES file (a list of keyword -> category). You never
+see the data: only each column's header and a profile computed from the first rows (average text length,
+distinct values, how many values match a known chart-of-accounts category or a P&L section name).
+
+Return ONLY JSON with exactly these fields, each the EXACT header name or "":
+- keyword_column: the merchant / keyword / pattern to match in bank descriptions (required).
+- category_column: the bookkeeping category (usually the column with most matches_known_category) (required).
+- account_type_column: the P&L section (matches_pl_section), else "".
+- subcategory_column: a payee / sub-detail column, else "". Never guess."""
+
+
+def map_columns(headers: list[str], sample_rows: list[list[str]], *, session: Optional[Session] = None,
+                company: Optional[Company] = None) -> ColumnMapping:
+    """Qué columna es cuál en un extracto bancario. Sin IA si los encabezados son los de siempre."""
+    profile = column_profile(headers, sample_rows)
+    by_name = _by_name(headers, profile)
+    if by_name is not None:
+        logger.info("map_columns | por nombre, sin IA: %s", by_name.model_dump())
+        return by_name
+    key = (company.id if company else None, "columns", tuple(headers))
+    if key in _CACHE:
+        return _CACHE[key]
+    import json
+    data = _ask("column_mapper", _COLUMNS_SYSTEM,
+                f"Columns (header + profile of the first {len(sample_rows)} rows):\n"
+                f"{json.dumps(profile, ensure_ascii=False)}", ColumnMapping, headers, session, company)
+    picked = _only_headers(data, headers, ["date_column", "description_column", "amount_column", "debit_column",
+                                           "credit_column", "account_column", "status_column"])
+    label = data.get("account_label") if isinstance(data.get("account_label"), str) else ""
+    # La etiqueta solo vale si sale de un ENCABEZADO (no hay filas en el prompt): si no, se descarta.
+    label = label if label and any(label.lower() in h.lower() or h.lower() in label.lower() for h in headers) else ""
+    mapping = ColumnMapping(**picked, account_label=label[:60])
+    _CACHE[key] = mapping
+    return mapping
+
+
+def map_rule_columns(headers: list[str], sample_rows: list[list[str]], *, session: Optional[Session] = None,
+                     company: Optional[Company] = None,
+                     known_categories: Optional[set[str]] = None) -> RuleColumnMapping:
+    """Qué columna es cuál en un archivo de REGLAS. `known_categories`: el plan de cuentas del libro, en
+    minúsculas, para que el perfil diga qué columna parece de categorías."""
+    profile = column_profile(headers, sample_rows, known_categories or set())
+    key = (company.id if company else None, "rules", tuple(headers))
+    if key in _CACHE:
+        return _CACHE[key]
+    import json
+    data = _ask("rule_column_mapper", _RULES_SYSTEM,
+                f"Columns (header + profile of the first {len(sample_rows)} rows):\n"
+                f"{json.dumps(profile, ensure_ascii=False)}", RuleColumnMapping, headers, session, company)
+    mapping = RuleColumnMapping(**_only_headers(data, headers, ["keyword_column", "category_column",
+                                                                "account_type_column", "subcategory_column"]))
+    _CACHE[key] = mapping
+    return mapping

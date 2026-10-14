@@ -8,6 +8,9 @@ import {
 import { exportIncomeStatementPdf } from "../pdf";
 import type { IncomeStatement as IS } from "../types";
 import IncomeStatementCard from "./IncomeStatement";
+import {
+  BTN_PRIMARY, BTN_SMALL_PRIMARY, BTN_GHOST, DOT, DetailHeader, ListCard, ListDetail, ListRow, PageHeader, Stat, TONE,
+} from "./PageKit";
 
 // `allTime` llega traducido desde el componente: "All time" cableado aquí salía en inglés
 // dentro de la app en español (regla: todo lo visible, en EN y ES).
@@ -16,6 +19,10 @@ const fmtRange = (s: string | null, e: string | null, allTime: string) =>
 
 // Sección P&L: estado de resultados en vivo (con filtro de fechas) + proyectos guardados.
 // Un proyecto es un borrador que recalcula; al "cerrarlo" se congela (snapshot).
+//
+// 13-oct (Firm, diseño de página compartido — `PageKit.tsx`): línea de estado arriba (resultado, ingresos,
+// lo Pendiente) con UNA acción principal (Exportar PDF) y el resto en "⋯"; a la izquierda la lista (el P&L
+// en vivo y los proyectos guardados), a la derecha el estado de resultados elegido. La lógica no cambió.
 export default function Pnl({ companyName }: { companyName: string }) {
   const { t } = useTranslation();
   const [reports, setReports] = useState<PnlReportMeta[] | null>(null);
@@ -43,169 +50,118 @@ export default function Pnl({ companyName }: { companyName: string }) {
     loadReports();
   }
 
-  // --- Vista DETALLE de un proyecto guardado ---
-  if (selected) {
-    const closed = selected.status === "closed";
-    return (
-      <div className="space-y-4">
-        <button onClick={() => setSelected(null)} className="text-sm text-brand-green font-medium">
-          ← {t("pnl.back", { defaultValue: "Back" })}
-        </button>
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-slate-900">{selected.name}</h2>
-            <StatusBadge status={selected.status} />
-          </div>
-          <p className="text-sm text-slate-500">{fmtRange(selected.start, selected.end, t("pnl.allTime"))}</p>
-        </div>
-
-        <IncomeStatementCard data={selected.pnl} />
-
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => exportIncomeStatementPdf(companyName, selected.pnl, selected.start || undefined, selected.end || undefined)}
-            className="py-2.5 rounded-xl border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-50"
-          >
-            {t("pnl.pdf", { defaultValue: "Export PDF" })}
-          </button>
-          {closed ? (
-            <button
-              onClick={async () => { await reopenPnlReport(selected.id); setSelected(await getPnlReport(selected.id)); loadReports(); }}
-              className="py-2.5 rounded-xl border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-50"
-            >
-              {t("pnl.reopen", { defaultValue: "Reopen (draft)" })}
-            </button>
-          ) : (
-            <button
-              onClick={async () => { await closePnlReport(selected.id); setSelected(await getPnlReport(selected.id)); loadReports(); }}
-              className="py-2.5 rounded-xl font-semibold text-white"
-              style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-            >
-              {t("pnl.close", { defaultValue: "Close period (freeze)" })}
-            </button>
-          )}
-        </div>
-        <button
-          onClick={async () => {
-            if (!confirm(t("pnl.confirmDelete", { defaultValue: "Delete this project?" }))) return;
-            await deletePnlReport(selected.id); setSelected(null); loadReports();
-          }}
-          className="w-full py-2 text-sm text-rose-600 hover:underline"
-        >
-          {t("pnl.delete", { defaultValue: "Delete project" })}
-        </button>
-      </div>
-    );
-  }
-
-  // --- Vista PRINCIPAL: P&L en vivo + proyectos ---
   if (error) return <div className="alert alert-error">{error}</div>;
+
+  // Lo que se está mirando: el P&L en vivo o un proyecto guardado.
+  const data: IS | null = selected ? selected.pnl : is;
+  const closed = selected?.status === "closed";
+  const pending = data?.uncategorized?.count ?? 0;
+  const period = selected ? fmtRange(selected.start, selected.end, t("pnl.allTime"))
+                          : fmtRange(start || null, end || null, t("pnl.allTime"));
+
+  const exportPdf = () => {
+    if (selected) exportIncomeStatementPdf(companyName, selected.pnl, selected.start || undefined, selected.end || undefined);
+    else if (is) exportIncomeStatementPdf(companyName, is, start || undefined, end || undefined);
+  };
+  const more = selected ? [
+    closed
+      ? { label: t("pnl.reopen", { defaultValue: "Reopen (draft)" }),
+          onClick: async () => { await reopenPnlReport(selected.id); setSelected(await getPnlReport(selected.id)); loadReports(); } }
+      : { label: t("pnl.close", { defaultValue: "Close period (freeze)" }),
+          onClick: async () => { await closePnlReport(selected.id); setSelected(await getPnlReport(selected.id)); loadReports(); } },
+    { label: t("pnl.delete", { defaultValue: "Delete project" }), danger: true,
+      onClick: async () => {
+        if (!confirm(t("pnl.confirmDelete", { defaultValue: "Delete this project?" }))) return;
+        await deletePnlReport(selected.id); setSelected(null); loadReports();
+      } },
+  ] : [
+    { label: t("pnl.saveProject", { defaultValue: "Save as project" }), onClick: () => setNaming(true) },
+  ];
+
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-bold text-slate-900">{t("pnl.title", { defaultValue: "Profit & Loss" })}</h2>
+    <div className="space-y-3">
+      {/* 1. LA LÍNEA DE ESTADO */}
+      <PageHeader
+        meta={<>{period}{closed && <span className="ms-2">🔒 {t("pnl.closed", { defaultValue: "Closed" })}</span>}</>}
+        primary={<button onClick={exportPdf} disabled={!data} className={BTN_PRIMARY}>{t("pnl.pdf", { defaultValue: "Export PDF" })}</button>}
+        more={more}
+        moreLabel={t("page.more")}
+      >
+        <Stat value={data ? money(data.net_income) : undefined}
+              label={pending > 0 ? `${t("page.pnl.net")} · ${t("pnl.beforePending")}` : t("page.pnl.net")}
+              tone={data && data.net_income < 0 ? TONE.problem : TONE.good} />
+        <Stat value={data ? money(data.revenue) : undefined} label={t("page.pnl.revenue")} />
+        {pending > 0 && <Stat value={pending} label={t("page.pnl.pending")} tone={TONE.pending} />}
+      </PageHeader>
 
-      {/* Filtro por rango de fechas */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex items-center gap-2 text-sm flex-wrap">
-        <span className="text-slate-500 shrink-0">{t("dashboard.period", { defaultValue: "Period" })}</span>
-        <input type="date" value={start} max={end || undefined} onChange={(e) => setStart(e.target.value)}
-          className="rounded-lg border border-slate-200 px-2 py-1 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
-        <span className="text-slate-400">–</span>
-        <input type="date" value={end} min={start || undefined} onChange={(e) => setEnd(e.target.value)}
-          className="rounded-lg border border-slate-200 px-2 py-1 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
-        {(start || end) && (
-          <button onClick={() => { setStart(""); setEnd(""); }} className="ms-auto text-brand-green font-medium hover:underline">
-            {t("dashboard.allTime", { defaultValue: "All time" })}
-          </button>
-        )}
-      </div>
-
-      {is && <IncomeStatementCard data={is} />}
-
-      {/* Guardar como proyecto + PDF */}
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          onClick={() => is && exportIncomeStatementPdf(companyName, is, start || undefined, end || undefined)}
-          className="py-2.5 rounded-xl border border-slate-200 bg-white font-medium text-slate-700 hover:bg-slate-50"
-        >
-          {t("pnl.pdf", { defaultValue: "Export PDF" })}
-        </button>
-        <button
-          onClick={() => setNaming(true)}
-          className="py-2.5 rounded-xl font-semibold text-white"
-          style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
-        >
-          {t("pnl.saveProject", { defaultValue: "Save as project" })}
-        </button>
-      </div>
-
-      {naming && (
-        <div className="flex items-center gap-2">
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && saveProject()}
-            placeholder={t("pnl.projectName", { defaultValue: "Project name (e.g. Q1 2026)" })}
-            className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
-          <button onClick={saveProject} disabled={!name.trim()}
-            className="px-3 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
-            {t("pnl.save", { defaultValue: "Save" })}
-          </button>
-          <button onClick={() => { setNaming(false); setName(""); }} className="px-2 py-2 text-sm text-slate-500">
-            {t("pnl.cancel", { defaultValue: "Cancel" })}
-          </button>
-        </div>
-      )}
-
-      {/* Lista de proyectos guardados */}
-      {reports && reports.length > 0 && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-slate-100 font-semibold text-slate-900 text-sm">
-            {t("pnl.saved", { defaultValue: "Saved projects" })}
-          </div>
-          <div className="divide-y divide-slate-100">
-            {reports.map((r) => (
-              <button key={r.id} onClick={async () => setSelected(await getPnlReport(r.id))}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 text-start">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-slate-800 truncate">{r.name}</span>
-                    <StatusBadge status={r.status} />
-                  </div>
-                  <div className="text-xs text-slate-500">{fmtRange(r.start, r.end, t("pnl.allTime"))}</div>
-                  {/* Esta lista también enseña un net income: sin esto sería la única salida del
-                      P&L que calla lo Pendiente. */}
-                  {!!r.pending_count && (
-                    <div className="text-[11px] text-amber-700 mt-0.5">
-                      {t("pnl.pendingBadge", { count: r.pending_count })}
-                    </div>
-                  )}
-                </div>
-                {r.net_income != null && (
-                  <span className="text-end">
-                    <span className={`block tabular-nums font-semibold ${r.net_income >= 0 ? "text-brand-green" : "text-rose-600"}`}>
-                      {money(r.net_income)}
-                    </span>
-                    {!!r.pending_count && (
-                      <span className="block text-[10px] text-amber-700">{t("pnl.beforePending")}</span>
-                    )}
-                  </span>
-                )}
-              </button>
+      {/* 2. LA LISTA (en vivo + proyectos) Y EL ESTADO DE RESULTADOS ELEGIDO */}
+      <ListDetail
+        wide="detail"
+        selKey={selected?.id ?? "live"}
+        list={
+          <ListCard header={<div className="px-3 py-2 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-400">
+            {t("page.pnl.reports")}</div>}>
+            <ListRow active={!selected} onClick={() => setSelected(null)} dot={DOT.ok}
+                     title={t("page.pnl.live")} sub={fmtRange(start || null, end || null, t("pnl.allTime"))} />
+            {(reports ?? []).map((r) => (
+              <ListRow key={r.id} active={selected?.id === r.id} onClick={async () => setSelected(await getPnlReport(r.id))}
+                       dot={r.status === "closed" ? DOT.off : DOT.ok}
+                       title={<>{r.name}{r.status === "closed" && <span className="ms-1 text-xs text-slate-400">🔒</span>}</>}
+                       // Esta lista también enseña un net income: sin lo Pendiente sería la única salida
+                       // del P&L que lo calla.
+                       sub={<>{fmtRange(r.start, r.end, t("pnl.allTime"))}
+                         {!!r.pending_count && <span className="text-amber-700"> · {t("pnl.pendingBadge", { count: r.pending_count })}</span>}</>}
+                       right={r.net_income != null && (
+                         <span className="text-end">
+                           <span className={`block text-xs tabular-nums font-semibold ${r.net_income >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{money(r.net_income)}</span>
+                           {!!r.pending_count && <span className="block text-[10px] text-amber-700">{t("pnl.beforePending")}</span>}
+                         </span>
+                       )} />
             ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+          </ListCard>
+        }
+        detail={
+          <div className="space-y-3">
+            {selected ? (
+              <DetailHeader dot={closed ? DOT.off : DOT.ok}
+                            kicker={closed ? t("pnl.closed", { defaultValue: "Closed" }) : t("pnl.draft", { defaultValue: "Draft" })}
+                            title={selected.name} sub={fmtRange(selected.start, selected.end, t("pnl.allTime"))} />
+            ) : (
+              // Filtro por rango de fechas (solo el P&L en vivo).
+              <div className="flex items-center gap-2 text-sm flex-wrap">
+                <span className="text-slate-500 shrink-0">{t("dashboard.period", { defaultValue: "Period" })}</span>
+                <input type="date" value={start} max={end || undefined} onChange={(e) => setStart(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
+                <span className="text-slate-400">–</span>
+                <input type="date" value={end} min={start || undefined} onChange={(e) => setEnd(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1 tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
+                {(start || end) && (
+                  <button onClick={() => { setStart(""); setEnd(""); }} className="ms-auto text-emerald-800 font-medium hover:underline">
+                    {t("dashboard.allTime", { defaultValue: "All time" })}
+                  </button>
+                )}
+              </div>
+            )}
 
-function StatusBadge({ status }: { status: "draft" | "closed" }) {
-  const { t } = useTranslation();
-  const closed = status === "closed";
-  return (
-    <span className={`text-[10px] uppercase tracking-wide rounded px-1.5 py-0.5 ${
-      closed ? "bg-slate-200 text-slate-600" : "bg-brand-green/10 text-brand-green"
-    }`}>
-      {closed ? `🔒 ${t("pnl.closed", { defaultValue: "Closed" })}` : `🔄 ${t("pnl.draft", { defaultValue: "Draft" })}`}
-    </span>
+            {naming && !selected && (
+              <div className="flex items-center gap-2">
+                <input autoFocus value={name} onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && saveProject()}
+                  placeholder={t("pnl.projectName", { defaultValue: "Project name (e.g. Q1 2026)" })}
+                  className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
+                <button onClick={saveProject} disabled={!name.trim()} className={BTN_SMALL_PRIMARY}>
+                  {t("pnl.save", { defaultValue: "Save" })}
+                </button>
+                <button onClick={() => { setNaming(false); setName(""); }} className={BTN_GHOST}>
+                  {t("pnl.cancel", { defaultValue: "Cancel" })}
+                </button>
+              </div>
+            )}
+
+            {data && <IncomeStatementCard data={data} bare />}
+          </div>
+        }
+      />
+    </div>
   );
 }

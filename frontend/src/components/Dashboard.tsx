@@ -1,20 +1,14 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getIncomeStatement, getTransactions, money } from "../api";
+import { getAuditSummary, getBankConnections, getIncomeStatement, getTransactions, money, type AuditBoard, type BankConnection } from "../api";
 import { KPI, SECTION_LABEL } from "../accounting";
 import type { IncomeStatement as IS, Transaction } from "../types";
+import { BTN_PRIMARY, DOT, EmptyRow, ListCard, ListRow, PageHeader, Stat, TONE, agoText, secsSince } from "./PageKit";
 
 type View = "transactions" | "audit" | "upload" | "pnl" | "settings";
 
-function Kpi({ label, value, tone }: { label: string; value: number; tone: "green" | "rose" }) {
-  const color = tone === "green" ? "text-brand-green" : "text-rose-600";
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className={`text-xl font-bold tabular-nums mt-1 ${color}`}>{money(value)}</div>
-    </div>
-  );
-}
+// Un banco que no se actualiza hace más de esto sale en "lo que necesita atención".
+const STALE_DAYS = 3;
 
 function BreakdownBar({ label, value, total, color }: {
   label: string; value: number; total: number; color: string;
@@ -33,26 +27,26 @@ function BreakdownBar({ label, value, total, color }: {
   );
 }
 
-// Iconos de los atajos del hub.
-const HUB_ICON: Record<View, ReactNode> = {
-  transactions: <path d="M8 7h12M8 12h12M8 17h12M4 7h.01M4 12h.01M4 17h.01" />,
-  audit: <path d="M9 11l3 3 6-6M5 4h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5a1 1 0 011-1z" />,
-  upload: <path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" />, // "Bancos"
-  pnl: <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3" />,
-  settings: <path d="M12 15a3 3 0 100-6 3 3 0 000 6zM3 12h2M19 12h2M12 3v2M12 19v2" />,
-};
-
+// EL RESUMEN DEL LIBRO (13-oct, Firm: diseño de página compartido — `PageKit.tsx`).
+// Arriba la línea de estado (el resultado y lo Pendiente, las cifras que más se miran); debajo, LO QUE
+// NECESITA ATENCIÓN — cada renglón lleva a la pantalla donde se resuelve — y a dónde se va el dinero.
+// Los números salen de SQL (`/income-statement`) y del auditor (`/audit/summary`); aquí no se calcula nada.
 export default function Dashboard({ onNavigate }: {
   onNavigate: (v: View) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = (i18n.language || "en").split("-")[0];
   const [is, setIs] = useState<IS | null>(null);
   const [txs, setTxs] = useState<Transaction[] | null>(null);
+  const [audit, setAudit] = useState<AuditBoard["stats"] | null>(null);
+  const [banks, setBanks] = useState<BankConnection[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     getTransactions().then(setTxs).catch((e) => setError(e instanceof Error ? e.message : "Error"));
     getIncomeStatement().then(setIs).catch((e) => setError(e instanceof Error ? e.message : "Error"));
+    getAuditSummary().then(setAudit).catch(() => setAudit(null));
+    getBankConnections().then((r) => setBanks(r.config.enabled ? r.connections : [])).catch(() => setBanks([]));
   }, []);
 
   if (error) return <div className="alert alert-error">{error}</div>;
@@ -88,80 +82,82 @@ export default function Dashboard({ onNavigate }: {
   }
 
   const expenses = is.cogs + is.operating_expenses + is.other_expense;
-  const positive = is.net_income >= 0;
   // FASE 12: lo Pendiente (sin `account_type`) no entra en ninguna de estas sumas — se declara.
   const u = is.uncategorized;
   const pending = u?.count ?? 0;
-  // Un libro recién subido: hay movimientos, pero ninguno tiene sección todavía.
+  // Un libro recién subido: hay movimientos, pero ninguno tiene sección todavía. Sin NADA clasificado el
+  // resultado es 0 por falta de datos, no por equilibrio: no se pinta como ganancia.
   const nothingClassified = pending > 0 && is.revenue === 0 && expenses === 0 && is.other_income === 0;
-  const hub: View[] = ["pnl", "transactions", "audit", "upload", "settings"];
-  const hubLabel = (v: View) => (v === "pnl" ? t("nav.pnl", { defaultValue: "P&L" })
-    : v === "settings" ? t("settings.title") : t(`nav.${v}`));
+
+  // LO QUE NECESITA ATENCIÓN, de lo más grave a lo menos. Cada renglón lleva a donde se resuelve.
+  const down = banks.filter((b) => b.status === "disconnected");
+  const stale = banks.filter((b) => b.status !== "disconnected" &&
+    (!b.last_synced_at || secsSince(b.last_synced_at) > STALE_DAYS * 86400));
+  const items: { key: string; dot: string; title: string; sub?: string; go: View; count?: number }[] = [];
+  if (down.length) items.push({ key: "down", dot: DOT.problem, go: "upload", count: down.length,
+    title: t("page.summary.banksDown", { count: down.length }), sub: down.map((b) => b.institution_name ?? t("bank.unnamed")).join(" · ") });
+  if (audit && audit.problems > 0) items.push({ key: "problems", dot: DOT.problem, go: "audit", count: audit.problems,
+    title: t("page.summary.problems", { count: audit.problems }), sub: t("page.summary.problemsSub") });
+  if (pending > 0) items.push({ key: "pending", dot: DOT.pending, go: "transactions", count: pending,
+    title: t("page.summary.pending", { count: pending }), sub: u && u.count_out > 0 ? `${t("pnl.pendingOut")} · ${money(u.money_out)}` : undefined });
+  if (audit && audit.to_review - audit.problems > 0) items.push({ key: "review", dot: DOT.review, go: "audit",
+    count: audit.to_review - audit.problems, title: t("page.summary.toReview", { count: audit.to_review - audit.problems }),
+    sub: audit.reviewed_seconds_ago != null ? t("auditView.reviewed", { when: agoText(lang, audit.reviewed_seconds_ago) }) : t("auditView.neverReviewed") });
+  if (stale.length) items.push({ key: "stale", dot: DOT.info, go: "upload", count: stale.length,
+    title: t("page.summary.stale", { count: stale.length }),
+    sub: stale.map((b) => `${b.institution_name ?? t("bank.unnamed")} · ${b.last_synced_at ? agoText(lang, secsSince(b.last_synced_at)) : t("bank.neverSynced")}`).join(" · ") });
 
   return (
-    <div className="space-y-4">
-      {/* Héroe (resumen, todo el periodo) */}
-      <div className="text-white rounded-3xl shadow-md p-6" style={{ background: "linear-gradient(135deg, #15803d, #14532d)" }}>
-        <div className="text-sm opacity-80">
-          {KPI.netIncome}
-          {pending > 0 && <span className="ms-1 opacity-80">· {t("pnl.beforePending")}</span>}
-        </div>
-        <div className="text-4xl font-bold tabular-nums mt-2">{money(is.net_income)}</div>
-        <div className="text-sm mt-1 opacity-80">
-          {/* Sin NADA clasificado, el resultado es 0 por falta de datos, no por equilibrio: decir
-              "tu negocio está en ganancia" ahí sería celebrar un número vacío. */}
-          {nothingClassified
-            ? t("pnl.nothingClassified")
-            : positive ? t("dashboard.profitPositive") : t("dashboard.profitNegative")}
-        </div>
-        {/* Lo Pendiente se declara también aquí: este número grande es el que más se mira, y sin
-            esta línea un libro 100% Pendiente muestra $0.00 como si estuviera cuadrado. */}
-        {pending > 0 && (
-          <div className="mt-3 flex items-start gap-2 rounded-xl bg-black/20 px-3 py-2 text-xs">
-            <span className="size-2 rounded-full bg-amber-300 mt-1 shrink-0" aria-hidden />
-            <span>{t("pnl.pendingBadge", { count: pending })}</span>
-          </div>
-        )}
-      </div>
+    <div className="space-y-3">
+      {/* 1. LA LÍNEA DE ESTADO */}
+      <PageHeader
+        meta={nothingClassified ? t("pnl.nothingClassified") : t("page.summary.allTime")}
+        primary={<button onClick={() => onNavigate("transactions")} className={BTN_PRIMARY}>{t("page.summary.openBook")}</button>}
+        more={[
+          { label: t("dashboard.seePnl", { defaultValue: "See full P&L →" }), onClick: () => onNavigate("pnl") },
+          { label: t("nav.audit"), onClick: () => onNavigate("audit") },
+          { label: t("nav.upload"), onClick: () => onNavigate("upload") },
+        ]}
+        moreLabel={t("page.more")}
+      >
+        <Stat value={money(is.net_income)}
+              label={pending > 0 ? `${KPI.netIncome} · ${t("pnl.beforePending")}` : KPI.netIncome}
+              tone={is.net_income < 0 ? TONE.problem : TONE.good} />
+        <Stat value={money(is.revenue)} label={KPI.revenue} />
+        <Stat value={money(expenses)} label={KPI.totalExpenses} />
+        {pending > 0 && <Stat value={pending} label={t("page.pnl.pending")} tone={TONE.pending} />}
+      </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Kpi label={KPI.revenue} value={is.revenue} tone="green" />
-        <Kpi label={KPI.totalExpenses} value={expenses} tone="rose" />
-      </div>
-
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="font-semibold text-slate-900">{t("dashboard.whereMoneyGoes")}</h2>
-          <button onClick={() => onNavigate("pnl")} className="text-sm text-brand-green font-medium hover:underline">
-            {t("dashboard.seePnl", { defaultValue: "See full P&L →" })}
-          </button>
-        </div>
-        <BreakdownBar label={SECTION_LABEL.COGS} value={is.cogs} total={expenses} color="bg-rose-400" />
-        <BreakdownBar label={SECTION_LABEL.OPERATING_EXPENSE} value={is.operating_expenses} total={expenses} color="bg-amber-400" />
-        <BreakdownBar label={SECTION_LABEL.OTHER_EXPENSE} value={is.other_expense} total={expenses} color="bg-slate-400" />
-        {/* Los porcentajes de arriba son sobre lo YA clasificado. Lo que salió sin clasificar va
-            aparte: meterlo en una barra exigiría decidir a qué sección pertenece, y no se sabe. */}
-        {u && u.count_out > 0 && (
-          <div className="flex justify-between text-xs text-amber-700 border-t border-amber-100 pt-2">
-            <span>{t("pnl.pendingTitle")} · {t("pnl.pendingOut")} · {u.count_out}</span>
-            <span className="tabular-nums">{money(u.money_out)}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Hub de atajos: ir a cada ventana de trabajo */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
-        <h2 className="font-semibold text-slate-900 mb-3">{t("dashboard.workOn", { defaultValue: "Work on" })}</h2>
-        <div className="grid grid-cols-3 gap-2">
-          {hub.map((v) => (
-            <button key={v} onClick={() => onNavigate(v)}
-              className="flex flex-col items-center gap-1.5 py-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
-              <svg viewBox="0 0 24 24" className="size-6 text-brand-green" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-                {HUB_ICON[v]}
-              </svg>
-              <span className="text-xs text-slate-600 text-center">{hubLabel(v)}</span>
-            </button>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_420px] items-start">
+        {/* 2. LO QUE NECESITA ATENCIÓN */}
+        <ListCard header={<div className="px-3 py-2 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          {t("page.summary.attention")}</div>}>
+          {items.length === 0 && <EmptyRow text={t("page.summary.allClear")} />}
+          {items.map((it) => (
+            <ListRow key={it.key} active={false} onClick={() => onNavigate(it.go)} dot={it.dot} title={it.title} sub={it.sub}
+                     right={<span className="text-xs text-slate-400">→</span>} />
           ))}
+        </ListCard>
+
+        {/* 3. A DÓNDE SE VA EL DINERO (sobre lo YA clasificado) */}
+        <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-900">{t("dashboard.whereMoneyGoes")}</h2>
+            <button onClick={() => onNavigate("pnl")} className="text-xs text-emerald-800 font-medium hover:underline">
+              {t("dashboard.seePnl", { defaultValue: "See full P&L →" })}
+            </button>
+          </div>
+          <BreakdownBar label={SECTION_LABEL.COGS} value={is.cogs} total={expenses} color="bg-rose-400" />
+          <BreakdownBar label={SECTION_LABEL.OPERATING_EXPENSE} value={is.operating_expenses} total={expenses} color="bg-amber-400" />
+          <BreakdownBar label={SECTION_LABEL.OTHER_EXPENSE} value={is.other_expense} total={expenses} color="bg-slate-400" />
+          {/* Lo que salió sin clasificar va aparte: meterlo en una barra exigiría decidir a qué sección
+              pertenece, y no se sabe. */}
+          {u && u.count_out > 0 && (
+            <div className="flex justify-between text-xs text-amber-700 border-t border-amber-100 pt-2">
+              <span>{t("pnl.pendingTitle")} · {t("pnl.pendingOut")} · {u.count_out}</span>
+              <span className="tabular-nums">{money(u.money_out)}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

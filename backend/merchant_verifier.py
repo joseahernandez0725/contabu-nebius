@@ -44,6 +44,7 @@ from rules import _MERCHANT_NOISE, _PROCESSOR_PREFIXES, is_check, merchant_signa
 load_dotenv()
 
 TAVILY_URL = "https://api.tavily.com/search"
+MIN_RELEVANCE = 0.2   # por debajo, un resultado de Tavily no cuenta como evidencia
 MAX_SEARCHES_PER_RUN = 12
 
 # ── La lista cerrada de tipos de negocio y sus palabras ─────────────────────────────────────────
@@ -207,15 +208,21 @@ def classify(results: list[dict], query: str) -> tuple[Optional[str], Optional[s
     best_url: dict[str, tuple[float, str]] = {}
     name_tokens = [w.lower() for w in query.split() if len(w) >= 3 and not w.isdigit()]
     name_seen = False
-    for r in results:
+    # Los resultados casi irrelevantes no son evidencia: 4 páginas genéricas sobre "restaurant" (relevancia
+    # 0.05–0.11) le ganaban a la página oficial de RESTAURANT DEPOT (0.68, "Foodservice") — ✅ 13-oct.
+    relevant = [r for r in results if float(r.get("score") or 0) >= MIN_RELEVANCE] or results[:1]
+    for r in relevant:
         text = f"{r.get('title') or ''} {r.get('content') or ''}"
         rel = float(r.get("score") or 0.5)
         if name_tokens and all(tok in (text + " " + (r.get("url") or "")).lower() for tok in name_tokens[:2]):
             name_seen = True
         for t, rx in _TYPE_RE.items():
-            hits = len(rx.findall(text))
+            found = rx.findall(text)
+            # Una FRASE de varias palabras ("restaurant depot", "gas station") dice más que una palabra
+            # suelta: pesa el doble (✅ 13-oct: RESTAURANT DEPOT salía "restaurant" por la palabra suelta).
+            hits = sum(2 if " " in w.strip() else 1 for w in found)
             if hits:
-                scores[t] += rel * min(hits, 3)
+                scores[t] += rel * min(hits, 4)
                 support[t] += 1
                 if rel > best_url.get(t, (-1, ""))[0]:
                     best_url[t] = (rel, r.get("url") or "")

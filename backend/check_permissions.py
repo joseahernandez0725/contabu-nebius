@@ -126,7 +126,6 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/checkout/confirm"): {"session_id": "cs_x"},
     ("POST", "/api/companies/{company_id}/transactions/set-account"): {
         "transaction_ids": ["__TX__"], "account": "Chase Checking"},
-    ("POST", "/api/companies/{company_id}/rule-proposals/validate"): {"keyword": "X", "covers": []},
     ("POST", "/api/companies/{company_id}/rule-proposals/apply"): {"rules": []},
     # Notas del libro (F11). El PATCH apunta a la nota 999999: un 404 también prueba el rechazo.
     ("POST", "/api/companies/{company_id}/notes"): {"text": "permcheck note"},

@@ -217,7 +217,9 @@ def ingest_csv(
 
     # 1) La IA descubre qué columna es cuál (con varias filas de muestra) y, si puede,
     #    detecta la cuenta bancaria de origen (columna por fila o etiqueta de todo el archivo).
-    mapping = map_columns(headers, rows[:3])
+    # (Desde el 13-oct sobre Nemotron, sin mandar los valores: encabezados + perfil de cada columna; y
+    # con encabezados conocidos, sin IA. El libro va para medir la llamada en `agentcall`. Ver ai.py.)
+    mapping = map_columns(headers, rows[:3], session=session, company=session.get(Company, company_id))
     try:
         i_date = headers.index(mapping.date_column)
         i_desc = headers.index(mapping.description_column)

@@ -1,0 +1,332 @@
+[
+ {
+  "fingerprint": "24 HOUR FITNESS",
+  "query": "24 HOUR FITNESS",
+  "status": "ok",
+  "business_type": "gym_fitness",
+  "confidence": "high",
+  "source_url": "https://www.instagram.com/24hourfitness?hl=en",
+  "source_domain": "www.instagram.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "ADP PAYROLL",
+  "query": "ADP PAYROLL",
+  "status": "ok",
+  "business_type": "payroll_hr",
+  "confidence": "high",
+  "source_url": "https://www.business.com/reviews/adp-enhanced",
+  "source_domain": "www.business.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "AMAZON",
+  "query": "AMAZON",
+  "status": "ok",
+  "business_type": "software_saas",
+  "confidence": "low",
+  "source_url": "https://www.linkedin.com/company/amazon",
+  "source_domain": "www.linkedin.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "AMZN",
+  "query": "AMZN",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
+  "fingerprint": "BAYCITY UNIFORMS",
+  "query": "BAYCITY UNIFORMS",
+  "status": "ok",
+  "business_type": "uniforms_apparel",
+  "confidence": "high",
+  "source_url": "https://www.facebook.com/bcumiglw",
+  "source_domain": "www.facebook.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "BAYSIDE PROPERTIES",
+  "query": "BAYSIDE PROPERTIES",
+  "status": "ok",
+  "business_type": "property_management",
+  "confidence": "high",
+  "source_url": "https://www.bostonbayside.com",
+  "source_domain": "www.bostonbayside.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "CHEVRON",
+  "query": "CHEVRON",
+  "status": "ok",
+  "business_type": "gas_station",
+  "confidence": "high",
+  "source_url": "https://www.linkedin.com/company/chevron",
+  "source_domain": "www.linkedin.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "CINTAS",
+  "query": "CINTAS",
+  "status": "ok",
+  "business_type": "uniforms_apparel",
+  "confidence": "medium",
+  "source_url": "https://en.wikipedia.org/wiki/Cintas",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "COSTCO WHSE",
+  "query": "COSTCO WHSE",
+  "status": "ok",
+  "business_type": "warehouse_club",
+  "confidence": "low",
+  "source_url": "https://www.costco.com",
+  "source_domain": "www.costco.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "ECOLAB PEST",
+  "query": "ECOLAB PEST",
+  "status": "ok",
+  "business_type": "pest_control",
+  "confidence": "high",
+  "source_url": "https://en-fr.ecolab.com/about/our-businesses/pest-elimination",
+  "source_domain": "en-fr.ecolab.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "EL FAROLITO",
+  "query": "EL FAROLITO",
+  "status": "ok",
+  "business_type": "restaurant",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Taqueria_El_Farolito",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "FERGUSON HVAC",
+  "query": "FERGUSON HVAC",
+  "status": "ok",
+  "business_type": "building_supplies",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Ferguson_Enterprises",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "HOME DEPOT",
+  "query": "HOME DEPOT",
+  "status": "ok",
+  "business_type": "hardware_store",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Home_Depot",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "IRS USATAXPYMT",
+  "query": "IRS USATAXPYMT",
+  "status": "ok",
+  "business_type": "bank_financial",
+  "confidence": "low",
+  "source_url": "https://www.irs.gov/payments",
+  "source_domain": "www.irs.gov",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "JANITEX SUPPLY",
+  "query": "JANITEX SUPPLY",
+  "status": "ok",
+  "business_type": "cleaning_supplies",
+  "confidence": "high",
+  "source_url": "https://amsp.africa/product/janitex-anti-bacterial-75-alcohol-wipes-drum-80s",
+  "source_domain": "amsp.africa",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "JOHNSTONE SUPPLY",
+  "query": "JOHNSTONE SUPPLY",
+  "status": "ok",
+  "business_type": "building_supplies",
+  "confidence": "high",
+  "source_url": "https://powerofjs.com",
+  "source_domain": "powerofjs.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "LOWE'S",
+  "query": "LOWE'S",
+  "status": "ok",
+  "business_type": "hardware_store",
+  "confidence": "high",
+  "source_url": "https://www.facebook.com/LowesHomeImprovementGastoniaNorthCarolina",
+  "source_domain": "www.facebook.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "MISSION ST",
+  "query": "MISSION ST",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
+  "fingerprint": "NEXT INSURANCE",
+  "query": "NEXT INSURANCE",
+  "status": "ok",
+  "business_type": "insurance",
+  "confidence": "high",
+  "source_url": "https://www.linkedin.com/company/nextinsurance",
+  "source_domain": "www.linkedin.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "PGANDE WEB",
+  "query": "PGANDE WEB",
+  "status": "ok",
+  "business_type": "utility",
+  "confidence": "high",
+  "source_url": "https://www.whatsthatcharge.com/PGANDE-WEB-ONLINE",
+  "source_domain": "www.whatsthatcharge.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "RESTAURANT DEPOT",
+  "query": "RESTAURANT DEPOT",
+  "status": "ok",
+  "business_type": "restaurant_supply",
+  "confidence": "low",
+  "source_url": "https://www.restaurantdepot.com",
+  "source_domain": "www.restaurantdepot.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "SAFEWAY",
+  "query": "SAFEWAY",
+  "status": "ok",
+  "business_type": "grocery",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Safeway",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "SHELL OIL",
+  "query": "SHELL OIL",
+  "status": "ok",
+  "business_type": "gas_station",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Shell_plc",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "SMART FINAL",
+  "query": "SMART FINAL",
+  "status": "ok",
+  "business_type": "grocery",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Smart_%26_Final",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "STARBUCKS",
+  "query": "STARBUCKS",
+  "status": "ok",
+  "business_type": "coffee_shop",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Starbucks",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "STARBUCKS STORE",
+  "query": "STARBUCKS STORE",
+  "status": "ok",
+  "business_type": "coffee_shop",
+  "confidence": "high",
+  "source_url": "https://www.starbucks.com",
+  "source_domain": "www.starbucks.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "STATE FARM INSURANCE",
+  "query": "STATE FARM INSURANCE",
+  "status": "ok",
+  "business_type": "insurance",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/State_Farm",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "SYSCO SAN",
+  "query": "SYSCO SAN",
+  "status": "ok",
+  "business_type": "restaurant_supply",
+  "confidence": "medium",
+  "source_url": "https://en.wikipedia.org/wiki/Sysco",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "T-MOBILE PCS",
+  "query": "T-MOBILE PCS",
+  "status": "ok",
+  "business_type": "telecom",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Metro_by_T-Mobile",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "ULINE",
+  "query": "ULINE",
+  "status": "ok",
+  "business_type": "packaging_shipping",
+  "confidence": "high",
+  "source_url": "https://www.linkedin.com/company/uline",
+  "source_domain": "www.linkedin.com",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "VERIZON WIRELESS",
+  "query": "VERIZON WIRELESS",
+  "status": "ok",
+  "business_type": "telecom",
+  "confidence": "high",
+  "source_url": "https://en.wikipedia.org/wiki/Verizon_(wireless_service)",
+  "source_domain": "en.wikipedia.org",
+  "results_count": 5
+ },
+ {
+  "fingerprint": "WALMART SUPERCENTER",
+  "query": "WALMART SUPERCENTER",
+  "status": "ok",
+  "business_type": null,
+  "confidence": null,
+  "source_url": null,
+  "source_domain": null,
+  "results_count": 5
+ },
+ {
+  "fingerprint": "ZOROTOOLS",
+  "query": "ZOROTOOLS",
+  "status": "ok",
+  "business_type": "industrial_supplies",
+  "confidence": "low",
+  "source_url": "https://www.zoro.com",
+  "source_domain": "www.zoro.com",
+  "results_count": 5
+ }
+]

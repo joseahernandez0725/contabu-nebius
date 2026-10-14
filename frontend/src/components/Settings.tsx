@@ -8,6 +8,7 @@ import {
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import type { Company } from "../types";
+import { PageHeader, Stat } from "./PageKit";
 
 // Secciones del P&L que se pueden personalizar (NON_PL no es parte del estado de resultados).
 const PL_SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE"];
@@ -28,10 +29,23 @@ export default function Settings({
   const isOwner = role === "OWNER";
   const canEdit = role !== "VIEWER";
 
+  // LA LÍNEA DE ESTADO (13-oct, Firm: diseño de página compartido — `PageKit.tsx`). Ajustes no lleva lista +
+  // detalle: son pocos bloques que se editan en su sitio. El título lo pone la barra de arriba.
+  const [people, setPeople] = useState<number | null>(null);
+  const [own, setOwn] = useState<number | null>(null);
+  useEffect(() => {
+    if (isOwner) getMembers().then((m) => setPeople(m.length)).catch(() => setPeople(null));
+    getCustomCategories().then((c) => setOwn(c.length)).catch(() => setOwn(null));
+  }, [isOwner]);
+
   return (
-    <div className="space-y-5">
-      {/* El título ya lo pone la barra de arriba ("Ajustes del libro"); aquí solo el alcance. */}
-      <p className="text-sm text-slate-500">{t("settings.subtitle")}</p>
+    <div className="space-y-3">
+      <PageHeader meta={t("settings.subtitle")}>
+        {company && <Stat value={t(`sectors.${company.sector}`, { defaultValue: company.sector })} label={t("page.settings.sector")} />}
+        {company && <Stat value={company.settlement_buffer_days ?? 5} label={t("page.settings.waitDays", { count: company.settlement_buffer_days ?? 5 })} />}
+        {isOwner && <Stat value={people ?? undefined} label={t("page.settings.people", { count: people ?? 0 })} />}
+        <Stat value={own ?? undefined} label={t("page.settings.ownAccounts", { count: own ?? 0 })} />
+      </PageHeader>
 
       {isOwner && company && (
         <BusinessProfile company={company} canDelete={canDelete} onSaved={onSaved} onDeleted={onDeleted} />
@@ -51,7 +65,7 @@ export default function Settings({
       {isOwner && company && <TeamSection />}
 
       {!canEdit && (
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 text-sm text-slate-500">
+        <div className="bg-white rounded-xl border border-slate-200 p-3 text-sm text-slate-500">
           {t("settings.viewerNote", { defaultValue: "You have view-only access to this business." })}
         </div>
       )}
@@ -82,9 +96,9 @@ function TeamSection() {
   const roleLabel = (r: string) => t(`settings.role.${r}`, { defaultValue: r });
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
+    <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-4">
       <div>
-        <h3 className="font-semibold text-slate-900">{t("settings.team", { defaultValue: "Team" })}</h3>
+        <h3 className="text-sm font-semibold text-slate-900">{t("settings.team", { defaultValue: "Team" })}</h3>
         <p className="text-xs text-slate-500 mt-1">
           {t("settings.teamHelp", { defaultValue: "Invite your team. Member = can edit · Viewer = read-only." })}
         </p>
@@ -137,8 +151,7 @@ function TeamSection() {
           <option value="VIEWER">{roleLabel("VIEWER")}</option>
         </select>
         <button onClick={invite} disabled={busy || !email.trim()}
-          className="px-3 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-          style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
+          className="px-3 py-2 rounded-lg text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50">
           {t("settings.invite", { defaultValue: "Invite" })}
         </button>
       </div>
@@ -171,16 +184,15 @@ function BusinessProfile({ company, canDelete, onSaved, onDeleted }: {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-4">
-      <h3 className="font-semibold text-slate-900">{t("settings.business", { defaultValue: "Business" })}</h3>
+    <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-4">
+      <h3 className="text-sm font-semibold text-slate-900">{t("settings.business", { defaultValue: "Business" })}</h3>
       <div>
         <label className="block text-sm font-medium text-slate-800 mb-1">{t("settings.nameLabel", { defaultValue: "Name" })}</label>
         <div className="flex gap-2">
           <input value={name} onChange={(e) => setName(e.target.value)}
             className="flex-1 rounded-lg border border-slate-200 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-green/40" />
           <button onClick={rename} disabled={saving || !name.trim() || name.trim() === company.name}
-            className="px-4 rounded-lg font-medium text-white disabled:opacity-50"
-            style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}>
+            className="px-4 rounded-lg text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50">
             {saving ? t("settings.saving") : t("settings.rename", { defaultValue: "Rename" })}
           </button>
         </div>
@@ -217,9 +229,9 @@ function RecentWait({ company, onSaved }: { company: Company; onSaved: (c: Compa
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 space-y-3">
+    <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-3">
       <div>
-        <h3 className="font-semibold text-slate-900">{t("settings.recent.title")}</h3>
+        <h3 className="text-sm font-semibold text-slate-900">{t("settings.recent.title")}</h3>
         <p className="text-xs text-slate-500 mt-1">{t("settings.recent.help")}</p>
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -280,8 +292,8 @@ function ChartEditor() {
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-      <h3 className="font-semibold text-slate-900">{t("settings.chartTitle", { defaultValue: "Chart of accounts (P&L)" })}</h3>
+    <div className="bg-white rounded-xl border border-slate-200 p-3">
+      <h3 className="text-sm font-semibold text-slate-900">{t("settings.chartTitle", { defaultValue: "Chart of accounts (P&L)" })}</h3>
       <p className="text-sm text-slate-500 mt-1 mb-3">
         {t("settings.chartSubtitle", { defaultValue: "Add your own categories to your income statement." })}
       </p>
@@ -339,8 +351,7 @@ function ChartEditor() {
                 <button
                   onClick={() => add(section)}
                   disabled={busy || !name.trim()}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium text-white disabled:opacity-50"
-                  style={{ background: "linear-gradient(135deg, #15803d, #f4b400)" }}
+                  className="px-3 py-1.5 rounded-lg text-sm font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50"
                 >
                   {t("settings.chartAdd", { defaultValue: "Add" })}
                 </button>

@@ -827,30 +827,6 @@
     "error": "No se pudo confirmar el pago.",
     "canceled": "Pago cancelado — no se hizo ningún cobro."
   },
-  "proposals": {
-    "title": "Reglas sugeridas",
-    "subtitle": "Deja que la IA de ContaBu proponga reglas desde tus transacciones, o importa tu propio archivo de reglas — la IA lee las columnas.",
-    "generate": "Sugerir reglas con IA",
-    "analyzing": "La IA está trabajando…",
-    "import": "Importar mi archivo de reglas",
-    "none": "No hay reglas nuevas que proponer — tu reglamento ya cubre los comercios recurrentes.",
-    "importEmpty": "No se pudo leer ninguna regla de ese archivo.",
-    "keyword": "Palabra clave",
-    "category": "Categoría",
-    "merges": "une",
-    "covered": "cubre {{n}}",
-    "missed": "se le escapan {{n}}",
-    "conflicts": "{{n}} conflictos — edita el keyword",
-    "apply": "Aprobar {{n}} reglas",
-    "applying": "Aplicando…",
-    "cancel": "Cancelar",
-    "status": {
-      "exists": "ya existe",
-      "duplicate": "duplicada",
-      "needs_section": "falta sección"
-    },
-    "applied": "Se crearon {{c}} reglas y se alinearon {{a}} transacciones."
-  },
   "verify": {
     "title": "Verifica tu correo — te enviamos un enlace a {{email}}.",
     "resend": "Reenviar",
@@ -1073,7 +1049,7 @@
         },
         "s4": {
           "t": "Abre Auditoría",
-          "d": "El equipo encontró un comercio categorizado de dos formas y reglas que chocan. Haz clic en una Observación para leer el reporte completo."
+          "d": "El equipo encontró un comercio categorizado de dos formas y reglas que chocan. En Bookkeeping, elige una fila con puntito: el panel de la derecha muestra lo que encontraron los agentes y su evidencia."
         },
         "s5": {
           "t": "Corrige una fila a mano",
@@ -1088,6 +1064,123 @@
           "d": "El mismo tipo de compra se audita distinto por la nota del bookkeeper."
         }
       }
+    }
+  },
+  "panel": {
+    "close": "Cerrar (Esc)",
+    "loading": "Cargando…",
+    "error": "No se pudo cargar este movimiento.",
+    "level": {
+      "problem": "Problema",
+      "review": "Por revisar",
+      "info": "Observación",
+      "none": "Nada que revisar",
+      "pending": "Pendiente"
+    },
+    "in": "entra dinero",
+    "out": "sale dinero",
+    "bankLine": "Línea del banco",
+    "yourText": "Tu texto",
+    "bankRemoved": "El banco vinculado retiró este movimiento después de registrarlo. Consérvalo o bórralo desde el menú del clic derecho.",
+    "category": "Categoría",
+    "agents": "Lo que encontraron los agentes",
+    "noFindings": "El auditor no encontró nada en este movimiento.",
+    "rows_one": "{{count}} fila",
+    "rows_other": "{{count}} filas",
+    "openAudit": "Ver en Auditoría",
+    "notes": "Notas del libro que le aplican",
+    "history": "Historial de correcciones",
+    "noHistory": "Nunca se corrigió: está como entró.",
+    "bySystem": "ContaBu",
+    "someone": "alguien",
+    "note": "Tu nota",
+    "goRule": "Ir a la regla",
+    "prov": {
+      "rule": "De la regla",
+      "byAgent": "propuesta por el agente, aprobada por ti",
+      "ruleSays": "La regla dice {{s}}",
+      "ruleDeleted": "ƒ De una regla que ya no existe",
+      "manual": "Escrita a mano: ninguna regla la toca",
+      "transfer": "Transferencia entre cuentas (detectada)",
+      "pending": "Ninguna regla la cubre todavía",
+      "other": "La puso: {{source}}"
+    },
+    "via": {
+      "manual": "editada a mano",
+      "follow_rule": "volvió a seguir su regla",
+      "rule_update": "editada junto con su regla",
+      "rule_applied": "una regla nueva o editada",
+      "rule_precedence": "cambió la prioridad de las reglas",
+      "undo": "deshecho",
+      "bank_modified": "el banco la cambió",
+      "rule_deleted": "se borró su regla"
+    },
+    "showOnSelect": "Abrir el panel de detalle al seleccionar",
+    "flagTitle": {
+      "problem": "Problema — selecciona la fila para verlo",
+      "review": "Por revisar — selecciona la fila para verlo",
+      "info": "Observación — selecciona la fila para verla"
+    }
+  },
+  "page": {
+    "more": "Más acciones",
+    "pnl": {
+      "net": "Resultado neto",
+      "revenue": "Ingresos",
+      "pending": "Pendientes",
+      "reports": "Reportes",
+      "live": "P&L en vivo"
+    },
+    "banks": {
+      "linked_one": "banco vinculado",
+      "linked_other": "bancos vinculados",
+      "accounts_one": "cuenta",
+      "accounts_other": "cuentas",
+      "down_one": "desconectado",
+      "down_other": "desconectados",
+      "updated": "Actualizado {{when}}",
+      "updateAll": "Actualizar todos los bancos",
+      "uploadCsv": "Subir un extracto (CSV)",
+      "working": "Trabajando…",
+      "listTitle": "Bancos y extractos",
+      "none": "Todavía no hay bancos vinculados. Vincula uno con el botón de arriba.",
+      "csvTitle": "Extracto (CSV o Excel)",
+      "csvSub": "Un archivo de tu banco, en cualquier formato",
+      "statusOk": "Conectado",
+      "statusDown": "Desconectado",
+      "accountsTitle": "Cuentas"
+    },
+    "summary": {
+      "allTime": "Todo el período",
+      "openBook": "Abrir Bookkeeping",
+      "attention": "Lo que necesita tu atención",
+      "allClear": "Nada necesita tu atención ahora.",
+      "banksDown_one": "{{count}} banco desconectado",
+      "banksDown_other": "{{count}} bancos desconectados",
+      "problems_one": "{{count}} problema que encontraron los agentes",
+      "problems_other": "{{count}} problemas que encontraron los agentes",
+      "problemsSub": "En Auditoría, con la evidencia",
+      "pending_one": "{{count}} movimiento sin regla (Pendiente)",
+      "pending_other": "{{count}} movimientos sin regla (Pendientes)",
+      "toReview_one": "{{count}} hallazgo por revisar",
+      "toReview_other": "{{count}} hallazgos por revisar",
+      "stale_one": "{{count}} banco sin actualizar hace días",
+      "stale_other": "{{count}} bancos sin actualizar hace días"
+    },
+    "sheet": {
+      "transactions_one": "movimiento",
+      "transactions_other": "movimientos",
+      "problems_one": "con problema",
+      "problems_other": "con problema"
+    },
+    "settings": {
+      "sector": "sector",
+      "waitDays_one": "día de espera",
+      "waitDays_other": "días de espera",
+      "people_one": "persona con acceso",
+      "people_other": "personas con acceso",
+      "ownAccounts_one": "cuenta propia",
+      "ownAccounts_other": "cuentas propias"
     }
   }
 }

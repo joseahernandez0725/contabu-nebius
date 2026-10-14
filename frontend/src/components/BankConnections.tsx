@@ -80,10 +80,14 @@ function loadPlaid(): Promise<void> {
   return scriptPromise;
 }
 
-export default function BankConnections() {
+/** Los bancos vinculados del libro y sus acciones (vincular, actualizar, reparar, desvincular).
+ *  13-oct (Firm, diseño de página compartido): la LÓGICA es la misma de antes; solo salió del componente
+ *  a un hook para que la página Bancos (`Upload.tsx`) la pinte como lista + detalle. */
+export function useBanks() {
   const { t, i18n } = useTranslation();
   const [config, setConfig] = useState<BankConfig | null>(null);
   const [conns, setConns] = useState<BankConnection[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<number | "new" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<BankSync | null>(null);
@@ -96,7 +100,8 @@ export default function BankConnections() {
   const load = useCallback(() => {
     getBankConnections()
       .then((r) => { setConfig(r.config); setConns(r.connections); })
-      .catch((e) => setError(errText(e)));
+      .catch((e) => setError(errText(e)))
+      .finally(() => setLoaded(true));
   }, [errText]);
   useEffect(() => { load(); }, [load]);
 
@@ -132,6 +137,20 @@ export default function BankConnections() {
     finally { setBusy(null); load(); }
   }
 
+  /** Actualiza TODAS las conexiones activas (el mismo resumen sumado que usa la hoja). */
+  async function syncAll() {
+    const active = conns.filter((c) => c.status !== "disconnected");
+    if (!active.length) return;
+    setBusy("new"); setError(null); setLast(null);
+    const results: BankSync[] = [];
+    for (const c of active) {
+      try { results.push((await syncBankConnection(c.id)).sync); }
+      catch (e) { setError(errText(e)); }
+    }
+    if (results.length) setLast(sumSyncs(results));
+    setBusy(null); load();
+  }
+
   async function remove(c: BankConnection) {
     if (!window.confirm(t("bank.confirmRemove", { name: c.institution_name ?? t("bank.unnamed") }))) return;
     setBusy(c.id); setError(null); setLast(null);
@@ -140,72 +159,5 @@ export default function BankConnections() {
     finally { setBusy(null); load(); }
   }
 
-  if (!config) return null;
-
-  return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
-      <h2 className="font-semibold text-slate-900">{t("bank.title")}</h2>
-      <p className="text-sm text-slate-500 mt-1">{t("bank.subtitle")}</p>
-
-      {!config.enabled ? (
-        <div className="alert mt-4 text-sm bg-slate-50 text-slate-600 border-slate-200">{t("bank.notConfigured")}</div>
-      ) : (
-        <>
-          <button
-            onClick={() => openLink()}
-            disabled={busy !== null}
-            className="btn w-full mt-4 bg-brand-green text-white border-none hover:bg-brand-green-dark disabled:opacity-50"
-          >
-            {busy === "new" ? <span className="loading loading-spinner" /> : t("bank.link")}
-          </button>
-          {config.environment === "sandbox" && (
-            <p className="text-xs text-slate-500 mt-2 text-center">{t("bank.sandboxHint")}</p>
-          )}
-        </>
-      )}
-
-      {conns.length > 0 && (
-        <ul className="mt-4 divide-y divide-slate-100 border border-slate-100 rounded-xl">
-          {conns.map((c) => (
-            <li key={c.id} className="p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-semibold text-slate-800 truncate">
-                    {c.institution_name ?? t("bank.unnamed")}
-                  </div>
-                  <div className="text-xs text-slate-500 truncate">
-                    {c.accounts.map((a) => `${a.name ?? ""}${a.mask ? ` ••${a.mask}` : ""}`).join(" · ")}
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    {c.last_synced_at
-                      ? t("bank.lastSync", { date: new Date(c.last_synced_at + "Z").toLocaleString() })
-                      : t("bank.neverSynced")}
-                  </div>
-                </div>
-                <div className="flex gap-1.5 shrink-0">
-                  {c.status === "disconnected" ? (
-                    <button onClick={() => openLink(c)} disabled={busy !== null}
-                      className="btn btn-xs bg-amber-500 text-white border-none">{t("bank.repair")}</button>
-                  ) : (
-                    <button onClick={() => sync(c)} disabled={busy !== null}
-                      className="btn btn-xs btn-outline">
-                      {busy === c.id ? <span className="loading loading-spinner loading-xs" /> : t("bank.refresh")}
-                    </button>
-                  )}
-                  <button onClick={() => remove(c)} disabled={busy !== null}
-                    className="btn btn-xs btn-ghost text-rose-600">{t("bank.remove")}</button>
-                </div>
-              </div>
-              {c.status === "disconnected" && (
-                <p className="text-xs text-amber-700 mt-2">{t("bank.err.bank_disconnected")}</p>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {last && <SyncSummary s={last} className="mt-4" />}
-      {error && <div className="alert alert-error mt-4 text-sm">{error}</div>}
-    </div>
-  );
+  return { config, conns, loaded, busy, error, last, openLink, sync, syncAll, remove };
 }

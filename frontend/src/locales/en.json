@@ -591,30 +591,6 @@
     "error": "Couldn't confirm the payment.",
     "canceled": "Checkout canceled — no charge made."
   },
-  "proposals": {
-    "title": "Suggested rules",
-    "subtitle": "Let ContaBu's AI propose rules from your transactions, or import your own rules file — the AI reads the columns.",
-    "generate": "Suggest rules with AI",
-    "analyzing": "AI is working…",
-    "import": "Import my rules file",
-    "none": "No new rules to propose — your rulebook already covers the recurring merchants.",
-    "importEmpty": "Couldn't read any rules from that file.",
-    "keyword": "Keyword",
-    "category": "Category",
-    "merges": "merges",
-    "covered": "covers {{n}}",
-    "missed": "misses {{n}}",
-    "conflicts": "{{n}} conflicts — edit the keyword",
-    "apply": "Approve {{n}} rules",
-    "applying": "Applying…",
-    "cancel": "Cancel",
-    "status": {
-      "exists": "already exists",
-      "duplicate": "duplicate",
-      "needs_section": "needs section"
-    },
-    "applied": "Created {{c}} rules and aligned {{a}} transactions."
-  },
   "rules": {
     "title": "Rules",
     "subtitle": "Your rulebook: each merchant maps to a category. Edit one and all its transactions update.",
@@ -1009,7 +985,7 @@
         },
         "s4": {
           "t": "Open Audit",
-          "d": "The team found a merchant categorized two ways and rules that clash. Click an Observation to read the full report."
+          "d": "The team found a merchant categorized two ways and rules that clash. In Bookkeeping, select a row with a dot: the panel on the right shows what the agents found and their evidence."
         },
         "s5": {
           "t": "Fix a row by hand",
@@ -1024,6 +1000,123 @@
           "d": "The same kind of purchase is audited differently because of the bookkeeper's note."
         }
       }
+    }
+  },
+  "panel": {
+    "close": "Close (Esc)",
+    "loading": "Loading…",
+    "error": "Couldn't load this transaction.",
+    "level": {
+      "problem": "Problem",
+      "review": "Needs a look",
+      "info": "Observation",
+      "none": "Nothing to look at",
+      "pending": "Pending"
+    },
+    "in": "money in",
+    "out": "money out",
+    "bankLine": "Bank line",
+    "yourText": "Your text",
+    "bankRemoved": "The linked bank withdrew this transaction after it was recorded. Keep it or delete it from the right-click menu.",
+    "category": "Category",
+    "agents": "What the agents found",
+    "noFindings": "The auditor found nothing on this transaction.",
+    "rows_one": "{{count}} row",
+    "rows_other": "{{count}} rows",
+    "openAudit": "See in Audit",
+    "notes": "Book notes that apply",
+    "history": "Correction history",
+    "noHistory": "Never corrected: it is as it came in.",
+    "bySystem": "ContaBu",
+    "someone": "someone",
+    "note": "Your note",
+    "goRule": "Go to the rule",
+    "prov": {
+      "rule": "From the rule",
+      "byAgent": "proposed by the agent, approved by you",
+      "ruleSays": "The rule says {{s}}",
+      "ruleDeleted": "ƒ From a rule that no longer exists",
+      "manual": "Written by hand: no rule touches it",
+      "transfer": "Transfer between accounts (detected)",
+      "pending": "No rule covers it yet",
+      "other": "Set by: {{source}}"
+    },
+    "via": {
+      "manual": "edited by hand",
+      "follow_rule": "back to following its rule",
+      "rule_update": "edited along with its rule",
+      "rule_applied": "a new or edited rule",
+      "rule_precedence": "rule priority changed",
+      "undo": "undone",
+      "bank_modified": "the bank changed it",
+      "rule_deleted": "its rule was deleted"
+    },
+    "showOnSelect": "Open the details panel on select",
+    "flagTitle": {
+      "problem": "Problem — select the row to see it",
+      "review": "Needs a look — select the row to see it",
+      "info": "Observation — select the row to see it"
+    }
+  },
+  "page": {
+    "more": "More actions",
+    "pnl": {
+      "net": "Net income",
+      "revenue": "Revenue",
+      "pending": "Pending",
+      "reports": "Reports",
+      "live": "Live P&L"
+    },
+    "banks": {
+      "linked_one": "bank linked",
+      "linked_other": "banks linked",
+      "accounts_one": "account",
+      "accounts_other": "accounts",
+      "down_one": "disconnected",
+      "down_other": "disconnected",
+      "updated": "Updated {{when}}",
+      "updateAll": "Update all banks",
+      "uploadCsv": "Upload a statement (CSV)",
+      "working": "Working…",
+      "listTitle": "Banks and statements",
+      "none": "No bank linked yet. Link one with the button above.",
+      "csvTitle": "Statement (CSV or Excel)",
+      "csvSub": "A file from your bank, any format",
+      "statusOk": "Connected",
+      "statusDown": "Disconnected",
+      "accountsTitle": "Accounts"
+    },
+    "summary": {
+      "allTime": "All time",
+      "openBook": "Open Bookkeeping",
+      "attention": "Needs your attention",
+      "allClear": "Nothing needs your attention right now.",
+      "banksDown_one": "{{count}} bank disconnected",
+      "banksDown_other": "{{count}} banks disconnected",
+      "problems_one": "{{count}} problem found by the agents",
+      "problems_other": "{{count}} problems found by the agents",
+      "problemsSub": "In Audit, with the evidence",
+      "pending_one": "{{count}} transaction with no rule (Pending)",
+      "pending_other": "{{count}} transactions with no rule (Pending)",
+      "toReview_one": "{{count}} finding to review",
+      "toReview_other": "{{count}} findings to review",
+      "stale_one": "{{count}} bank not updated recently",
+      "stale_other": "{{count}} banks not updated recently"
+    },
+    "sheet": {
+      "transactions_one": "transaction",
+      "transactions_other": "transactions",
+      "problems_one": "with a problem",
+      "problems_other": "with a problem"
+    },
+    "settings": {
+      "sector": "sector",
+      "waitDays_one": "day of wait",
+      "waitDays_other": "days of wait",
+      "people_one": "person with access",
+      "people_other": "people with access",
+      "ownAccounts_one": "account of your own",
+      "ownAccounts_other": "accounts of your own"
     }
   }
 }

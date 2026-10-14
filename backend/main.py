@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
 
-from ai import RuleColumnMapping, map_rule_columns, propose_rules
+from ai import RuleColumnMapping, map_rule_columns
 from audit import audit_categorization
 from billing import apply_session, create_checkout_session, handle_event
 # `effective_role` es la única fuente de verdad del acceso (FASE 13); los helpers dicen la
@@ -1680,63 +1680,10 @@ def agent_usage(company_id: int, user: User = Depends(current_user), session: Se
     return agent_calls.summary(session, company)
 
 
-@app.post("/api/companies/{company_id}/rule-proposals")
-def generate_rule_proposals(
-    company_id: int,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """AGENTE PROPONEDOR: mira las transacciones ya categorizadas, encuentra los comercios recurrentes
-    SIN regla (determinista) y pide a la IA reglas COMPANY propuestas (mergea marcas, no duplica las
-    existentes, salta gas/super y persona-a-persona). Devuelve propuestas para que el dueño APRUEBE
-    (no crea nada todavía)."""
-    # write=True: proponer reglas gasta IA y escribe el reglamento (bug previo).
-    company = owned_company(company_id, user, session, write=True)
-    sector = company.sector if company else "general"
-    rules = load_rules(session, company_id, sector)
-    txs = session.exec(
-        select(Transaction).where(Transaction.company_id == company_id)
-    ).all()
-    items = [{
-        "description": t.description, "account_type": t.account_type.value if t.account_type else None,
-        "category": t.category, "is_inflow": t.is_inflow,
-    } for t in txs]
-    candidates = find_rule_candidates(rules, items)
-    proposals = propose_rules(candidates, [r.match_text for r in rules], sector,
-                              format_profile_facts(company.profile if company else None))
-    # EL GUARDIÁN (FASE 9 Paso 3): validar cada keyword propuesto contra los datos reales ANTES de
-    # mostrarlo — cobertura (¿matchea todo su comercio?) y colisión (¿caza otros comercios?). El
-    # dueño aprueba con evidencia ("cubre N · M conflictos"), no con fe. Determinista, sin IA.
-    return [{
-        "keyword": p.keyword, "account_type": p.account_type.value, "category": p.category,
-        "covers": p.covers, "reasoning": p.reasoning,
-        **validate_keyword(p.keyword, p.covers, items),
-    } for p in proposals if p.kind == "rule"]
-
-
-class RuleProposalValidate(BaseModel):
-    """Un keyword (posiblemente EDITADO por el dueño) a re-validar contra los datos."""
-    keyword: str
-    covers: list[str] = []  # firmas de comercio que la propuesta cubre (para medir colisión)
-
-
-@app.post("/api/companies/{company_id}/rule-proposals/validate")
-def validate_rule_proposal(
-    company_id: int,
-    payload: RuleProposalValidate,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Re-valida un keyword contra las transacciones reales (cobertura/colisión) — se usa cuando el
-    dueño EDITA el keyword de una propuesta antes de aprobarla. Determinista, sin IA."""
-    # Herramienta del reglamento: la usa el bookkeeper al editar una propuesta.
-    owned_company(company_id, user, session, write=True)
-    txs = session.exec(
-        select(Transaction).where(Transaction.company_id == company_id)
-    ).all()
-    items = [{"description": t.description} for t in txs]
-    return validate_keyword(payload.keyword, payload.covers, items)
-
+# El viejo PROPONEDOR (`POST /rule-proposals` y `/rule-proposals/validate`, con `ai.propose_rules` sobre
+# Gemini) se borró el 13-oct (FASE 11): su pantalla, `RuleProposals.tsx`, ya no la montaba nadie y el
+# agente ④ redactor hace ese trabajo sobre Nemotron (`POST /agents/draft`), con validador y prueba contra
+# la historia. `/rule-proposals/apply` se queda: lo usan la hoja de Reglas (importar) y la aprobación del ④.
 
 class RuleProposalApply(BaseModel):
     """Una regla aprobada del proponedor (lista para crear)."""
@@ -1829,7 +1776,11 @@ async def import_rules_preview(
         raise HTTPException(status_code=422, detail="Archivo vacío o ilegible.")
     # Un archivo que salió de "Exportar" en la hoja de Reglas trae nuestros encabezados: se mapea
     # directo, sin gastar IA y sin riesgo de que la adivine mal. Cualquier otro formato → la IA.
-    mapping = _own_rule_columns(headers) or map_rule_columns(headers, rows[:5])
+    # Si no: Nemotron mira los ENCABEZADOS y un perfil de cada columna (nunca los valores), con el plan
+    # de cuentas del libro para reconocer la columna de categorías (FASE 11, 13-oct).
+    known = {c.lower() for cats in categories_for_company(session, company_id, sector).values() for c in cats}
+    mapping = _own_rule_columns(headers) or map_rule_columns(headers, rows[:5], session=session, company=company,
+                                                             known_categories=known)
     # "Priority" sale de nuestra exportación; se lee por nombre (la IA no la mapea).
     priority_col = next((h for h in headers if h.strip().lower() == "priority"), "")
     # "From"/"To" (la ventana de fechas) también salen de nuestra exportación y se leen por nombre.
@@ -2340,3 +2291,29 @@ def clarify_group(
         session.add(tx)
     session.commit()
     return {"updated": len(txs)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# FASE 13 — EL PANEL DE LA TRANSACCIÓN (área `Firm / bookkeepers`, 13-oct-2026). Lógica en
+# `tx_insight.py`: solo JUNTA lo de `book_review` (hallazgos, ①, ②), las notas y el historial.
+# Las dos son lectura de CONSOLA: el CLIENTE no ve los hallazgos ni el criterio del bookkeeper.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+@app.get("/api/companies/{company_id}/transactions/flags")
+def transaction_flags(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """El puntito de cada fila de la hoja: {transaction_id: "problem" | "review" | "info"}."""
+    import tx_insight
+    company = console_company(company_id, user, session)
+    return {str(k): v for k, v in tx_insight.flags(session, company).items()}
+
+
+@app.get("/api/companies/{company_id}/transactions/{transaction_id}/insight")
+def transaction_insight(company_id: int, transaction_id: int, user: User = Depends(current_user),
+                        session: Session = Depends(get_session)):
+    """Todo lo que se sabe de UN movimiento: procedencia, historial, hallazgos, evidencia web y notas."""
+    import tx_insight
+    company = console_company(company_id, user, session)
+    tx = tx_insight.transaction_of(session, company, transaction_id)
+    if tx is None:
+        raise HTTPException(status_code=404, detail="transaction not found")
+    return tx_insight.insight(session, company, tx)

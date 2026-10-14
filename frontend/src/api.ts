@@ -468,48 +468,8 @@ export async function getAudit(): Promise<AuditFinding[]> {
   return res.json();
 }
 
-// --- Proponedor proactivo: la IA sugiere reglas para que el dueño apruebe ---
-// Validación de un keyword contra los datos reales (el "guardián", FASE 9 Paso 3).
-export interface KeywordValidation {
-  matches: number;            // cuántas transacciones matchea en total
-  covered: number;            // de su comercio: cuántas cubre
-  missed: number;             // de su comercio: cuántas se le ESCAPAN (sobre-específico)
-  conflicts: number;          // de OTROS comercios: cuántas caza en falso (sub-específico)
-  conflict_examples: string[];
-}
-
-export interface RuleProposal extends KeywordValidation {
-  keyword: string;
-  account_type: string;
-  category: string;
-  covers: string[];   // firmas de comercio que la regla cubre (para auditar el merge)
-  reasoning: string;
-}
-
-// Dispara el agente proponedor (IA): devuelve reglas sugeridas YA VALIDADAS contra los datos
-// (cobertura/colisión). NO crea nada (solo propone).
-export async function generateRuleProposals(): Promise<RuleProposal[]> {
-  const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals`, {
-    method: "POST",
-    headers: await authHeaders(),
-  });
-  if (!res.ok) throw new Error("No se pudieron generar las propuestas");
-  return res.json();
-}
-
-// Re-valida un keyword EDITADO por el dueño contra los datos (determinista, sin IA).
-export async function validateRuleProposal(
-  keyword: string,
-  covers: string[],
-): Promise<KeywordValidation> {
-  const res = await fetch(`${API}/api/companies/${cid()}/rule-proposals/validate`, {
-    method: "POST",
-    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
-    body: JSON.stringify({ keyword, covers }),
-  });
-  if (!res.ok) throw new Error("No se pudo validar el keyword");
-  return res.json();
-}
+// (El viejo proponedor — `generateRuleProposals`, `validateRuleProposal` — se borró el 13-oct, FASE 11:
+// lo reemplaza el agente ④ en Auditoría, `runFormulaDrafter`.)
 
 // --- Importar el banco de reglas del usuario (sube su Excel/CSV; la IA mapea las columnas) ---
 export interface RuleImportRow {
@@ -1013,3 +973,41 @@ export const dismissProposal = (p: FormulaProposal, reason_code: DismissReason, 
                            account_type: p.account_type, category: p.category, reason_code,
                            reason_text: reason_text || null }),
   });
+
+// ── EL PANEL DE LA TRANSACCIÓN (FASE 13, área Firm · 13-oct) ────────────────────────────────────
+// Lo que se sabe de UN movimiento (procedencia, historial, hallazgos del auditor con el ① y el ②,
+// notas del libro) y el puntito de cada fila de la hoja. Solo lectura: el panel no categoriza.
+export type FlagLevel = "problem" | "review" | "info";
+
+export interface TxChange {
+  id: number; changed_at: string; via: string; by: string | null; by_system: boolean;
+  before: { account_type: string | null; category: string | null; subcategory: string | null; source: string | null };
+  after: { account_type: string | null; category: string | null; subcategory: string | null; source: string | null };
+  reason: string | null;
+}
+
+export interface TxInsight {
+  transaction: TxSummary & {
+    subcategory: string | null; note: string | null; description_extra: string | null;
+    matched_rule_id: number | null; bank_removed_at: string | null;
+  };
+  merchant: string;
+  provenance: {
+    kind: "rule" | "manual" | "transfer" | "pending" | "other"; source?: string | null;
+    rule: {
+      id: number; keyword: string; account_type: string | null; category: string; subcategory: string | null;
+      priority: number | null; valid_from: string | null; valid_to: string | null;
+      amount_min: number | null; amount_max: number | null; origin: string | null;
+    } | null;
+  };
+  history: TxChange[];
+  findings: (BoardFinding & { level: FlagLevel })[];
+  web: BoardFinding["web"];
+  notes: { id: number; kind: string; priority: string; text: string; merchant: string | null;
+           valid_from: string | null; valid_to: string | null }[];
+  level: FlagLevel | null;
+}
+
+/** {transaction_id: nivel}. Pone los hallazgos al día antes (como abrir Auditoría). */
+export const getTransactionFlags = () => auditFetch<Record<string, FlagLevel>>("/transactions/flags");
+export const getTransactionInsight = (id: number) => auditFetch<TxInsight>(`/transactions/${id}/insight`);

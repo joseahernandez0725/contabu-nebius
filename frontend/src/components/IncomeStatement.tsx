@@ -89,13 +89,14 @@ function PendingBlock({ u }: { u: Uncategorized }) {
 
 // Estado de resultados (P&L) DETALLADO: cada sección con su desglose por categoría.
 // Términos contables en inglés (no se traducen); los montos los calcula SQL en el backend.
-export default function IncomeStatement({ data }: { data: IS }) {
+// `bare` (13-oct, Firm): sin su propia tarjeta, para ir DENTRO del detalle del diseño compartido (`PageKit`).
+export default function IncomeStatement({ data, bare = false }: { data: IS; bare?: boolean }) {
   const { t } = useTranslation();
   const b = data.breakdown ?? {};
   const u = data.uncategorized;
   const hasPending = (u?.count ?? 0) > 0;
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+    <div className={bare ? "" : "bg-white rounded-2xl shadow-sm border border-slate-100 p-5"}>
       <h2 className="font-semibold text-slate-900 mb-3">{PNL.title}</h2>
 
       <Row label={PNL.revenue} value={data.revenue} />

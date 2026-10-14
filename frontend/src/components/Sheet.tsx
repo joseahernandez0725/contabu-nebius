@@ -4,11 +4,12 @@ import i18n from "../i18n";
 import { RevoGrid } from "@revolist/react-datagrid";
 import {
   getSheetRows, getCategories, updateTransaction, undoTransactionChange, getLabels, createLabel, followRule, deleteRule,
-  decideBankRemoved, getBankConnections, syncBankConnection, BankApiError,
+  decideBankRemoved, getBankConnections, syncBankConnection, BankApiError, getTransactionFlags,
+  type FlagLevel,
   type BankConnection, type BankSync,
   setTransactionLabels, applyCellFormat, type ChartOfAccounts,
 } from "../api";
-import type { CellFormat, Observation, SheetLabel, SheetRow } from "../types";
+import type { CellFormat, SheetLabel, SheetRow } from "../types";
 import { CATEGORY_EDITOR, categoryEditors, setEditorChart } from "./CategoryEditor";
 import RuleDialog from "./RuleDialog";
 import {
@@ -17,6 +18,8 @@ import {
 } from "./gridKit";
 import type { View } from "./Sidebar";
 import { SyncSummary, sumSyncs } from "./BankConnections";
+import TransactionPanel from "./TransactionPanel";
+import { BTN_PRIMARY, PageHeader, Stat, TONE } from "./PageKit";
 
 /** "hace 5 minutos" / "5 minutes ago" — `iso` es UTC sin zona (como lo guarda el backend). */
 function timeAgo(iso: string, lang: string): string {
@@ -44,12 +47,10 @@ import RulesSheet, { type RulesCommands } from "./RulesSheet";
  * OBSERVACIÓN (lo que el agente auditor encontró y vale la pena mirar).
  */
 
-const SEV_BG: Record<string, string> = {
-  high: "rgba(220,38,38,.10)",
-  medium: "rgba(244,180,0,.16)",
-  low: "rgba(100,116,139,.10)",
-};
-const SEV_FG: Record<string, string> = { high: "#991b1b", medium: "#7a5b00", low: "#475569" };
+
+// EL PUNTITO de la fila (13-oct, Firm): rojo = problema · ámbar = por revisar · azul = observación. El
+// detalle vive en el PANEL LATERAL (`TransactionPanel`), que reemplaza a la celda Observación.
+const FLAG_COLOR: Record<FlagLevel, string> = { problem: "#f43f5e", review: "#f59e0b", info: "#0ea5e9" };
 
 // Va ANTES que `rowCss` en el DOM: con la misma especificidad, el resaltado de fila gana.
 const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}"
@@ -146,6 +147,12 @@ export default function Sheet({ onNavigate, menuRight }: {
   // BARRA DE FÓRMULAS (2-oct, pedido de Jose): la celda enfocada — id de la fila, columna y número
   // de fila visible — para mostrar su contenido COMPLETO arriba de la hoja, como en Excel.
   const [focus, setFocus] = useState<{ id: number; prop: string; row: number } | null>(null);
+  // EL PANEL LATERAL (13-oct, Firm): sigue a la fila enfocada. × o Esc lo cierran para ESA fila; al
+  // elegir otra, se abre de nuevo. En Ver se puede apagar del todo (para editar a lo ancho).
+  const [flags, setFlags] = useState<Record<number, FlagLevel>>({});
+  const [flagsKey, setFlagsKey] = useState(0);
+  const [panelOnSelect, setPanelOnSelect] = usePref("contabu.detailsPanel", true);
+  const [panelClosedFor, setPanelClosedFor] = useState<number | null>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [tab, setTab] = useState<"sheet" | "pivot" | "rules">("sheet");
   // Puente hoja → reglas (idea de Jose): crear una regla PARTIENDO de la descripción de una
@@ -164,6 +171,13 @@ export default function Sheet({ onNavigate, menuRight }: {
   const load = useCallback(() => {
     getSheetRows().then(setRows).catch((e) => setError(String(e?.message ?? e)));
   }, []);
+  // Los puntitos se recalculan con cada recarga de la hoja (una edición puede resolver un hallazgo).
+  const loadFlags = useCallback(() => {
+    getTransactionFlags()
+      .then((f) => { setFlags(Object.fromEntries(Object.entries(f).map(([k, v]) => [Number(k), v]))); setFlagsKey((n) => n + 1); })
+      .catch(() => setFlags({}));
+  }, []);
+  useEffect(() => { if (rows) loadFlags(); }, [rows, loadFlags]);
 
   // ↻ ACTUALIZAR BANCO (Jose, 4-oct): re-sincroniza TODAS las conexiones activas del libro desde la
   // hoja, por la misma ruta que el botón "Actualizar" de Bancos, y muestra el mismo resumen. Sin banco
@@ -220,36 +234,6 @@ export default function Sheet({ onNavigate, menuRight }: {
   // Por eso el idioma se resuelve aparte y las filas solo dependen de datos, no de `t`.
   const lang = i18n.language;
 
-  /** Traduce la observación por `type` usando los campos estructurados.
-   *  El backend manda el texto en INGLÉS (regla de oro); aquí se muestra en el idioma del usuario. */
-  const obsText = useCallback((o: Observation | null): string => {
-    if (!o) return "";
-    switch (o.type) {
-      case "sign_mismatch":
-        return t("sheet.obs.signMismatch", {
-          defaultValue: "{{section}} but the money came {{dir}}",
-          section: o.account_type ?? "",
-          dir: o.direction === "in" ? t("sheet.obs.in", { defaultValue: "IN" })
-                                    : t("sheet.obs.out", { defaultValue: "OUT" }),
-        });
-      case "rule_deviation":
-        return t("sheet.obs.ruleDeviation", {
-          defaultValue: "Doesn't match its rule — should be {{s}}",
-          s: `${o.suggested_account_type ?? "?"}/${o.suggested_category ?? "?"}`,
-        });
-      case "merchant_inconsistency":
-        return t("sheet.obs.merchantInconsistency", {
-          defaultValue: "Same merchant categorized differently ({{m}})",
-          m: o.merchant ?? "",
-        });
-      case "uncategorized":
-        return t("sheet.obs.uncategorized", { defaultValue: "Not categorized yet" });
-      case "bank_removed":
-        return t("sheet.obs.bankRemoved", { defaultValue: "The bank withdrew this transaction — keep it or delete it (right-click)" });
-      default:
-        return o.text ?? "";
-    }
-  }, [lang]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const accounts = useMemo(
     () => [...new Set((rows ?? []).map((r) => r.bank_account).filter(Boolean))] as string[],
@@ -302,7 +286,7 @@ export default function Sheet({ onNavigate, menuRight }: {
   const visible = useMemo(() => {
     let out = rows ?? [];
     if (acctSel.length) out = out.filter((r) => acctSel.includes(r.bank_account ?? ""));
-    if (onlyFlagged) out = out.filter((r) => r.observation);
+    if (onlyFlagged) out = out.filter((r) => flags[r.id]);
     if (onlyPending) out = out.filter((r) => !r.category);
     // Busca en TODAS las columnas visibles + la cuenta (Jose, 4-oct); antes solo descripción y categoría.
     const q = search.trim().toLowerCase();
@@ -314,11 +298,10 @@ export default function Sheet({ onNavigate, menuRight }: {
     // no alcanzaba: dejaba sin color la columna de observación y el espacio sobrante a la derecha.
     return out.map((r) => ({
       ...r,
-      _obs: obsText(r.observation),
-      _sev: r.observation?.severity ?? "",
+      _flag: flags[r.id] ?? "",
       _rowClass: rowClassOf(r),
     }));
-  }, [rows, acctSel, onlyFlagged, onlyPending, search, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rows, acctSel, onlyFlagged, onlyPending, search, lang, flags]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Las CELDAS que coinciden, en orden de lectura (fila por fila, de izquierda a derecha): son las que
   // se resaltan y por las que se navega con Enter / Shift+Enter ("N de M").
@@ -331,7 +314,8 @@ export default function Sheet({ onNavigate, menuRight }: {
   }, [visible, search]);
   useEffect(() => { setHit(0); }, [search]);
 
-  const flagged = (rows ?? []).filter((r) => r.observation).length;
+  const flagged = (rows ?? []).filter((r) => flags[r.id]).length;
+  const problems = (rows ?? []).filter((r) => flags[r.id] === "problem").length;
   const pending = (rows ?? []).filter((r) => !r.category).length;
 
   /** Una edición: se manda a la base y se recarga. Si falla, se revierte recargando. */
@@ -469,29 +453,6 @@ export default function Sheet({ onNavigate, menuRight }: {
     el.addEventListener("selectionchanged", onRange);
   }, []);
 
-  /** FIX DE UN TOQUE (FASE 10): el auditor ya dice a qué debería moverse (`suggested_*`),
-   *  así que la observación no solo informa — se arregla desde ahí mismo, sin abrir otra pantalla.
-   *  `rule_action: "only_this"` porque re-alinear con una regla NO debe crear otra regla redundante
-   *  (mismo criterio que `applyFix` en `Audit.tsx`). */
-  const applyFix = useCallback(async (id: number, o: Observation) => {
-    if (!o.suggested_category || !o.suggested_account_type) return;
-    setSaving(t("sheet.fixing", { defaultValue: "Fixing…" }));
-    try {
-      await updateTransaction(id, {
-        account_type: o.suggested_account_type,
-        category: o.suggested_category,
-        rule_action: "only_this",
-      } as any);
-      undoCategorization(id, t("sheet.undoFix", { defaultValue: "fix → {{c}}", c: o.suggested_category }));
-      load();
-    } catch (err) {
-      setError(String((err as Error)?.message ?? err));
-    } finally {
-      setSaving(null);
-    }
-  }, [load, t, undoCategorization]);
-  const applyFixRef = useRef(applyFix);
-  useEffect(() => { applyFixRef.current = applyFix; }, [applyFix]);
 
   /** Formato sobre la selección. `column: null` = la fila entera (es lo que un bookkeeper
    *  espera al resaltar: se marca el movimiento, no una casilla suelta). */
@@ -575,9 +536,20 @@ export default function Sheet({ onNavigate, menuRight }: {
       // Fecha SIEMPRE en formato de EE.UU. (mes-día-año), sin importar el idioma de la UI: es dato
       // contable y la regla de oro manda que vaya en inglés. En `es` el navegador la daría al revés
       // (28 mar 2026) y confundiría al leer un extracto estadounidense.
-      cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "date") }, p.model.date
-        ? new Date(p.model.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })
-        : "") },
+      cellTemplate: (h: any, p: any) => {
+        const date = h("span", { style: styleOf(p.model, "date") }, p.model.date
+          ? new Date(p.model.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })
+          : "");
+        // El PUNTITO (13-oct): qué filas tienen algo, de un vistazo. El detalle, en el panel lateral.
+        const lvl = p.model._flag as FlagLevel | "";
+        const dot = h("span", {
+          title: lvl ? t(`panel.flagTitle.${lvl}`) : undefined,
+          // En px COMO TEXTO: el `h` de RevoGrid descarta los números sueltos en `style`.
+          style: { display: "inline-block", width: "8px", height: "8px", borderRadius: "999px", flex: "none",
+                   marginInlineEnd: "6px", background: lvl ? FLAG_COLOR[lvl] : "transparent" },
+        });
+        return h("span", { style: { display: "flex", alignItems: "center" } }, dot, date);
+      } },
     // La descripción del BANCO no se edita nunca (es la evidencia). Lo que se edita es
     // `description_extra`: el texto que el bookkeeper AGREGA — a quién fue el cheque, qué era esa
     // ACH críptica — y que ENTRA AL MATCHEO DE REGLAS. Se pinta distinto para que nunca haya duda
@@ -662,33 +634,8 @@ export default function Sheet({ onNavigate, menuRight }: {
     { prop: "subcategory", name: t("sheet.subcategory", { defaultValue: "Subcategory" }), size: 165,
       cellProperties: manualCell, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "subcategory") }, applyCase(p.model.subcategory, caseStyle)) },
-    { prop: "_obs", name: t("sheet.observation", { defaultValue: "Observation" }), size: 330, readonly: true,
-      cellTemplate: (h: any, p: any) => {
-        const txt = p.model._obs, sev = p.model._sev;
-        if (!txt) return h("span", {}, "");
-        const o: Observation | null = p.model.observation;
-        const fixable = !!(o?.suggested_category && o?.suggested_account_type);
-        // El texto se lee COMPLETO: aquí va a escribir el agente su reporte con detalle, y un
-        // reporte cortado con "…" no sirve de nada. `title` lo deja además en el tooltip.
-        const chip = h("span", { title: txt, style: {
-          background: SEV_BG[sev] ?? SEV_BG.low, color: SEV_FG[sev] ?? SEV_FG.low,
-          padding: "2px 8px", borderRadius: 6, fontSize: "12.5px", fontWeight: 600,
-          whiteSpace: "normal", lineHeight: 1.35, display: "block" } }, txt);
-        if (!fixable) return h("span", { style: { display: "block" } }, chip);
-        // Botón de arreglo: dice A QUÉ lo va a mover, para que el bookkeeper decida viendo.
-        const btn = h("button", {
-          title: `→ ${o!.suggested_account_type} / ${o!.suggested_category}`,
-          onClick: (e: MouseEvent) => { e.stopPropagation(); void applyFixRef.current(p.model.id, o!); },
-          style: {
-            marginInlineStart: 6, border: "1px solid #1A8754", background: "#fff", color: "#1A8754",
-            borderRadius: 5, fontSize: "11.5px", fontWeight: 700, padding: "1px 7px",
-            cursor: "pointer", whiteSpace: "nowrap", flex: "none",
-          },
-        }, `${t("sheet.fix", { defaultValue: "Fix" })} → ${o!.suggested_category}`);
-        return h("span", { style: { display: "flex", alignItems: "flex-start", gap: 0 } }, chip, btn);
-      } },
-    // NOTA: texto libre del bookkeeper sobre ESA línea. Va antes de la observación a propósito —
-    // lo suyo primero, lo del agente después.
+    // NOTA: texto libre del bookkeeper sobre ESA línea. Lo del agente ya no es columna: vive en el
+    // panel lateral (13-oct).
     { prop: "note", name: t("sheet.note", { defaultValue: "Note" }), size: 220, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => h("span", {
         title: p.model.note || "",
@@ -721,14 +668,29 @@ export default function Sheet({ onNavigate, menuRight }: {
       case "category":
         text = r.category ?? t("sheet.pending", { defaultValue: "Pending" });
         break;
-      case "_obs":
-        text = r._obs ?? "";
-        break;
       default:
         text = String((r as any)[focus.prop] ?? "");
     }
     return { ref: `${col.name} · ${focus.row}`, text };
   }, [focus, visible, columns, t]);
+
+  // EL PANEL LATERAL: la fila enfocada, salvo que se haya cerrado para ella (× o Esc).
+  const panelTx = tab === "sheet" && panelOnSelect && focus && panelClosedFor !== focus.id ? focus.id : null;
+  // El cierre vale para la fila de AHORA: al pasar a otra, el panel vuelve a abrirse (también al volver).
+  const focusId = focus?.id ?? null;
+  useEffect(() => { setPanelClosedFor((c) => (c != null && focusId !== c ? null : c)); }, [focusId]);
+  useEffect(() => {
+    if (panelTx == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Esc dentro de un editor (o del buscador) es de ESE campo: cancela la edición, no cierra el panel.
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      setPanelClosedFor(panelTx);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [panelTx]);
 
   // MENÚ DE CLIC DERECHO (Jose, 4-oct): ver, editar, copiar, pegar, deshacer, seguir la regla,
   // crear una regla desde la fila y cómo se ve el texto.
@@ -746,7 +708,7 @@ export default function Sheet({ onNavigate, menuRight }: {
   const EDITABLE = ["category", "subcategory", "note", "description_extra"];
   const sheetCellText = (m: any, prop: string) => prop === "description_extra"
     ? [m.description, m.description_extra].filter(Boolean).join(" - ")
-    : prop === "_obs" ? String(m._obs ?? "") : String(m[prop] ?? "");
+    : String(m[prop] ?? "");
   const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
     const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
     const can = EDITABLE.includes(prop);
@@ -927,6 +889,8 @@ export default function Sheet({ onNavigate, menuRight }: {
       { label: t("sheet.mb.toolbar"), checked: toolbar, onClick: () => setToolbar(!toolbar) },
       { label: t("sheet.mb.formulaBar"), checked: showFormula, onClick: () => setShowFormula(!showFormula) },
       { label: t("sheet.mb.pinDescription"), checked: pinDesc, disabled: tab !== "sheet", onClick: () => setPinDesc(!pinDesc) },
+      { label: t("panel.showOnSelect"), checked: panelOnSelect, disabled: tab !== "sheet",
+        onClick: () => { setPanelOnSelect(!panelOnSelect); setPanelClosedFor(null); } },
       { heading: t("sheet.mb.density") },
       ...(["compact", "normal", "roomy"] as const).map((d) => ({
         label: t(`sheet.density.${d}`, { defaultValue: d }), checked: density === d, onClick: () => setDensity(d) })),
@@ -960,24 +924,25 @@ export default function Sheet({ onNavigate, menuRight }: {
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 104px)", minHeight: 420 }}>
       <style>{MANUAL_CSS}</style>
       {rowCss && <style>{rowCss}</style>}
-      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={<>
-        {bankConns.length > 0 && (
-          <>
-            <span style={{ fontSize: 11.5, color: "#8a958f" }}>
-              {!oldestSync ? t("sheet.bank.never")
-                : Date.now() - Date.parse(oldestSync + "Z") < 60_000 ? t("sheet.bank.justNow")
-                : t("sheet.bank.updatedAgo", { when: timeAgo(oldestSync, lang2) })}
-            </span>
-            <button onClick={() => void syncAllBanks()} disabled={bankBusy}
-              style={{ border: "1px solid #1A8754", color: "#1A8754", background: "#fff", borderRadius: 6,
-                       fontSize: 12, fontWeight: 600, padding: "2px 10px", cursor: bankBusy ? "wait" : "pointer",
-                       opacity: bankBusy ? 0.6 : 1 }}>
+      {/* LA LÍNEA DE ESTADO (13-oct, Firm: diseño de página compartido — `PageKit.tsx`). La hoja no lleva
+          lista + detalle: es una hoja. El "actualizado hace X" y "↻ Actualizar banco" vivían a la derecha de
+          la barra de menús; ahora son el estado y la acción principal de la página. */}
+      <div style={{ marginBottom: 8 }}>
+        <PageHeader
+          meta={bankConns.length > 0 ? (!oldestSync ? t("sheet.bank.never")
+            : Date.now() - Date.parse(oldestSync + "Z") < 60_000 ? t("sheet.bank.justNow")
+            : t("sheet.bank.updatedAgo", { when: timeAgo(oldestSync, lang2) })) : undefined}
+          primary={bankConns.length > 0 && (
+            <button onClick={() => void syncAllBanks()} disabled={bankBusy} className={BTN_PRIMARY}>
               {bankBusy ? t("sheet.bank.updating") : t("sheet.bank.update")}
             </button>
-          </>
-        )}
-        {menuRight}
-      </>} />
+          )}>
+          <Stat value={rows?.length} label={t("page.sheet.transactions", { count: rows?.length ?? 0 })} />
+          <Stat value={rows ? pending : undefined} label={t("page.pnl.pending")} tone={TONE.pending} />
+          <Stat value={rows ? problems : undefined} label={t("page.sheet.problems", { count: problems })} tone={TONE.problem} />
+        </PageHeader>
+      </div>
+      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={menuRight} />
       {bankNote && (
         <div style={{ position: "relative", marginBottom: 8 }}>
           {bankNote.sync && <SyncSummary s={bankNote.sync} />}
@@ -1259,8 +1224,11 @@ export default function Sheet({ onNavigate, menuRight }: {
           ariaLabel={t("sheet.formulaLabel", { defaultValue: "Cell content" })} />
       )}
 
+      {/* La grilla y, a su derecha, el PANEL de la transacción (13-oct). El panel le quita ancho a la
+          grilla (no la tapa): la fila seleccionada siempre queda a la vista. */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8 }}>
       <div ref={hostRef} onContextMenu={(e) => void onContextMenu(e)}
-        style={{ flex: 1, minHeight: 0,
+        style={{ flex: 1, minHeight: 0, minWidth: 0,
                     border: tab === "sheet" ? "1px solid #e3ded2" : "0",
                     borderRadius: 10, overflow: "hidden" }}>
         {tab === "rules"
@@ -1285,6 +1253,14 @@ export default function Sheet({ onNavigate, menuRight }: {
               rowClass="_rowClass"
               editors={SHEET_EDITORS as any}
             />}
+      </div>
+      {panelTx != null && (
+        <TransactionPanel txId={panelTx} refreshKey={flagsKey}
+          onClose={() => setPanelClosedFor(panelTx)}
+          onGoRule={(id) => { setGoRule({ id, n: Date.now() }); setTab("rules"); }}
+          onOpenAudit={() => onNavigate?.("audit")}
+          onChanged={loadFlags} />
+      )}
       </div>
       {menu && <CellMenu at={menu.at} items={menuItems(menu.model, menu.prop, menu.row)} onClose={() => setMenu(null)} />}
       {ruleDialog && (
