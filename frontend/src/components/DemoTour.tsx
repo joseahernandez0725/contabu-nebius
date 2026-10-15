@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-// EL RECORRIDO GUIADO del demo (FASE 13, 3-oct). Los 7 pasos de docs/DEMO Y ENTREGA.md →
-// "🧭 El recorrido guiado": lo que hace el jurado en ~3 minutos. SOLO se monta en el despliegue de
-// demo (App.tsx lo condiciona a `DEMO_MODE`).
+// EL RECORRIDO GUIADO del demo (FASE 13, 3-oct; rehecho el 14-oct con lo que existe hoy). Los 8 pasos de
+// docs/DEMO Y ENTREGA.md → "🧭 El recorrido guiado": lo que hace el jurado en ~3 minutos, y la base del
+// guion del video. SOLO se monta en el despliegue de demo (App.tsx lo condiciona a `DEMO_MODE`).
 //
 // Tarjeta flotante abajo a la derecha, minimizable a una pastilla con el avance. Lo marcado se guarda
 // en el navegador del visitante (localStorage): es SU sesión del demo, nadie más la ve. Si el
 // navegador no deja guardar (ventana privada), el recorrido funciona igual, solo no se recuerda.
 
-const STEPS = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"] as const;
-const KEY_DONE = "contabu.demoTour.done.v1";
+const STEPS = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"] as const;
+// v2 (14-oct): los pasos cambiaron de sentido; con la clave vieja, lo marcado en v1 caería en otros pasos.
+const KEY_DONE = "contabu.demoTour.done.v2";
 const KEY_MIN = "contabu.demoTour.minimized.v1";
 
 function readJSON<T>(key: string, fallback: T): T {

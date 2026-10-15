@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
 import Dashboard from "./components/Dashboard";
 import Transactions from "./components/Transactions";
-import Sheet from "./components/Sheet";
+import Sheet, { type SheetFocus } from "./components/Sheet";
 import Upload from "./components/Upload";
 import AuditWorkspace from "./components/AuditWorkspace";
 import Pnl from "./components/Pnl";
@@ -32,6 +32,13 @@ function App() {
   const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
+  // La misma fila, para la Hoja (14-oct): Auditoría y el Resumen llevan a la transacción EXACTA.
+  const [sheetFocus, setSheetFocus] = useState<SheetFocus | null>(null);
+  const openInSheet = (f: Omit<SheetFocus, "n">) => {
+    setSheetFocus({ ...f, n: Date.now() });
+    if (f.id != null) setFocusTxId(f.id);   // la vista anterior entiende el mismo pedido
+    setView("transactions");
+  };
   // LA HOJA (FASE 10): la consola del bookkeeper reemplaza la lista móvil simplificada.
   // Se deja un interruptor a la vista anterior mientras se termina de construir, para poder comparar.
   // Va aquí con los demás hooks a propósito: declararlo después de los `return` tempranos rompe
@@ -200,7 +207,7 @@ function App() {
               </div>
             )}
             {view === "dashboard" && (
-              <Dashboard onNavigate={setView} />
+              <Dashboard onNavigate={setView} onOpenPending={() => openInSheet({ id: null, onlyPending: true })} />
             )}
             {view === "transactions" && (
               <>
@@ -216,7 +223,7 @@ function App() {
                   </div>
                 )}
                 {useSheet ? (
-                  <Sheet onNavigate={setView} menuRight={
+                  <Sheet onNavigate={setView} focusTx={sheetFocus} onFocusTxDone={() => setSheetFocus(null)} menuRight={
                     <button
                       onClick={() => setUseSheet(false)}
                       className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
@@ -236,7 +243,7 @@ function App() {
             {view === "audit" && (
               // FASE 11 (8-oct): UNA herramienta — estado, flujo, notas, cola y detalle (`AuditWorkspace`).
               <AuditWorkspace
-                onOpenSheet={() => setView("transactions")}
+                onOpenSheet={(txId) => (txId != null ? openInSheet({ id: txId }) : setView("transactions"))}
                 onStats={(s: AuditBoard["stats"]) => { setAuditCount(s.to_review); setProblemCount(s.problems); }}
               />
             )}

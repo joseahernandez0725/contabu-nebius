@@ -31,8 +31,9 @@ function BreakdownBar({ label, value, total, color }: {
 // Arriba la línea de estado (el resultado y lo Pendiente, las cifras que más se miran); debajo, LO QUE
 // NECESITA ATENCIÓN — cada renglón lleva a la pantalla donde se resuelve — y a dónde se va el dinero.
 // Los números salen de SQL (`/income-statement`) y del auditor (`/audit/summary`); aquí no se calcula nada.
-export default function Dashboard({ onNavigate }: {
+export default function Dashboard({ onNavigate, onOpenPending }: {
   onNavigate: (v: View) => void;
+  onOpenPending?: () => void;   // Pendientes → la Hoja filtrada, en la primera Pendiente (14-oct)
 }) {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || "en").split("-")[0];
@@ -134,7 +135,8 @@ export default function Dashboard({ onNavigate }: {
           {t("page.summary.attention")}</div>}>
           {items.length === 0 && <EmptyRow text={t("page.summary.allClear")} />}
           {items.map((it) => (
-            <ListRow key={it.key} active={false} onClick={() => onNavigate(it.go)} dot={it.dot} title={it.title} sub={it.sub}
+            <ListRow key={it.key} active={false} dot={it.dot} title={it.title} sub={it.sub}
+                     onClick={() => (it.key === "pending" && onOpenPending ? onOpenPending() : onNavigate(it.go))}
                      right={<span className="text-xs text-slate-400">→</span>} />
           ))}
         </ListCard>

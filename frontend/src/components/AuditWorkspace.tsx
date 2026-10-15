@@ -43,7 +43,7 @@ export default function AuditWorkspace({
   onOpenSheet,
   onStats,
 }: {
-  onOpenSheet?: () => void;                                   // a Bookkeeping (la Hoja)
+  onOpenSheet?: (txId?: number) => void;                      // a Bookkeeping (la Hoja), a ESA fila
   onStats?: (s: AuditBoard["stats"]) => void;                 // contadores de la barra lateral
 }) {
   const { t, i18n } = useTranslation();
@@ -387,6 +387,13 @@ export function useAuditText() {
       case "note_check":
         return t(p.meaning === "personal" ? "auditView.say.note_check_personal" : "auditView.say.note_check",
           { note: p.note, count: Number(p.rows ?? 0), cats: ((p.categories as string[]) ?? []).map(label).join(" · ") });
+      case "personal_use":
+        // La opinión de Nemotron "¿personal PARA ESTE NEGOCIO?" (14-oct): la razón viene en los dos idiomas.
+        return t("auditView.say.personal_use", {
+          business: t(`sectors.${p.sector}`, { defaultValue: String(p.sector ?? "") }).toLowerCase(),
+          confidence: t(`agents.confidence.${p.confidence}`, { defaultValue: String(p.confidence ?? "") }),
+          reason: String((lang === "es" ? p.reason_es : p.reason_en) ?? p.reason_en ?? "").replace(/\.?$/, "."),
+          cats: ((p.categories as string[]) ?? []).map(label).join(" · ") });
       case "unusual_amount":
         return t("auditView.say.unusual_amount", { amount: money(Number(p.amount)), usual: money(Number(p.usual)), times: p.times });
       case "coverage_gap":
@@ -406,7 +413,10 @@ export function useAuditText() {
 type T = ReturnType<typeof useTranslation>["t"];
 
 /** Un movimiento: comercio limpio · fecha · monto · cuenta; la línea cruda del banco, al expandir. */
-function TxRow({ x, fmtDate, extra }: { x: TxSummary; fmtDate: (s: string) => string; extra?: React.ReactNode }) {
+function TxRow({ x, fmtDate, extra, onOpen, openLabel }: {
+  x: TxSummary; fmtDate: (s: string) => string; extra?: React.ReactNode;
+  onOpen?: (id: number) => void; openLabel?: string;   // ir a ESTA fila en Bookkeeping (14-oct)
+}) {
   const [open, setOpen] = useState(false);
   return (
     <li className="py-1">
@@ -423,6 +433,7 @@ function TxRow({ x, fmtDate, extra }: { x: TxSummary; fmtDate: (s: string) => st
         <div className="ps-5 pt-0.5 text-[11px] text-slate-500 space-y-0.5">
           {x.account && <div>{x.account}</div>}
           <div className="font-mono break-all text-slate-400">{x.description}</div>
+          {onOpen && <button onClick={() => onOpen(x.id)} className="text-emerald-800 hover:underline">{openLabel} →</button>}
         </div>
       )}
     </li>
@@ -455,7 +466,7 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
   webLabel: (w: { business_type: string; confidence: string | null }) => string; fmtDate: (s: string) => string;
   chart: ChartOfAccounts; catToType: Record<string, string>; busy: boolean;
   onCategorize: (ids: number[], at?: string, cat?: string, onlyThis?: boolean) => void;
-  onOk: (f: BoardFinding, note?: string) => void; onOpenSheet?: () => void;
+  onOk: (f: BoardFinding, note?: string) => void; onOpenSheet?: (txId?: number) => void;
 }) {
   const [note, setNote] = useState("");
   const p = f.payload as Record<string, unknown>;
@@ -493,7 +504,8 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
       )}
       {f.transactions.length > 0 && (
         <ul className="border-t border-slate-100 pt-1">
-          {f.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate} extra={x.category ? label(`${x.account_type}/${x.category}`) : t("agents.pending")} />)}
+          {f.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate} extra={x.category ? label(`${x.account_type}/${x.category}`) : t("agents.pending")}
+                                            onOpen={onOpenSheet} openLabel={t("auditView.act.openSheet")} />)}
         </ul>
       )}
       {/* Acciones */}
@@ -523,7 +535,7 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
             {f.is_info ? t("auditView.act.understood") : t("auditView.act.ok")}
           </button>
           {onOpenSheet && f.transactions.length > 0 && (
-            <button onClick={onOpenSheet} className="px-2 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("auditView.act.openSheet")}</button>
+            <button onClick={() => onOpenSheet(f.transactions[0].id)} className="px-2 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("auditView.act.openSheet")}</button>
           )}
         </div>
       </div>
@@ -534,7 +546,7 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
 function PendingDetail({ g, t, webLabel, fmtDate, chart, catToType, busy, onCategorize, onAskRule, onOpenSheet }: {
   g: PendingGroup; t: T; webLabel: (w: { business_type: string; confidence: string | null }) => string;
   fmtDate: (s: string) => string; chart: ChartOfAccounts; catToType: Record<string, string>; busy: boolean;
-  onCategorize: (ids: number[], at?: string, cat?: string) => void; onAskRule: (g: PendingGroup) => void; onOpenSheet?: () => void;
+  onCategorize: (ids: number[], at?: string, cat?: string) => void; onAskRule: (g: PendingGroup) => void; onOpenSheet?: (txId?: number) => void;
 }) {
   const ids = g.transactions.map((x) => x.id);
   return (
@@ -551,7 +563,8 @@ function PendingDetail({ g, t, webLabel, fmtDate, chart, catToType, busy, onCate
           🔎 ② Tavily: {webLabel(g.web)}{g.web.source_domain ? ` · ${g.web.source_domain}` : ""}
         </a>
       )}
-      <ul className="border-t border-slate-100 pt-1">{g.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate} />)}</ul>
+      <ul className="border-t border-slate-100 pt-1">{g.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate}
+                                                                         onOpen={onOpenSheet} openLabel={t("auditView.act.openSheet")} />)}</ul>
       <div className="border-t border-slate-100 pt-2 space-y-2">
         <CategoryPicker chart={chart} busy={busy} t={t} cta={t("auditView.act.categorizeAll", { count: g.count })}
                         onPick={(c) => onCategorize(ids, catToType[c], c)} />
@@ -560,7 +573,7 @@ function PendingDetail({ g, t, webLabel, fmtDate, chart, catToType, busy, onCate
                   className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-emerald-700 text-emerald-800 disabled:opacity-40">
             ④ {t("auditView.act.askRule")}
           </button>
-          {onOpenSheet && <button onClick={onOpenSheet} className="px-2 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("auditView.act.openSheet")}</button>}
+          {onOpenSheet && <button onClick={() => onOpenSheet(g.transactions[0]?.id)} className="px-2 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("auditView.act.openSheet")}</button>}
         </div>
       </div>
     </div>

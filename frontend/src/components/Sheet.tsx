@@ -101,9 +101,16 @@ function searchText(r: SheetRow, prop: string): string {
   }
 }
 
-export default function Sheet({ onNavigate, menuRight }: {
+/** IR A UNA TRANSACCIÓN desde otra pantalla (Auditoría, 14-oct). `n` cambia en cada pedido, así el
+ *  mismo id pedido dos veces vuelve a llevar ahí. Sin `id` y con `onlyPending` (el Resumen): la hoja
+ *  abre con el filtro "Pendientes" y en la primera fila Pendiente. */
+export type SheetFocus = { id: number | null; onlyPending?: boolean; n: number };
+
+export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }: {
   onNavigate?: (v: View) => void;
   menuRight?: React.ReactNode;   // lo que va a la derecha de la barra de menús (p. ej. "vista anterior")
+  focusTx?: SheetFocus | null;   // la fila a la que hay que llevar al bookkeeper al abrir
+  onFocusTxDone?: () => void;
 } = {}) {
   const { t } = useTranslation();
   const [rows, setRows] = useState<SheetRow[] | null>(null);
@@ -153,6 +160,8 @@ export default function Sheet({ onNavigate, menuRight }: {
   const [flagsKey, setFlagsKey] = useState(0);
   const [panelOnSelect, setPanelOnSelect] = usePref("contabu.detailsPanel", true);
   const [panelClosedFor, setPanelClosedFor] = useState<number | null>(null);
+  // Al llegar desde Auditoría, el panel se abre para ESA fila aunque en Ver esté apagado.
+  const [panelForcedFor, setPanelForcedFor] = useState<number | null>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [tab, setTab] = useState<"sheet" | "pivot" | "rules">("sheet");
   // Puente hoja → reglas (idea de Jose): crear una regla PARTIENDO de la descripción de una
@@ -675,7 +684,8 @@ export default function Sheet({ onNavigate, menuRight }: {
   }, [focus, visible, columns, t]);
 
   // EL PANEL LATERAL: la fila enfocada, salvo que se haya cerrado para ella (× o Esc).
-  const panelTx = tab === "sheet" && panelOnSelect && focus && panelClosedFor !== focus.id ? focus.id : null;
+  const panelTx = tab === "sheet" && focus && panelClosedFor !== focus.id
+    && (panelOnSelect || panelForcedFor === focus.id) ? focus.id : null;
   // El cierre vale para la fila de AHORA: al pasar a otra, el panel vuelve a abrirse (también al volver).
   const focusId = focus?.id ?? null;
   useEffect(() => { setPanelClosedFor((c) => (c != null && focusId !== c ? null : c)); }, [focusId]);
@@ -801,6 +811,57 @@ export default function Sheet({ onNavigate, menuRight }: {
       await grid.setCellsFocus?.({ x, y: h.y }, { x, y: h.y }, isPin ? "colPinStart" : "rgCol", "rgRow");
     } catch { /* la grilla aún no está lista */ }
   }, [hits, pinDesc, columns]);
+
+  // IR A LA TRANSACCIÓN (Jose, 14-oct; Buzón 8-oct): desde Auditoría se llega a la fila EXACTA.
+  // Paso 1, con las filas ya cargadas: si no existe, se avisa; si existe, se quita SOLO lo que la
+  // esconde (cuentas, búsqueda, "Pendientes", "Por revisar") y se deja apuntada para el paso 2.
+  const [goTo, setGoTo] = useState<number | null>(null);
+  useEffect(() => {
+    if (!focusTx || !rows) return;
+    onFocusTxDone?.();
+    const r = focusTx.id != null ? rows.find((x) => x.id === focusTx.id)
+      : focusTx.onlyPending ? rows.find((x) => !x.category) : undefined;
+    if (focusTx.onlyPending) { setTab("sheet"); setOnlyPending(true); }
+    if (!r) { if (focusTx.id != null) setError(t("sheet.focusGone")); return; }
+    setTab("sheet");
+    if (acctSel.length && !acctSel.includes(r.bank_account ?? "")) setAcctSel([]);
+    if (onlyPending && r.category) setOnlyPending(false);
+    if (onlyFlagged && !flags[r.id]) setOnlyFlagged(false);
+    const q = search.trim().toLowerCase();
+    if (q && !(SEARCH_PROPS.some((p) => searchText(r, p).toLowerCase().includes(q))
+               || (r.bank_account ?? "").toLowerCase().includes(q))) setSearch("");
+    setGoTo(r.id);
+  }, [focusTx, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Paso 2, cuando la fila ya está entre las visibles y la grilla montada: desplazarse, seleccionarla
+  // y abrir su panel. La posición sale de la grilla (respeta un orden por columna); si no, de `visible`.
+  useEffect(() => {
+    if (goTo == null || tab !== "sheet" || !visible.some((r) => r.id === goTo)) return;
+    let alive = true, tries = 0;
+    const run = async () => {
+      const grid = gridRef.current as any;
+      if (!grid?.scrollToRow) { if (alive && tries++ < 20) window.setTimeout(run, 50); return; }
+      let y = visible.findIndex((r) => r.id === goTo);
+      try {
+        const shown: any[] = (await grid.getVisibleSource?.()) ?? [];
+        const i = shown.findIndex((r) => r?.id === goTo);
+        if (i >= 0) y = i;
+      } catch { /* sin orden propio: vale el de `visible` */ }
+      if (!alive) return;
+      const pinned = pinDesc ? "colPinStart" : "rgCol";
+      try {
+        await grid.scrollToRow(y);
+        await grid.setCellsFocus?.({ x: 0, y }, { x: 0, y }, pinned, "rgRow");
+      } catch { /* la grilla aún no está lista: igual queda seleccionada abajo */ }
+      setFocus({ id: goTo, prop: "date", row: y + 1 });
+      setSelected([goTo]);
+      setPanelClosedFor(null);
+      setPanelForcedFor(goTo);
+      setGoTo(null);
+    };
+    void run();
+    return () => { alive = false; };
+  }, [goTo, tab, visible, pinDesc]);
 
   // CTRL+F / CMD+F dentro de la hoja: enfoca NUESTRO buscador en vez del del navegador (como Excel).
   useEffect(() => {
@@ -943,6 +1004,14 @@ export default function Sheet({ onNavigate, menuRight }: {
         </PageHeader>
       </div>
       <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={menuRight} />
+      {/* Un aviso con la hoja ya cargada (antes `error` solo se veía si la hoja no cargaba). */}
+      {error && rows && (
+        <div className="alert text-sm bg-amber-50 text-amber-800 border-amber-200 mb-2" style={{ display: "flex" }}>
+          <span style={{ flex: 1 }}>{error}</span>
+          <button onClick={() => setError(null)} aria-label={t("sheet.menu.close", { defaultValue: "Close" })}
+            style={{ border: 0, background: "transparent", cursor: "pointer", color: "#8a958f", fontSize: 16 }}>×</button>
+        </div>
+      )}
       {bankNote && (
         <div style={{ position: "relative", marginBottom: 8 }}>
           {bankNote.sync && <SyncSummary s={bankNote.sync} />}

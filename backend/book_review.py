@@ -20,6 +20,9 @@ Lo que el auditor sabe de contabilidad (sin IA; observa, nunca categoriza):
 - **Lo que dice una nota** (`note_check`, 13-oct): la nota 📌 traducida por Nemotron a un chequeo
   (`note_checks.py`) se aplica AQUÍ, en código: comercios o tipos, monto mínimo escrito en la nota y la
   ventana de la nota. Lo pidió el bookkeeper: el ① no lo vuelve a juzgar.
+- **¿Personal para este negocio?** (`personal_use`, 14-oct): la opinión de Nemotron sobre cada comercio
+  EN ESTE LIBRO (`personal_use.py`, guardada por libro) se aplica aquí, en código. Ya es una opinión del
+  modelo: el ① no la vuelve a juzgar.
 - **Datos que faltan no son pérdidas** (`coverage_gap`, `bank_disconnected`): un mes sin movimientos en
   una cuenta, o un banco desconectado, es "faltan datos", nunca "el negocio perdió dinero".
 
@@ -39,6 +42,7 @@ from sqlmodel import Session, func, select
 import book_notes
 import merchant_verifier
 import note_checks
+import personal_use
 from audit import audit_categorization
 from company_profile import p2p_counterparty
 from models import (AgentCall, BankConnection, CategoryRule, Company, Finding, ProposalDismissal,
@@ -49,7 +53,7 @@ SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 # Tipos que son una OBSERVACIÓN del auditor, no un posible error: el ① no los juzga.
 INFO_TYPES = {"payroll_net_only", "coverage_gap", "bank_disconnected", "unusual_amount"}
 # Lo que el ① no juzga: las observaciones y lo que el bookkeeper pidió en una nota.
-UNJUDGED_TYPES = INFO_TYPES | {"note_check"}
+UNJUDGED_TYPES = INFO_TYPES | {"note_check", "personal_use"}
 # Monto inusual: N veces la mediana del comercio, por encima de todo lo anterior, con historia mínima.
 UNUSUAL_TIMES, UNUSUAL_MIN_HISTORY, UNUSUAL_MIN_AMOUNT = 3, 3, Decimal("100")
 
@@ -180,6 +184,8 @@ def detect(session: Session, company: Company, txs: list[Transaction]) -> list[d
                     "merchant": merchant_name(group[0]), "transaction_ids": [t.id for t in group], "payload": {
                         "business_type": hit.business_type, "confidence": hit.confidence,
                         "categories": sorted({f"{t.account_type.value}/{t.category}" for t in group})}})
+    # ¿Personal PARA ESTE NEGOCIO? (opinión de Nemotron por libro); lo que ya marcó el ② no se repite.
+    out.extend(personal_use.findings(session, company, txs, {t.id for g in personal.values() for t in g}))
 
     # Nómina: el banco solo ve lo NETO.
     payroll: dict[tuple, list[Transaction]] = defaultdict(list)

@@ -614,3 +614,28 @@ class ProposalDismissal(SQLModel, table=True):
     reason_text: Optional[str] = Field(default=None)
     user_id: Optional[int] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
+
+
+class MerchantJudgment(SQLModel, table=True):
+    """¿PERSONAL PARA ESTE NEGOCIO? — lo que Nemotron opina de UN comercio en UN libro (FASE 11,
+    Auditoría / IA · 14-oct-2026). Ver `personal_use.py`.
+
+    Lo personal no es una lista fija de comercios: depende del negocio (Home Depot es materiales en una
+    constructora y una reparación en un restaurante). Por eso se guarda **POR LIBRO** (`company_id`) y
+    no en la caché del ② (`merchantlookup`), que es evidencia de internet y es por oficina.
+    `verdict`: "business" (uso normal para este negocio) | "mixed" | "personal" (probablemente personal).
+    `confidence`: high | medium | low. `reason_en` / `reason_es`: una razón corta, en los dos idiomas.
+    `context_hash`: el negocio que se le describió al modelo (sector + notas + versión del prompt). Si
+    cambia, la opinión queda vieja y se rehace. Nunca categoriza: alimenta el hallazgo `personal_use`.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    merchant_key: str = Field(index=True)              # la llave del comercio (huella), en mayúsculas
+    keyword: str                                       # la frase que vio el modelo (corta, sin números)
+    verdict: str
+    confidence: str
+    reason_en: Optional[str] = Field(default=None)
+    reason_es: Optional[str] = Field(default=None)
+    context_hash: str
+    model: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)

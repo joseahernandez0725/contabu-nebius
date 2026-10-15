@@ -24,6 +24,10 @@ Uso:
     .venv/bin/python measure.py --demo --audit         # donde la IA APORTA (13-oct): el ④ sobre lo Pendiente
                                                        # y el ① sobre errores plantados, contra respuestas
                                                        # escritas ANTES (demo_data.DEMO_TRUTH_*, Movimientos)
+    .venv/bin/python measure.py --demo --audit --blind # lo mismo contra el SEGUNDO examen, a ciegas (14-oct):
+                                                       # DEMO_TRUTH_ERRORS_BLIND, que la F11 no abre antes de
+                                                       # medir. Sin --blind, las filas de ese examen se
+                                                       # ESCONDEN en código (no cuentan ni se imprimen).
 """
 
 import argparse
@@ -271,11 +275,35 @@ def _print_agent(results: list[dict], base: list[dict], privacy: dict) -> None:
 #     Un error está "encontrado" si alguna alerta toca alguna de SUS filas (descripción + fecha + monto +
 #     dirección exactos).
 
-def _truth(name: str):
+def _truth(name: str, blind: bool = False):
     import demo_data
     pending = (getattr(demo_data, "DEMO_TRUTH_PENDING", {}) or {}).get(name)
-    errors = [e for e in (getattr(demo_data, "DEMO_TRUTH_ERRORS", []) or []) if e.get("book") == name]
+    key = "DEMO_TRUTH_ERRORS_BLIND" if blind else "DEMO_TRUTH_ERRORS"
+    errors = [e for e in (getattr(demo_data, key, []) or []) if e.get("book") == name]
     return pending, (errors or None)
+
+
+def _exam_ids(txs: list[Transaction], key: str) -> set[int]:
+    """Los movimientos que un examen (`DEMO_TRUTH_ERRORS` o `_BLIND`) marca como error."""
+    import demo_data
+    keys = {((r["description"] or "").strip().upper(), str(r["date"]))
+            for e in (getattr(demo_data, key, []) or []) for r in e.get("rows", [])}
+    return {t.id for t in txs if ((t.description or "").strip().upper(), str(t.date)) in keys}
+
+
+def _blind_ids(txs: list[Transaction]) -> set[int]:
+    """Los movimientos del SEGUNDO examen (las filas que Movimientos agregó a ciegas, 14-oct), para
+    ESCONDERLOS al medir contra el primero: sin esto, sus comercios saldrían impresos como "falsas
+    alarmas" mientras se ajusta al agente, y el segundo examen dejaría de ser ciego. Se leen en código;
+    nadie los imprime. Llave: (descripción, fecha), sin el monto."""
+    import demo_data
+    keys = {((desc or "").strip().upper(), str(day))
+            for rows in (getattr(demo_data, "_BLIND_ROWS", {}) or {}).values() for day, desc, *_ in rows}
+    # Y las filas que el segundo examen marca como error aunque ya existieran en el libro (✅ 14-oct: sin
+    # esto salían como "falsas alarmas" del primero).
+    keys |= {((r["description"] or "").strip().upper(), str(r["date"]))
+             for e in (getattr(demo_data, "DEMO_TRUTH_ERRORS_BLIND", []) or []) for r in e.get("rows", [])}
+    return {t.id for t in txs if ((t.description or "").strip().upper(), str(t.date)) in keys}
 
 
 def _pending_entry(truth: dict, t: Transaction):
@@ -329,7 +357,7 @@ def measure_pending(session: Session, company: Company, truth: dict, *, model=No
             "proposals": len(res.proposals), "rows": [p.row for p in res.proposals]}
 
 
-def drafter_alerts(session: Session, company: Company, rows: list) -> list[tuple[set, dict]]:
+def drafter_alerts(session: Session, company: Company, rows: list, hide: frozenset = frozenset()) -> list[tuple[set, dict]]:
     """Las propuestas del ④ que CAMBIARÍAN filas ya categorizadas (no las manuales: esas no las toca
     ninguna regla) también son alertas: la pestaña las muestra con su prueba sobre el historial. Una alerta
     por propuesta: (filas que cambia, {id → (account_type, category) que les pondría})."""
@@ -345,13 +373,14 @@ def drafter_alerts(session: Session, company: Company, rows: list) -> list[tuple
             if d.source == "rule" and (d.account_type, d.category) != (t.account_type.value, t.category) \
                     and d != formula.decide(ctx.rules, t):
                 changed[t.id] = (d.account_type, d.category)
-        if changed:
+        if changed and not (set(changed) & hide):
             out.append((set(changed), changed))
     return out
 
 
 def measure_review(session: Session, company: Company, truth: list[dict], *, model=None,
-                   draft_rows: Optional[list] = None) -> dict:
+                   draft_rows: Optional[list] = None, hide: frozenset = frozenset(),
+                   other_exam: frozenset = frozenset()) -> dict:
     """(b) El ① sobre ERRORES plantados. Alerta del auditor SOLO = todo hallazgo abierto (incluidas las
     observaciones, como la nómina neta: el examen las pide; sin los chequeos de las notas, que son IA).
     Alerta CON el ① = los hallazgos que el ① NO llama "legítimo" (problema o inseguro) + lo que el ① no
@@ -375,11 +404,22 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
     findings = book_review.sync(session, company)
     # Sigue alertando lo que el ① NO despacha: "problema" e "inseguro" piden mirar; solo "legítimo" dice
     # "se puede saltar" (decidido el 13-oct ANTES de medir el cambio; en la línea base "inseguro" era 0).
+    # Un hallazgo que toca ALGUNA fila escondida (`hide`: las del otro examen) sale entero: ni cuenta ni se
+    # imprime. (✅ 14-oct: quitar solo esas filas dejaba ver hallazgos que ellas causaban en filas normales,
+    # p. ej. un comercio "con dos categorías" por una fila del otro examen.)
+    findings = [f for f in findings if not (set(f.transaction_ids or []) & hide)]
+    ids_of = {f.id: set(f.transaction_ids or []) for f in findings}
     flagged = [f for f in findings if f.type in book_review.UNJUDGED_TYPES or f.agent_verdict in ("problem", "unsure")]
 
+    # Una alerta que no toca este examen pero SÍ un error del OTRO examen (sus errores siguen en los libros)
+    # no cuenta ni a favor ni en contra de la precisión. (✅ 14-oct: sin esto, en la corrida a ciegas los
+    # errores del primer examen salían como "falsas alarmas"; el conteo se arregló DESPUÉS de esa corrida.)
+    neutral = {f.id for f in findings if not (ids_of[f.id] & all_planted) and ids_of[f.id] & other_exam}
+
     def score_of(alerts):
-        touching = [f for f in alerts if set(f.transaction_ids or []) & all_planted]
-        found = [k for k, ids in planted.items() if ids and any(set(f.transaction_ids or []) & ids for f in alerts)]
+        alerts = [f for f in alerts if f.id not in neutral]
+        touching = [f for f in alerts if ids_of[f.id] & all_planted]
+        found = [k for k, ids in planted.items() if ids and any(ids_of[f.id] & ids for f in alerts)]
         return {"alerts": len(alerts), "true_alerts": len(touching), "found": len(found),
                 "missed": [k for k in planted if k not in found]}
     # Cómo JUZGA el ① cada hallazgo, según toque o no un error plantado (las observaciones no las juzga).
@@ -387,11 +427,13 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
     for f in findings:
         if f.type in book_review.UNJUDGED_TYPES:
             continue
-        side = "true" if set(f.transaction_ids or []) & all_planted else "false"
+        if f.id in neutral:
+            continue
+        side = "true" if ids_of[f.id] & all_planted else "false"
         k = f"{side}:{f.agent_verdict or 'none'}"
         judged[k] = judged.get(k, 0) + 1
     # ④ — sus propuestas sobre filas YA categorizadas (del mismo `draft` que se midió en lo Pendiente).
-    d_alerts = drafter_alerts(session, company, draft_rows or [])
+    d_alerts = drafter_alerts(session, company, draft_rows or [], hide)
     d_found = [k for k, ids in planted.items() if ids and any(a & ids for a, _ in d_alerts)]
     # ¿Y con la corrección que el examen espera? (solo los errores que traen "expected")
     d_fixed = [k for i, (k, ids) in enumerate(planted.items()) if ids and truth[i].get("expected")
@@ -400,25 +442,46 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
     drafter = {"alerts": len(d_alerts), "true_alerts": sum(1 for a, _ in d_alerts if a & all_planted),
                "found": len(d_found), "fixed": len(d_fixed), "missed": []}
     together = set(d_found) | {k for k, ids in planted.items() if ids and any(
-        set(f.transaction_ids or []) & ids for f in flagged)}
+        ids_of[f.id] & ids for f in flagged)}
+    # ¿Personal para ESTE negocio? — qué opinó el modelo de cada comercio con un gasto personal plantado
+    # (para ver POR QUÉ se escapa uno; solo errores de este examen).
+    import personal_use
+    saved = personal_use.current(session, company)
+    by_id = {t.id: t for t in txs}
+    personal_seen = []
+    for i, (k, ids) in enumerate(planted.items()):
+        if truth[i]["type"] != "personal_expense" or not ids:
+            continue
+        keys = {personal_use.merchant_key(by_id[x]) for x in ids if x in by_id} - {None}
+        js = [saved[x] for x in keys if x in saved]
+        personal_seen.append(f"{k} " + (", ".join(f"{j.keyword}={j.verdict}/{j.confidence}" for j in js) or
+                                        "sin opinión (no es gasto del negocio, o no se juzgó)"))
     return {"book": company.name, "planted": len(planted), "unmatched": unmatched, "judged": judged,
             "drafter": drafter, "together": len(together),
             # El auditor SOLO es sin IA: los chequeos de las notas los tradujo Nemotron (van con la IA).
-            "auditor": score_of([f for f in findings if f.type != "note_check"]), "reviewer": score_of(flagged),
+            "auditor": score_of([f for f in findings if f.type not in AI_FINDING_TYPES]), "reviewer": score_of(flagged),
             "notes": score_of([f for f in findings if f.type == "note_check"]), "usage": rev.usage,
-            "note_usage": rev.note_usage, "by_type": dict(Counter(f.type for f in findings)),
+            "personal": score_of([f for f in findings if f.type == "personal_use"]), "personal_seen": personal_seen,
+            "note_usage": rev.note_usage, "personal_usage": rev.personal_usage,
+            "by_type": dict(Counter(f.type for f in findings)),
             "dismissed_true": [f"{f.type}:{f.merchant}" for f in findings if f.agent_verdict == "legitimate"
-                               and set(f.transaction_ids or []) & all_planted],
+                               and ids_of[f.id] & all_planted],
             "false_alerts": [f"{f.type}:{f.merchant}" for f in flagged
-                             if not (set(f.transaction_ids or []) & all_planted)][:8]}
+                             if not (ids_of[f.id] & all_planted) and f.id not in neutral][:12],
+            "neutral": len(neutral)}
+
+
+# Hallazgos que salen de una llamada a Nemotron: el "auditor solo" (sin IA) no los cuenta.
+AI_FINDING_TYPES = {"note_check", "personal_use"}
 
 
 def _pct(a: int, b: int) -> str:
     return f"{a}/{b} ({100 * a / b:.0f} %)" if b else f"{a}/0"
 
 
-def _print_audit(pend: list[dict], revs: list[dict], privacy: dict) -> None:
-    print("\nDONDE LA IA APORTA · respuestas escritas ANTES por Movimientos (demo_data.DEMO_TRUTH_*)\n")
+def _print_audit(pend: list[dict], revs: list[dict], privacy: dict, blind: bool = False) -> None:
+    which = "el SEGUNDO examen, A CIEGAS (DEMO_TRUTH_ERRORS_BLIND)" if blind else "el primer examen (DEMO_TRUTH_ERRORS)"
+    print(f"\nDONDE LA IA APORTA · {which} · respuestas escritas ANTES por Movimientos\n")
     cost = 0.0
     P = {"known": 0, "decided": 0, "right": 0, "split_decided": 0, "ambiguous_decided": 0, "decided_unanswered": 0}
     for r in pend:
@@ -441,10 +504,17 @@ def _print_audit(pend: list[dict], revs: list[dict], privacy: dict) -> None:
         nc = r["notes"]
         print(f"      📌 notas → chequeos (Nemotron traduce, el código aplica): {nc['alerts']} alertas, tocan "
               f"{_pct(nc['found'], r['planted'])} de los errores, precisión {_pct(nc['true_alerts'], nc['alerts'])}")
+        pu = r["personal"]
+        print(f"      🧭 ¿personal para este negocio? (Nemotron opina, el código aplica): {pu['alerts']} alertas, tocan "
+              f"{_pct(pu['found'], r['planted'])} de los errores, precisión {_pct(pu['true_alerts'], pu['alerts'])}")
+        for s in r["personal_seen"]:
+            print(f"         · {s}")
         d = r["drafter"]
         print(f"      ④ sus propuestas sobre lo ya categorizado: {d['alerts']} alertas, tocan {_pct(d['found'], r['planted'])}"
               f" de los errores ({d['fixed']} con la corrección esperada), precisión {_pct(d['true_alerts'], d['alerts'])}"
               f" · AUDITOR + ① + ④: encuentra {_pct(r['together'], r['planted'])}")
+        if r.get("neutral"):
+            print(f"      ({r['neutral']} alertas tocan solo errores del OTRO examen: no cuentan ni a favor ni en contra)")
         if r["unmatched"]:
             print(f"      ⚠️ errores del examen sin filas en el libro (no se pueden encontrar): {', '.join(r['unmatched'])}")
         if v["missed"]:
@@ -457,6 +527,7 @@ def _print_audit(pend: list[dict], revs: list[dict], privacy: dict) -> None:
         for pre, key in (("a", "auditor"), ("r", "reviewer")):
             A[f"{pre}_alerts"] += r[key]["alerts"]; A[f"{pre}_true"] += r[key]["true_alerts"]; A[f"{pre}_found"] += r[key]["found"]
         cost += (r["note_usage"].cost_usd or 0) if r.get("note_usage") else 0
+        cost += (r["personal_usage"].cost_usd or 0) if r.get("personal_usage") else 0
         A["d_alerts"] += r["drafter"]["alerts"]; A["d_true"] += r["drafter"]["true_alerts"]
         A["d_found"] += r["drafter"]["found"]; A["d_fixed"] += r["drafter"]["fixed"]; A["together"] += r["together"]
         cost += (r["usage"].cost_usd or 0) if r["usage"] else 0
@@ -514,6 +585,8 @@ def main() -> int:
     ap.add_argument("--agent", action="store_true", help="corre también el agente ④ real (Nemotron)")
     ap.add_argument("--reasoning", action="store_true", help="deja razonar al modelo (más tokens)")
     ap.add_argument("--model", help="otro modelo de Nebius (por defecto NEBIUS_MODEL)")
+    ap.add_argument("--blind", action="store_true",
+                    help="con --audit: mide contra el SEGUNDO examen (DEMO_TRUTH_ERRORS_BLIND), a ciegas")
     ap.add_argument("--audit", action="store_true",
                     help="donde la IA aporta: ④ sobre lo Pendiente y ① sobre errores plantados (DEMO_TRUTH_*)")
     args = ap.parse_args()
@@ -555,7 +628,9 @@ def main() -> int:
                 nemotron.SENT.clear()
                 pend, revs = [], []
                 for b in books:
-                    tp, te = _truth(b.name)
+                    tp, te = _truth(b.name, blind=args.blind)
+                    book_txs = session.exec(select(Transaction).where(Transaction.company_id == b.id)).all()
+                    hide = frozenset() if args.blind else frozenset(_blind_ids(book_txs))
                     if tp is None and te is None:
                         print(f"⏸️  {b.name}: todavía no hay DEMO_TRUTH_* en demo_data.py (Movimientos)")
                         continue
@@ -564,11 +639,13 @@ def main() -> int:
                         pend.append(measure_pending(session, b, tp, model=args.model))
                         rows = pend[-1]["rows"]
                     if te:
-                        revs.append(measure_review(session, b, te, model=args.model, draft_rows=rows))
+                        other = frozenset(_exam_ids(book_txs, "DEMO_TRUTH_ERRORS")) if args.blind else frozenset()
+                        revs.append(measure_review(session, b, te, model=args.model, draft_rows=rows, hide=hide,
+                                                   other_exam=other))
                 txs = [t for b in books for t in session.exec(
                     select(Transaction).where(Transaction.company_id == b.id)).all()]
                 _print_audit(pend, revs, agents.privacy_scan(list(nemotron.SENT), txs,
-                                                             merchant_verifier.protected_names(txs)))
+                                                             merchant_verifier.protected_names(txs)), blind=args.blind)
                 return 0
             base = [measure_book(session, b, args.cutoff) for b in books]
             _print(base, args.cutoff)

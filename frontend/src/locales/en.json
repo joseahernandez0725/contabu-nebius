@@ -499,7 +499,8 @@
       "coverage_gap": "Missing data",
       "bank_disconnected": "Bank disconnected",
       "unusual_amount": "Unusual amount",
-      "note_check": "What your note asks"
+      "note_check": "What your note asks",
+      "personal_use": "Personal for this business?"
     },
     "say": {
       "rule_deviation": "Your rule “{{rule}}” says {{says}}, but this row has {{has}}.",
@@ -519,6 +520,7 @@
       "note_check_personal_other": "Your note says these are usually personal: “{{note}}”. {{count}} movements are booked as business: {{cats}}.",
       "note_check_one": "Your note asks to review this: “{{note}}”. {{count}} movement, booked as {{cats}}.",
       "note_check_other": "Your note asks to review these: “{{note}}”. {{count}} movements, booked as {{cats}}.",
+      "personal_use": "For a {{business}} business this looks personal ({{confidence}}): {{reason}} Booked as {{cats}}.",
       "bank_disconnected": "The bank {{bank}} is disconnected ({{error}}): newer movements may be missing."
     },
     "dir": {
@@ -778,6 +780,7 @@
     "saving": "Saving…",
     "following": "Looking up the rule…",
     "noRule": "No rule covers this transaction. Create one in the Rules tab.",
+    "focusGone": "That transaction is no longer in this book: it may have been deleted, or the bank removed it.",
     "date": "Date",
     "description": "Description",
     "amount": "Amount",
@@ -967,32 +970,36 @@
       "finished": "That's the whole tour. Thanks for trying ContaBu.",
       "steps": {
         "s1": {
-          "t": "Try the demo",
-          "d": "You land in your own office with 3 client books."
+          "t": "Get in with one click",
+          "d": "You land in your own office with 3 client books: nothing to install or set up."
         },
         "s2": {
-          "t": "Open Rivera HVAC",
-          "d": "The Sheet shows what no rule covers yet (Pending), and the P&L says how much is still uncategorized."
+          "t": "Open Rivera HVAC's Summary",
+          "d": "At the top, what needs attention. Net income is shown before Pending: what has no category is declared, never hidden."
         },
         "s3": {
-          "t": "Ask the team to propose rules",
-          "d": "Review the proposal (coverage and clashes already checked), approve it, and watch Pending drop live."
+          "t": "Audit → Review the book",
+          "d": "The agent team on Nemotron works in visible steps: audit, verify on the web, judge, draft. Meanwhile open “Payroll: the bank only sees the net”: that's accounting knowledge, not just text."
         },
         "s4": {
-          "t": "Open Audit",
-          "d": "The team found a merchant categorized two ways and rules that clash. In Bookkeeping, select a row with a dot: the panel on the right shows what the agents found and their evidence."
+          "t": "A note becomes one row",
+          "d": "In Proposals, the vacation note is ONE row of the formula: STARBUCKS → Owner Draw only from Aug 3 to 17. The history test shows the 9 rows it changes before anything moves. Approve it."
         },
         "s5": {
-          "t": "Fix a row by hand",
-          "d": "Then approve another rule: your manual row doesn't move. What you write by hand wins."
+          "t": "The book is a formula",
+          "d": "Transactions → Rules → View as formula: the whole book is one chain of IFs, read top to bottom. The row the agent proposed is marked."
         },
         "s6": {
-          "t": "Link a bank",
-          "d": "Plaid sandbox (user_good / pass_good), in Bank feeds. New transactions come in and the rules categorize them."
+          "t": "One row, its whole story",
+          "d": "In Bookkeeping, select a row (try a Starbucks in Paris): the panel shows which rule set its category, its history, and the web evidence with its link. Rows with a dot also show what the agents found."
         },
         "s7": {
-          "t": "Open Casa Lupita",
-          "d": "The same kind of purchase is audited differently because of the bookkeeper's note."
+          "t": "Fix a row by hand",
+          "d": "Change the category of a Pending row: it gets a ✎ and no rule ever touches it again. What you write by hand wins."
+        },
+        "s8": {
+          "t": "Link a bank",
+          "d": "Bank feeds → Link bank (Plaid sandbox: user_good / pass_good). Transactions come in through the same engine as a statement: rules first, the rest Pending."
         }
       }
     }

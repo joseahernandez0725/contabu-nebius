@@ -26,7 +26,7 @@ DAILY_CAP = int(os.getenv("AGENT_DAILY_CALLS") or (20 if _DEMO else 200))
 # Búsquedas del ② verificador (Tavily) por oficina en 24 h: tope APARTE, porque cada una gasta un
 # crédito del plan gratis (1.000/mes) y la caché es por oficina (cada visitante del demo busca de nuevo).
 DAILY_SEARCH_CAP = int(os.getenv("AGENT_DAILY_SEARCHES") or (15 if _DEMO else 100))
-_MODEL_AGENTS = ("drafter", "reviewer", "note_checker")
+_MODEL_AGENTS = ("drafter", "reviewer", "note_checker", "personal_judge")
 
 
 class CapReached(RuntimeError):

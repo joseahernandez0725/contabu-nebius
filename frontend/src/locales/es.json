@@ -735,7 +735,8 @@
       "coverage_gap": "Faltan datos",
       "bank_disconnected": "Banco desconectado",
       "unusual_amount": "Monto inusual",
-      "note_check": "Lo que pide tu nota"
+      "note_check": "Lo que pide tu nota",
+      "personal_use": "¿Personal para este negocio?"
     },
     "say": {
       "rule_deviation": "Tu regla “{{rule}}” dice {{says}}, pero esta fila tiene {{has}}.",
@@ -755,6 +756,7 @@
       "note_check_personal_other": "Tu nota dice que esto suele ser personal: “{{note}}”. {{count}} movimientos están como del negocio: {{cats}}.",
       "note_check_one": "Tu nota pide revisar esto: “{{note}}”. {{count}} movimiento, como {{cats}}.",
       "note_check_other": "Tu nota pide revisar esto: “{{note}}”. {{count}} movimientos, como {{cats}}.",
+      "personal_use": "Para un negocio de {{business}}, esto parece personal ({{confidence}}): {{reason}} Está como {{cats}}.",
       "bank_disconnected": "El banco {{bank}} está desconectado ({{error}}): pueden faltar movimientos recientes."
     },
     "dir": {
@@ -877,6 +879,7 @@
     "nSelected": "{{n}} seleccionadas",
     "newLabel": "Nombre de la etiqueta (qué significa):",
     "noRule": "Ninguna regla cubre esta transacción. Crea una en la pestaña Reglas.",
+    "focusGone": "Esa transacción ya no está en este libro: quizá se borró, o el banco la retiró.",
     "note": "Nota",
     "notePlaceholder": "agregar una nota…",
     "formulaLabel": "Contenido de la celda",
@@ -1031,32 +1034,36 @@
       "finished": "Ese es todo el recorrido. Gracias por probar ContaBu.",
       "steps": {
         "s1": {
-          "t": "Probar el demo",
-          "d": "Caes en tu propia oficina con 3 libros de clientes."
+          "t": "Entra con un clic",
+          "d": "Caes en tu propia oficina con 3 libros de clientes: nada que instalar ni configurar."
         },
         "s2": {
-          "t": "Abre Rivera HVAC",
-          "d": "La Hoja muestra lo que ninguna regla cubre todavía (Pendiente), y el P&L dice cuánto falta por categorizar."
+          "t": "Abre el Resumen de Rivera HVAC",
+          "d": "Arriba, lo que necesita atención. El resultado sale antes de lo Pendiente: lo que no tiene categoría se declara, nunca se esconde."
         },
         "s3": {
-          "t": "Pídele al equipo que proponga reglas",
-          "d": "Revisa la propuesta (cobertura y choques ya validados), apruébala y mira cómo bajan los Pendientes en vivo."
+          "t": "Auditoría → Revisar el libro",
+          "d": "El equipo de agentes sobre Nemotron trabaja en pasos visibles: auditar, verificar en la web, juzgar, redactar. Mientras tanto abre «Nómina: el banco solo ve lo neto»: es conocimiento contable, no solo texto."
         },
         "s4": {
-          "t": "Abre Auditoría",
-          "d": "El equipo encontró un comercio categorizado de dos formas y reglas que chocan. En Bookkeeping, elige una fila con puntito: el panel de la derecha muestra lo que encontraron los agentes y su evidencia."
+          "t": "La nota se vuelve una fila",
+          "d": "En Propuestas, la nota de las vacaciones es UNA fila de la fórmula: STARBUCKS → Owner Draw solo del 3 al 17 de agosto. La prueba contra la historia muestra las 9 filas que cambia antes de mover nada. Apruébala."
         },
         "s5": {
-          "t": "Corrige una fila a mano",
-          "d": "Luego aprueba otra regla: tu fila manual no se mueve. Lo que escribes a mano manda."
+          "t": "El libro es una fórmula",
+          "d": "Movimientos → Reglas → Ver como fórmula: el libro entero es una cadena de SI, de arriba abajo. La fila que propuso el agente está marcada."
         },
         "s6": {
-          "t": "Vincula un banco",
-          "d": "Sandbox de Plaid (user_good / pass_good), en Bancos. Entran movimientos nuevos y las reglas los categorizan solas."
+          "t": "Una fila, toda su historia",
+          "d": "En Bookkeeping elige una fila (prueba un Starbucks de París): el panel dice qué regla puso su categoría, su historial y la evidencia web con su enlace. Las filas con puntito traen además lo que encontraron los agentes."
         },
         "s7": {
-          "t": "Abre Casa Lupita",
-          "d": "El mismo tipo de compra se audita distinto por la nota del bookkeeper."
+          "t": "Corrige una fila a mano",
+          "d": "Cambia la categoría de un Pendiente: queda marcada ✎ y ninguna regla la vuelve a tocar. Lo que escribes a mano manda."
+        },
+        "s8": {
+          "t": "Vincula un banco",
+          "d": "Bancos → Vincular banco (sandbox de Plaid: user_good / pass_good). Los movimientos entran por el mismo motor que un extracto: primero las reglas, el resto Pendiente."
         }
       }
     }

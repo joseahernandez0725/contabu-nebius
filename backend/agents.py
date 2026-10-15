@@ -796,6 +796,7 @@ class ReviewResult:
     outcome: str = "ok"
     reviewed: int = 0
     note_usage: Optional[nemotron.Usage] = None   # la traducción de las notas a chequeos (si hubo)
+    personal_usage: Optional[nemotron.Usage] = None   # "¿personal para este negocio?" (si hubo, 14-oct)
 
 
 def review(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
@@ -809,6 +810,9 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: b
     # solo si hay alguna), para que `sync` ya los aplique.
     import note_checks
     note_usage = note_checks.refresh(session, company, view, model=model, user_id=user_id)
+    # Y los comercios del libro que todavía no tienen opinión "¿personal para ESTE negocio?" (14-oct).
+    import personal_use
+    personal_usage = personal_use.refresh(session, company, view, model=model, user_id=user_id)
     open_findings = book_review.sync(session, company)
     # Sin veredicto, o con un veredicto guardado en OTRO idioma (se rehace en el de la pantalla, 13-oct).
     todo = open_findings if force else [f for f in open_findings
@@ -816,7 +820,7 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: b
     findings, silenced, ids_of = review_input(session, company, view, todo)
     if not findings:
         session.commit()
-        return ReviewResult(note_usage=note_usage, reviews=[], silenced=silenced, usage=None, outcome="nothing_to_review")
+        return ReviewResult(note_usage=note_usage, personal_usage=personal_usage, reviews=[], silenced=silenced, usage=None, outcome="nothing_to_review")
     agent_calls.check_cap(session, company)
     system = _REVIEW_SYSTEM.replace("{lang}", LANG_NAMES.get(lang, "Spanish"))
     user = f"""Bookkeeper notes:
@@ -830,7 +834,7 @@ Findings to review:
         agent_calls.record(session, company, "reviewer", e.usage, outcome=e.code, user_id=user_id,
                            model=model or nemotron.model_name())
         session.commit()
-        return ReviewResult(note_usage=note_usage, reviews=[], silenced=silenced, usage=e.usage, outcome=e.code)
+        return ReviewResult(note_usage=note_usage, personal_usage=personal_usage, reviews=[], silenced=silenced, usage=e.usage, outcome=e.code)
     verdicts = {}
     for v in (reply.data.get("reviews") if isinstance(reply.data, dict) else []) or []:
         try:
@@ -857,7 +861,7 @@ Findings to review:
     agent_calls.record(session, company, "reviewer", reply.usage, user_id=user_id,
                        items_out=len(findings), items_valid=len(verdicts))
     session.commit()
-    return ReviewResult(note_usage=note_usage, reviews=reviews, silenced=silenced, usage=reply.usage, reviewed=len(verdicts))
+    return ReviewResult(note_usage=note_usage, personal_usage=personal_usage, reviews=reviews, silenced=silenced, usage=reply.usage, reviewed=len(verdicts))
 
 
 # ── Privacidad, medida (no supuesta) ─────────────────────────────────────────────────────────────
