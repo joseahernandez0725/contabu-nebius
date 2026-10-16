@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 import agent_calls
+import agent_models
 import book_notes
 import merchant_verifier
 import nemotron
@@ -156,7 +157,7 @@ def _period_only(view, note_id: int) -> set[str]:
 
 
 def refresh(session: Session, company: Company, view, *, model: Optional[str] = None,
-            user_id: Optional[int] = None, reasoning: bool = True) -> Optional[nemotron.Usage]:
+            user_id: Optional[int] = None, reasoning: Optional[bool] = None) -> Optional[nemotron.Usage]:
     """Traduce las notas 📌 sin chequeo (o con uno viejo) en UNA llamada. Sin nada que traducir, no llama.
     Si se acabó el tope del día o la llamada falla, no guarda nada (se reintenta en la próxima revisión).
     No hace commit (lo hace quien llama)."""
@@ -169,6 +170,7 @@ def refresh(session: Session, company: Company, view, *, model: Optional[str] = 
     except agent_calls.CapReached:
         return None
     user, allowed = _user(view, todo)
+    model, reasoning = agent_models.resolve("notes", model, reasoning)
     # CON razonamiento: sin él, Nano no llevó "supermarket" a `grocery` en 0 de 6 llamadas; con él, en 6
     # de 6 (✅ 13-oct, nota del supermercado del demo). Es una llamada por nota NUEVA o cambiada, no por
     # revisión: el costo medido fue ~$0.0003 por nota.

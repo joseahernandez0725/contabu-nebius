@@ -171,6 +171,9 @@ def note_case(ctx: BookContext, rows: list[FormulaRow]) -> dict | None:
     case = NOTE_CASES.get(ctx.company.name)
     if case is None:
         return None
+    # Solo las filas CON VENTANA de fechas (las de la nota). ✅ 16-oct: contaba como "de más" lo que cualquier
+    # fila hacía hacia Owner Draw: los 3 Zelle del dueño (fila correcta, sin ventana) salían como 3 de más.
+    rows = [r for r in rows if r.valid_from or r.valid_to]
     rules = formula.with_rows(ctx.rules, rows, ctx.company.id)
     expected = {t.id for t in ctx.txs
                 if case["contains"] in (t.description or "").upper() and case["from"] <= t.date <= case["to"]}
@@ -324,7 +327,7 @@ def _row_key(description, day, amount, inflow) -> tuple:
     return ((description or "").strip().upper(), str(day), f"{abs(float(amount)):.2f}", bool(inflow))
 
 
-def measure_pending(session: Session, company: Company, truth: dict, *, model=None, reasoning: bool = False,
+def measure_pending(session: Session, company: Company, truth: dict, *, model=None, reasoning: Optional[bool] = None,
                     record: bool = False) -> dict:
     """(a) El ④ sobre lo PENDIENTE: precisión de lo que categorizaría y cobertura de lo que tiene
     respuesta. Con el motor real (`formula.decide`) y TODAS las filas propuestas juntas."""
@@ -453,6 +456,28 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
                "found": len(d_found), "fixed": len(d_fixed), "missed": []}
     together = set(d_found) | {k for k, ids in planted.items() if ids and any(
         ids_of[f.id] & ids for f in flagged)}
+    # CORRECCIÓN CORRECTA (15-oct, sin tocar el examen): de los errores ENCONTRADOS que traen `expected`, en
+    # cuántos alguien propuso esa categoría: el ④ con su fila; el auditor con su sugerencia de un toque
+    # (`suggested_account_type`/`suggested_category`); el ⑤, el ② o una nota de "es personal", que equivalen a
+    # sugerir Owner Draw. El ① no sugiere categoría (explica).
+    personal_says = {"personal_use", "merchant_type_mismatch"}
+    correct: dict[str, list] = {}
+    for i, (k, ids) in enumerate(planted.items()):
+        exp = truth[i].get("expected")
+        if k not in together or not exp:
+            continue
+        want = (exp["account_type"], exp["category"])
+        srcs = ["④"] if k in d_fixed else []
+        for f in flagged:
+            if not (ids_of[f.id] & ids):
+                continue
+            pl = f.payload or {}
+            if (pl.get("suggested_account_type"), pl.get("suggested_category")) == want:
+                srcs.append("auditor")
+            if want == ("NON_PL", "Owner Draw") and (f.type in personal_says or
+                                                     (f.type == "note_check" and pl.get("meaning") == "personal")):
+                srcs.append({"personal_use": "⑤", "merchant_type_mismatch": "②"}.get(f.type, "notas"))
+        correct[k] = sorted(set(srcs))
     # ¿Personal para ESTE negocio? — qué opinó el modelo de cada comercio con un gasto personal plantado
     # (para ver POR QUÉ se escapa uno; solo errores de este examen).
     import personal_use
@@ -467,7 +492,15 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
         personal_seen.append(f"{k} " + (", ".join(f"{j.keyword}={j.verdict}/{j.confidence}" for j in js) or
                                         "sin opinión (no es gasto del negocio, o no se juzgó)"))
     return {"book": company.name, "planted": len(planted), "unmatched": unmatched, "judged": judged,
-            "drafter": drafter, "together": len(together),
+            "drafter": drafter, "together": len(together), "found_keys": sorted(together),
+            # El EQUIPO: lo que encuentra cualquiera (auditor, notas, ⑤, ②, ① que no despachó, ④ sobre lo ya
+            # categorizado) y la precisión de TODAS esas alertas juntas.
+            "team": {"found": len(together), "planted": len(planted),
+                     "alerts": score_of(flagged)["alerts"] + drafter["alerts"],
+                     "true_alerts": score_of(flagged)["true_alerts"] + drafter["true_alerts"]},
+            "correct_fix": {"found_with_expected": len(correct), "correct": sum(1 for v in correct.values() if v),
+                            "by_source": dict(Counter(s for v in correct.values() for s in v)),
+                            "per_error": correct},
             # El auditor SOLO es sin IA: los chequeos de las notas los tradujo Nemotron (van con la IA).
             "auditor": score_of([f for f in findings if f.type not in AI_FINDING_TYPES]), "reviewer": score_of(flagged),
             "notes": score_of([f for f in findings if f.type == "note_check"]), "usage": rev.usage if rev else None,

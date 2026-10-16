@@ -1612,7 +1612,7 @@ def delete_book_note(company_id: int, note_id: int, user: User = Depends(current
 
 class AgentRunIn(BaseModel):
     lang: Optional[str] = "es"          # idioma de las explicaciones (el de la interfaz)
-    reasoning: Optional[bool] = False   # dejar razonar al modelo (más tokens; ver nemotron.py)
+    reasoning: Optional[bool] = None    # None = el de cada agente (`agent_models`); True/False lo fuerza
     focus_tx_ids: Optional[list[int]] = None   # ④: una regla para ESTE grupo de Pendientes
     note_id: Optional[int] = None              # ④: las filas de ESTA nota, recién guardada (14-oct)
 
@@ -1635,7 +1635,7 @@ def run_formula_drafter(company_id: int, payload: AgentRunIn, user: User = Depen
     company = owned_company(company_id, user, session, write=True)
     since = agent_calls.mark(session, company)
     try:
-        res = agents.draft(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
+        res = agents.draft(session, company, lang=payload.lang or "es", reasoning=payload.reasoning,
                            user_id=user.id, focus_tx_ids=payload.focus_tx_ids, note_id=payload.note_id)
     except LookupError:
         raise HTTPException(status_code=404, detail={"code": "note_not_found"})
@@ -1656,7 +1656,7 @@ def run_reviewer(company_id: int, payload: AgentRunIn, user: User = Depends(curr
     company = owned_company(company_id, user, session, write=True)
     since = agent_calls.mark(session, company)
     try:
-        res = agents.review(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
+        res = agents.review(session, company, lang=payload.lang or "es", reasoning=payload.reasoning,
                             user_id=user.id)
     except Exception as e:
         raise _agent_error(e)

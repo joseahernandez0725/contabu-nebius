@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 import agent_calls
+import agent_models
 import nemotron
 from company_profile import p2p_counterparty
 from models import Company, MerchantJudgment, Transaction
@@ -44,7 +45,6 @@ BUSINESS_SECTIONS = ("OPERATING_EXPENSE", "COGS", "OTHER_EXPENSE")
 VERDICTS = ("business", "mixed", "personal")
 # Lo que se vuelve hallazgo: "probablemente personal" con confianza alta o media.
 ALERT_VERDICTS, ALERT_CONFIDENCE = ("personal",), ("high", "medium")
-REASONING = False   # ver `refresh`: lo decide la medición
 
 
 class Judgment(BaseModel):
@@ -178,7 +178,7 @@ def refresh(session: Session, company: Company, view, *, model: Optional[str] = 
     except agent_calls.CapReached:
         return None
     user, refs = _user(company, view, todo)
-    reasoning = REASONING if reasoning is None else reasoning
+    model, reasoning = agent_models.resolve("personal", model, reasoning)
     try:
         reply = nemotron.chat_json(_SYSTEM, user, JudgmentsOut, model=model, max_tokens=4000, reasoning=reasoning)
     except nemotron.NemotronError as e:

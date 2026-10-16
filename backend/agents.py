@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 import agent_calls
+import agent_models
 import book_notes
 import book_review
 import formula
@@ -441,7 +442,7 @@ def history_test(view: BookView, row: formula.FormulaRow) -> dict:
     }
 
 
-def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
+def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Optional[bool] = None,
           cutoff: Optional[date] = None, user_id: Optional[int] = None, record: bool = True,
           model: Optional[str] = None, focus_tx_ids: Optional[list[int]] = None,
           note_id: Optional[int] = None) -> DraftResult:
@@ -453,7 +454,10 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
 
     `note_id` (14-oct, "Proponer las filas para esta nota"): el ④ corre SOLO para esa nota. Una nota con
     periodo usa su llamada corta de siempre; una sin periodo, la llamada general con la orden de proponer
-    solo lo que sale de esa nota. Solo se devuelven filas que citan esa nota."""
+    solo lo que sale de esa nota. Solo se devuelven filas que citan esa nota.
+
+    Modelo y razonamiento: los de `agent_models` ("drafter"), salvo que quien llama pida otros."""
+    model, reasoning = agent_models.resolve("drafter", model, reasoning)
     if record:
         agent_calls.check_cap(session, company)
     view = build_view(session, company, cutoff=cutoff)
@@ -818,7 +822,7 @@ class ReviewResult:
     personal_usage: Optional[nemotron.Usage] = None   # "¿personal para este negocio?" (si hubo, 14-oct)
 
 
-def review(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
+def review(session: Session, company: Company, *, lang: str = "es", reasoning: Optional[bool] = None,
            user_id: Optional[int] = None, model: Optional[str] = None, force: bool = False,
            finding_ids: Optional[list[int]] = None) -> ReviewResult:
     """① — UNA llamada a Nemotron sobre los hallazgos abiertos que todavía no tienen veredicto (con
@@ -826,16 +830,20 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: b
     muestra una sola tarjeta por hallazgo. Sin nada que juzgar, no llama.
 
     `finding_ids` (la IDA Y VUELTA con el ②, 14-oct): vuelve a juzgar SOLO esos hallazgos, que tienen
-    evidencia de internet nueva. Una vuelta, no un bucle: quien llama lo hace una vez."""
+    evidencia de internet nueva. Una vuelta, no un bucle: quien llama lo hace una vez.
+
+    Modelo y razonamiento del ①: los de `agent_models` ("reviewer"), salvo que quien llama pida otros. El
+    traductor de notas y el ⑤ usan SIEMPRE los suyos (15-oct: cada agente se configura por separado)."""
     import book_review
+    model, reasoning = agent_models.resolve("reviewer", model, reasoning)
     view = build_view(session, company)
     # Antes de revisar: las notas 📌 nuevas o cambiadas se traducen a chequeos del auditor (una llamada,
     # solo si hay alguna), para que `sync` ya los aplique.
     import note_checks
-    note_usage = note_checks.refresh(session, company, view, model=model, user_id=user_id)
+    note_usage = note_checks.refresh(session, company, view, user_id=user_id)
     # Y los comercios del libro que todavía no tienen opinión "¿personal para ESTE negocio?" (14-oct).
     import personal_use
-    personal_usage = personal_use.refresh(session, company, view, model=model, user_id=user_id)
+    personal_usage = personal_use.refresh(session, company, view, user_id=user_id)
     open_findings = book_review.sync(session, company)
     # Sin veredicto, o con un veredicto guardado en OTRO idioma (se rehace en el de la pantalla, 13-oct).
     if finding_ids is not None:
@@ -969,5 +977,5 @@ def _estimate(session: Session, company: Company, action: str, *, note_id: Optio
                 calls = 1   # si el comercio tiene hallazgos, el ① los vuelve a juzgar con la evidencia
     return {"action": action, "calls": int(calls), "searches": searches,
             "credits_min": searches, "credits_max": 3 * searches,
-            # Precio de catálogo de Nano: ~$0.0002–0.0015 por llamada en los libros medidos.
-            "cost_usd_max": round(0.0015 * int(calls), 4)}
+            # Tope por llamada, medido (16-oct): Nano ~$0.0003; el ④ en Super razonando ~$0.004 (el más caro).
+            "cost_usd_max": round(0.005 * int(calls), 4)}
