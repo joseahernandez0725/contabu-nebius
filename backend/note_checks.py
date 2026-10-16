@@ -156,7 +156,7 @@ def _period_only(view, note_id: int) -> set[str]:
 
 
 def refresh(session: Session, company: Company, view, *, model: Optional[str] = None,
-            user_id: Optional[int] = None) -> Optional[nemotron.Usage]:
+            user_id: Optional[int] = None, reasoning: bool = True) -> Optional[nemotron.Usage]:
     """Traduce las notas 📌 sin chequeo (o con uno viejo) en UNA llamada. Sin nada que traducir, no llama.
     Si se acabó el tope del día o la llamada falla, no guarda nada (se reintenta en la próxima revisión).
     No hace commit (lo hace quien llama)."""
@@ -173,7 +173,7 @@ def refresh(session: Session, company: Company, view, *, model: Optional[str] = 
     # de 6 (✅ 13-oct, nota del supermercado del demo). Es una llamada por nota NUEVA o cambiada, no por
     # revisión: el costo medido fue ~$0.0003 por nota.
     try:
-        reply = nemotron.chat_json(_SYSTEM, user, ChecksOut, model=model, max_tokens=1500, reasoning=True)
+        reply = nemotron.chat_json(_SYSTEM, user, ChecksOut, model=model, max_tokens=1500, reasoning=reasoning)
     except nemotron.NemotronError as e:
         agent_calls.record(session, company, "note_checker", e.usage, outcome=e.code, user_id=user_id,
                            model=model or nemotron.model_name())

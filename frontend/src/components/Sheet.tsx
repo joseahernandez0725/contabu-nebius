@@ -136,6 +136,8 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
   const [toolbar, setToolbar] = usePref("contabu.toolbar", true);
   const [showFormula, setShowFormula] = usePref("contabu.formulaBar", true);
   const [pinDesc, setPinDesc] = usePref("contabu.pinDescription", false);
+  // El NÚMERO de prioridad de las reglas (14-oct): escondido; quién gana se decide en la columna Choques.
+  const [showPriority, setShowPriority] = usePref("contabu.rules.showPriority", false);
   // Lo que la hoja de Reglas expone a los menús (cuando esa pestaña está abierta).
   // (Llega en cada render de Reglas: se guarda en un ref y solo se re-pinta si cambió lo que se ve
   // en los menús — con un estado de objeto sería un bucle de renders.)
@@ -937,6 +939,7 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
     { id: "view", label: t("sheet.mb.view"), items: [
       { label: t("rules.formula.show", { defaultValue: "View as formula" }), checked: !!rc?.formulaOpen,
         onClick: () => withRules((c) => c.toggleFormula()) },
+      { label: t("rules.showPriority"), checked: showPriority, onClick: () => setShowPriority(!showPriority) },
       "sep",
       { label: t("sheet.tabSheet", { defaultValue: "Bookkeeping" }), checked: tab === "sheet", onClick: () => setTab("sheet") },
       { label: t("sheet.tabRules", { defaultValue: "Rules" }), checked: tab === "rules", onClick: () => setTab("rules") },
@@ -1303,7 +1306,7 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
         {tab === "rules"
           ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)}
               toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands}
-              focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} />
+              focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} showPriority={showPriority} />
           : tab === "pivot"
           ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot accounts={acctSel} /></div>
           : rows === null

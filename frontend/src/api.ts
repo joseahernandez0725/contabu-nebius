@@ -373,7 +373,7 @@ export async function createRule(payload: {
 
 export async function updateRule(
   id: number,
-  payload: { account_type?: string; category?: string; subcategory?: string; priority?: number | null;
+  payload: { match_text?: string; account_type?: string; category?: string; subcategory?: string; priority?: number | null;
              style?: RuleStyle | null; valid_from?: string | null; valid_to?: string | null;
              amount_min?: number | null; amount_max?: number | null },
 ): Promise<{ applied: number; reassigned: number; released?: number }> {
@@ -397,6 +397,27 @@ export async function deleteRule(id: number, revert = false): Promise<RuleDelete
     headers: await authHeaders(),
   });
   if (!res.ok) throw new Error("No se pudo eliminar la regla");
+  return res.json();
+}
+
+/** ANTES de cambiar la palabra clave (14-oct): qué filas conserva, cuáles suelta (y a dónde van) y cuáles
+ *  toma (y de dónde vienen). Lo escrito a mano no se toca: `manual` = las que la palabra nueva cazaría. */
+export interface RuleEditPreview {
+  id: number; before: string; match_text: string;
+  keep: number; release: number; to_transfer: number; to_pending: number;
+  to_rules: { id: number; match_text: string; category: string; rows: number }[];
+  take: number; from_pending: number; from_transfer: number; from_other: number;
+  from_rules: { id: number; match_text: string; category: string; rows: number }[];
+  manual: number; release_examples: string[]; take_examples: string[];
+  duplicate: { id: number; match_text: string; category: string } | null;
+}
+export async function previewRuleEdit(id: number, match_text: string): Promise<RuleEditPreview> {
+  const res = await fetch(`${API}/api/companies/${cid()}/rules/${id}/edit-preview`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ match_text }),
+  });
+  if (!res.ok) throw new Error("No se pudo revisar la regla");
   return res.json();
 }
 
@@ -757,9 +778,18 @@ export const createBankLinkToken = (language: string, connectionId?: number) =>
     method: "POST", body: JSON.stringify({ language, connection_id: connectionId ?? null }),
   });
 
-export const createBankConnection = (publicToken: string, institutionName?: string | null) =>
+/** Lo que Plaid Link devuelve en `metadata` y reconoce un banco ya vinculado (14-oct). */
+export interface BankLinkMeta { institution_id: string | null; institution_name: string | null; account_masks: string[] }
+export interface BankDuplicate {
+  connection_id: number; company_id: number; company_name: string | null; institution_name: string | null; same_book: boolean;
+}
+/** ANTES de canjear el public_token: ¿ya está vinculado (en este libro u otro de la oficina)? No toca nada. */
+export const checkBankConnection = (meta: BankLinkMeta) =>
+  bankFetch<{ duplicate: BankDuplicate | null }>("/check", { method: "POST", body: JSON.stringify(meta) });
+
+export const createBankConnection = (publicToken: string, meta: BankLinkMeta) =>
   bankFetch<{ connection: BankConnection; sync: BankSync }>("", {
-    method: "POST", body: JSON.stringify({ public_token: publicToken, institution_name: institutionName ?? null }),
+    method: "POST", body: JSON.stringify({ public_token: publicToken, ...meta }),
   });
 
 export const syncBankConnection = (id: number) =>
@@ -854,14 +884,29 @@ export interface MerchantCheck {
   confidence: "high" | "medium" | "low" | null; source_url: string | null; source_domain: string | null;
 }
 
+/** Lo que costó UNA acción (14-oct): llamadas a Nemotron, dólares, búsquedas y créditos de Tavily. */
+export interface AgentSpent { calls: number; cost_usd: number; searches: number; credits: number }
+
+/** Lo que costaría, ANTES de correrla (14-oct). Cada búsqueda: 1 crédito, o 3 si se repite a fondo. */
+export interface AgentEstimate {
+  action: string; calls: number; searches: number; credits_min: number; credits_max: number; cost_usd_max: number;
+}
+
 export interface VerifyResponse {
   outcome: string; items: MerchantCheck[]; searched: number; from_cache: number;
   skipped: Record<string, number>; credits: number;
+  rejudge: { rejudged: number; outcome: string } | null; spent?: AgentSpent;
+}
+
+export interface SearchMerchantResponse {
+  outcome: string; item: (MerchantCheck & { search_depth: string | null; credits: number }) | null;
+  skipped: string | null; searched: number; from_cache: number;
+  rejudge: { rejudged: number; outcome: string } | null; spent?: AgentSpent;
 }
 
 export interface DraftResponse {
   outcome: string; calls: number; proposals: FormulaProposal[];
-  rejected: { keyword: string | null; errors: string[] }[]; usage: AgentUsage | null;
+  rejected: { keyword: string | null; errors: string[] }[]; usage: AgentUsage | null; spent?: AgentSpent;
 }
 
 export interface AgentReview {
@@ -870,7 +915,7 @@ export interface AgentReview {
 }
 
 export interface ReviewResponse {
-  outcome: string; silenced: number; reviews: AgentReview[]; usage: AgentUsage | null;
+  outcome: string; silenced: number; reviews: AgentReview[]; usage: AgentUsage | null; spent?: AgentSpent;
 }
 
 export interface AgentUsageSummary {
@@ -898,16 +943,36 @@ async function agentsFetch<T>(path: string, init: RequestInit = {}): Promise<T> 
   return res.json();
 }
 
-export const runFormulaDrafter = (lang: string, focusTxIds?: number[]) =>
+/** ④ — `noteId` (14-oct): solo las filas de ESA nota, recién guardada. */
+export const runFormulaDrafter = (lang: string, focusTxIds?: number[], noteId?: number) =>
   agentsFetch<DraftResponse>("/draft", {
-    method: "POST", body: JSON.stringify({ lang, focus_tx_ids: focusTxIds ?? null }),
+    method: "POST", body: JSON.stringify({ lang, focus_tx_ids: focusTxIds ?? null, note_id: noteId ?? null }),
   });
 
 export const runReviewer = (lang: string) =>
   agentsFetch<ReviewResponse>("/review", { method: "POST", body: JSON.stringify({ lang }) });
 
-export const runMerchantVerifier = () =>
-  agentsFetch<VerifyResponse>("/verify", { method: "POST", body: JSON.stringify({}) });
+/** "Auditar" (14-oct): auditor + notas + "¿personal?" + ①. Sin redactar. */
+export const runAudit = (lang: string) =>
+  agentsFetch<ReviewResponse>("/audit", { method: "POST", body: JSON.stringify({ lang }) });
+
+/** ② — solo los comercios que la auditoría marcó; el ① vuelve a juzgar los que traen evidencia nueva. */
+export const runMerchantVerifier = (lang = "es") =>
+  agentsFetch<VerifyResponse>("/verify", { method: "POST", body: JSON.stringify({ lang }) });
+
+/** "Buscar este comercio" (14-oct): el de UN movimiento, al instante; memoria de la oficina primero. */
+export const searchMerchant = (transactionId: number, lang: string) =>
+  agentsFetch<SearchMerchantResponse>("/verify-merchant", {
+    method: "POST", body: JSON.stringify({ transaction_id: transactionId, lang }),
+  });
+
+export type EstimateAction = "audit" | "verify" | "draft" | "review_book" | "note" | "search";
+export const getAgentEstimate = (action: EstimateAction, opts: { noteId?: number; transactionId?: number; lang?: string } = {}) => {
+  const q = new URLSearchParams({ action, lang: opts.lang ?? "es" });
+  if (opts.noteId != null) q.set("note_id", String(opts.noteId));
+  if (opts.transactionId != null) q.set("transaction_id", String(opts.transactionId));
+  return agentsFetch<AgentEstimate>(`/estimate?${q}`);
+};
 
 export const getAgentUsage = () => agentsFetch<AgentUsageSummary>("/usage");
 
@@ -1013,3 +1078,18 @@ export interface TxInsight {
 /** {transaction_id: nivel}. Pone los hallazgos al día antes (como abrir Auditoría). */
 export const getTransactionFlags = () => auditFetch<Record<string, FlagLevel>>("/transactions/flags");
 export const getTransactionInsight = (id: number) => auditFetch<TxInsight>(`/transactions/${id}/insight`);
+
+/** POR QUÉ tiene su categoría (14-oct, Movimientos): las reglas que mencionan la descripción, en el orden
+ *  real, y qué pasó con cada una (`wins` decide · `date`/`amount` no cumple la condición · `after` va detrás). */
+export interface RuleTraceStep {
+  id: number; order: number; keyword: string; result: "wins" | "date" | "amount" | "after";
+  account_type: string | null; category: string;
+  valid_from: string | null; valid_to: string | null; amount_min: number | null; amount_max: number | null;
+}
+export interface RuleTrace {
+  steps: RuleTraceStep[]; checked: number; winner_id: number | null;
+  decision: "rule" | "transfer" | "pending";
+  transfer: { account_type: string; category: string } | null;
+  manual: boolean; bare_check: boolean;
+}
+export const getRuleTrace = (id: number) => auditFetch<RuleTrace>(`/transactions/${id}/rule-trace`);

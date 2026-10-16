@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useTranslation } from "react-i18next";
 import { RevoGrid } from "@revolist/react-datagrid";
 import {
-  getRules, createRule, updateRule, deleteRule, previewRuleDelete, getCategories, importRules, applyRuleProposals,
+  getRules, createRule, updateRule, deleteRule, previewRuleDelete, previewRuleEdit, getCategories, importRules, applyRuleProposals,
   type Rule, type RuleStyle, type ChartOfAccounts,
 } from "../api";
 import RuleFormula from "./RuleFormula";
@@ -136,7 +136,7 @@ export type RulesCommands = {
 };
 
 export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, formulaBar = true, onCommands,
-  focusRule, onFocusRuleDone }: {
+  focusRule, onFocusRuleDone, showPriority = false }: {
   /** Descripción de una transacción con la que arrancar la regla (viene de la hoja). */
   seedKeyword?: string | null;
   onSeedUsed?: () => void;
@@ -147,6 +147,9 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   /** "Ir a la regla" desde la Hoja: esta regla se selecciona y queda a la vista. */
   focusRule?: { id: number; n: number } | null;
   onFocusRuleDone?: () => void;
+  /** La columna con el NÚMERO de prioridad (menú Ver). Escondida por defecto (Jose, 14-oct): quién gana
+   *  se decide en el choque, con "que gane esta". */
+  showPriority?: boolean;
 } = {}) {
   const { t } = useTranslation();
   const [rules, setRules] = useState<Rule[] | null>(null);
@@ -191,6 +194,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   useEffect(() => { draftRef.current = draft; }, [draft]);
 
   const rulesRef = useRef<Rule[] | null>(null);
+  // "Que gane esta" desde la celda de Choques (las plantillas de celda se memorizan: van por ref).
+  const winOverRef = useRef<(r: Rule, otherId: number) => Promise<void>>(async () => {});
   useEffect(() => { rulesRef.current = rules; }, [rules]);
 
   const rows: Row[] = useMemo(() => [
@@ -288,6 +293,57 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
 
     const before = rulesRef.current?.find((r) => r.id === model.id);
     if (!before) return false;
+
+    // PALABRA CLAVE de una regla viva (Jose, 14-oct): primero la vista previa —qué filas suelta y a dónde
+    // van, qué filas toma y de dónde vienen— y solo con el "sí" se guarda. Deshacer = volver a la anterior.
+    if (prop === "match_text") {
+      const next = value.toUpperCase();
+      if (next === before.match_text.toUpperCase()) return false;
+      if (next.length < 2) { load(); return false; }
+      setError(null); setNote(null);
+      let p;
+      try { p = await previewRuleEdit(model.id, next); }
+      catch (e) { setError(String((e as Error).message)); load(); return false; }
+      if (p.duplicate) {
+        setError(t("rules.dup", { defaultValue: "There is already a rule with that keyword and those conditions." }));
+        load();
+        return false;
+      }
+      const lines = [t("rules.kwAsk", { defaultValue: "Change the keyword “{{a}}” → “{{b}}”?", a: before.match_text, b: next })];
+      if (p.keep) lines.push("• " + t("rules.kwKeep", { count: p.keep }));
+      if (p.release) {
+        lines.push("• " + t("rules.kwRelease", { count: p.release }));
+        for (const x of p.to_rules) lines.push("    – " + t("rules.deleteToRule", { count: x.rows, k: x.match_text, c: x.category }));
+        if (p.to_transfer) lines.push("    – " + t("rules.deleteToTransfer", { count: p.to_transfer }));
+        if (p.to_pending) lines.push("    – " + t("rules.deleteToPending", { count: p.to_pending }));
+      }
+      if (p.take) {
+        lines.push("• " + t("rules.kwTake", { count: p.take }));
+        for (const x of p.from_rules) lines.push("    – " + t("rules.kwFromRule", { count: x.rows, k: x.match_text }));
+        if (p.from_pending) lines.push("    – " + t("rules.kwFromPending", { count: p.from_pending }));
+        if (p.from_transfer) lines.push("    – " + t("rules.kwFromTransfer", { count: p.from_transfer }));
+        if (p.from_other) lines.push("    – " + t("rules.kwFromOther", { count: p.from_other }));
+        for (const d of p.take_examples) lines.push("      " + d);
+      }
+      if (!p.keep && !p.release && !p.take) lines.push("• " + t("rules.kwNone"));
+      if (p.manual) lines.push(t("rules.kwManual", { count: p.manual }));
+      if (!window.confirm(lines.join("\n"))) { load(); return false; }
+      setSaving(t("rules.saving", { defaultValue: "Saving…" }));
+      try {
+        await updateRule(model.id, { match_text: next });
+        const prev = before.match_text;
+        pushUndo({ label: t("rules.undoKeyword", { k: prev }),
+                   run: async () => { await updateRule(model.id, { match_text: prev }); load(); } });
+        setNote(t("rules.kwDone", { r: p.release, k: p.take }));
+        if (reload) load();
+      } catch (err) {
+        setError((err as Error).message === "dup"
+          ? t("rules.dup", { defaultValue: "There is already a rule with that keyword and those conditions." })
+          : String((err as Error)?.message ?? err));
+        load();
+      } finally { setSaving(null); }
+      return true;
+    }
 
     // PRIORIDAD: vacía = automático; si no, un entero ≥ 1. Solo cambia QUÉ regla gana.
     if (prop === "priority") {
@@ -561,7 +617,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       ? (m.account_type ?? "") : (m[prop] ?? ""));
   const editable = (m: any, prop: string) => m?._draft
     ? ["match_text", "category", "subcategory", "valid_from", "valid_to", ...AMOUNT_PROPS].includes(prop)
-    : ["category", "subcategory", "priority", "valid_from", "valid_to", ...AMOUNT_PROPS].includes(prop) && m?.scope === "COMPANY";
+    : ["match_text", "category", "subcategory", "priority", "valid_from", "valid_to", ...AMOUNT_PROPS].includes(prop) && m?.scope === "COMPANY";
   const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
     const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
     const items: MenuItem[] = [
@@ -617,9 +673,9 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
           : (p.model._draft ? "" : t("rules.priorityAuto", { defaultValue: "auto" }))) },
     { prop: "match_text", name: t("rules.keyword", { defaultValue: "Keyword" }), size: 230,
       sortable: true, editor: TEXT_EDITOR,
-      // Solo la fila borrador deja editar la palabra clave: cambiarla en una regla viva movería
-      // en silencio todas las transacciones que ya cubría.
-      readonly: (p: any) => !p.model?._draft,
+      // En una regla viva, cambiar la palabra clave mueve filas: por eso antes de guardar se muestra la
+      // vista previa (cuáles suelta, cuáles toma) y se confirma (Jose, 14-oct). Antes no se dejaba.
+      readonly: (p: any) => !p.model?._draft && p.model?.scope !== "COMPANY",
       cellTemplate: (h: any, p: any) => h("span", {
         style: { fontWeight: 600, color: p.model._draft && !p.model.match_text ? "#b9b2a2" : undefined,
                  fontStyle: p.model._draft && !p.model.match_text ? "italic" : "normal" },
@@ -685,13 +741,32 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       cellTemplate: (h: any, p: any) => h("span",
         { style: { display: "block", textAlign: "right", color: "#5b6b62",
                    fontVariantNumeric: "tabular-nums" } }, String(p.model.matches ?? 0)) },
-    { prop: "_clash", name: t("rules.clash", { defaultValue: "Overlaps" }), size: 260, readonly: true,
-      cellTemplate: (h: any, p: any) => h("span", {
-        title: p.model._clash ? t("rules.clashHint", { defaultValue: "Rules that match the same transactions. Only the first one in the Order decides each row." }) : "",
-        style: { display: "block", fontSize: "12px", whiteSpace: "normal", lineHeight: 1.3,
-                 color: p.model._clashLoses ? "#b45309" : "#1A8754", fontWeight: p.model._clashLoses ? 600 : 400 },
-      }, p.model._clash ? (p.model._clashLoses ? "⚠ " : "") + p.model._clash : "") },
-  ]), [t, caseStyle]);
+    // CHOQUES (4-oct) + QUIÉN GANA SE DECIDE AQUÍ (Jose, 14-oct): donde esta regla pierde filas contra
+    // otra, "que gane esta" la pone por delante de ESA (por dentro es la prioridad; el número no hace falta).
+    { prop: "_clash", name: t("rules.clash", { defaultValue: "Overlaps" }), size: 320, readonly: true,
+      cellTemplate: (h: any, p: any) => {
+        const m = p.model as Row;
+        if (!m._clash) return h("span", {}, "");
+        const kids: any[] = [];
+        if (m.scope === "COMPANY") for (const c of m.lost_to ?? []) {
+          kids.push(h("span", { style: { color: "#b45309", fontWeight: 600 } },
+            "⚠ " + t("rules.losesTo", { defaultValue: "loses {{n}} to {{k}}", n: c.rows, k: c.match_text })));
+          kids.push(h("button", {
+            title: t("rules.winHint", { k: c.match_text }),
+            onClick: (e: MouseEvent) => { e.stopPropagation(); void winOverRef.current(m, c.id); },
+            style: { border: "1px solid #b45309", background: "#fff", color: "#b45309", borderRadius: "5px",
+                     padding: "0 6px", margin: "0 8px 0 5px", fontSize: "11px", fontWeight: 700, cursor: "pointer",
+                     lineHeight: "16px", whiteSpace: "nowrap" },
+          }, t("rules.winThis")));
+        }
+        const beats = (m.beats ?? []).map((c) => t("rules.beats", { defaultValue: "wins {{n}} over {{k}}", n: c.rows, k: c.match_text }));
+        if (beats.length) kids.push(h("span", { style: { color: "#1A8754" } }, beats.join(" · ")));
+        return h("span", {
+          title: t("rules.clashHint", { defaultValue: "Rules that match the same transactions. Only the first one in the Order decides each row." }),
+          style: { display: "flex", alignItems: "center", flexWrap: "wrap", fontSize: "12px", lineHeight: 1.3, overflow: "hidden" },
+        }, ...kids);
+      } },
+  ].filter((c) => showPriority || c.prop !== "priority")), [t, caseStyle, showPriority]);
 
   const editableCell = (id: number, prop: string) => {
     const m: any = rows.find((r) => r.id === id);
@@ -770,6 +845,41 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     const r = focus ? (rulesRef.current ?? []).find((x) => x.id === focus.id) : null;
     return r && r.scope === "COMPANY" ? r : null;
   };
+
+  /** QUE GANE ESTA (Jose, 14-oct): `r` pierde filas contra `otherId` y el bookkeeper quiere lo contrario.
+   *  Por dentro es la prioridad: si la otra tiene número, esta toma ESE lugar (la otra baja uno); si no,
+   *  esta va al final de las que tienen número, que van antes que todas las automáticas. Eso puede hacer que
+   *  gane también contra otras reglas con las que choca: se dice antes de confirmar. */
+  const winOver = async (r: Rule, otherId: number) => {
+    const all = rulesRef.current ?? [];
+    const other = all.find((x) => x.id === otherId);
+    if (!other) return;
+    const maxP = Math.max(0, ...all.filter((x) => x.scope === "COMPANY" && x.priority != null && x.id !== r.id).map((x) => x.priority!));
+    const target = other.priority ?? maxP + 1;
+    const flips = (r.lost_to ?? []).filter((c) => {
+      const x = all.find((y) => y.id === c.id);
+      return x && (x.priority == null || x.priority >= target);
+    });
+    const rows = flips.reduce((n, c) => n + c.rows, 0);
+    const lines = [t("rules.winAsk", { a: r.match_text, b: other.match_text, count: rows })];
+    const extra = flips.filter((c) => c.id !== otherId);
+    if (extra.length) lines.push(t("rules.winAlso", { list: extra.map((c) => `${c.match_text} (${c.rows})`).join(", ") }));
+    lines.push(t("rules.deleteManual", { defaultValue: "What you wrote by hand doesn't change. You can undo it." }));
+    if (!window.confirm(lines.join("\n"))) return;
+    setError(null); setNote(null);
+    setSaving(t("rules.saving", { defaultValue: "Saving…" }));
+    try {
+      const res = await updateRule(r.id, { priority: target });
+      const prev = r.priority ?? null;
+      pushUndo({ label: t("rules.undoWin", { a: r.match_text, b: other.match_text }),
+                 run: async () => { await updateRule(r.id, { priority: prev }); load(); } });
+      setNote(t("rules.reassigned", { count: res.reassigned }));
+      load();
+    } catch (e) {
+      setError(String((e as Error).message));
+    } finally { setSaving(null); }
+  };
+  useEffect(() => { winOverRef.current = winOver; });
 
   /** ELIMINAR UNA REGLA (Jose, 4-oct): primero dice cuántos movimientos decide y a dónde irán (otra
    *  regla → transferencia → Pendiente; lo escrito a mano no se toca). Se deshace re-creándola. */
@@ -875,12 +985,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
           disabled={!rules?.length} style={{ ...TOOL_BTN, opacity: rules?.length ? 1 : 0.5 }}>
           {t("rules.export", { defaultValue: "Export" })}
         </button>
-        <button onClick={() => setFormulaOpen((o) => !o)} aria-pressed={formulaOpen}
-          style={{ ...TOOL_BTN, fontWeight: 600, color: "#1A8754", borderColor: formulaOpen ? "#1A8754" : undefined,
-                   background: formulaOpen ? "rgba(26,135,84,.08)" : undefined }}>
-          <span style={{ fontStyle: "italic", marginInlineEnd: 4 }}>ƒ</span>
-          {formulaOpen ? t("rules.formula.hide", { defaultValue: "Hide the formula" }) : t("rules.formula.show", { defaultValue: "View as formula" })}
-        </button>
+        {/* "Ver como fórmula" ya no va aquí (Jose, 14-oct): queda en el menú Ver, para el demo. El "por qué"
+            de cada movimiento está en el panel de la transacción, en la Hoja. */}
         <button onClick={() => { const r = focusedRule(); if (r) void removeRule(r); }} disabled={!focusedRule()}
           title={focusedRule() ? undefined : t("rules.deletePick", { defaultValue: "Select a cell of the rule to delete" })}
           style={{ ...TOOL_BTN, color: "#991b1b", opacity: focusedRule() ? 1 : 0.5 }}>

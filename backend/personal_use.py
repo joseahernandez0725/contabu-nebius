@@ -212,6 +212,20 @@ def refresh(session: Session, company: Company, view, *, model: Optional[str] = 
     return reply.usage
 
 
+def forget(session: Session, company: Company, txs: list[Transaction]) -> int:
+    """Olvida la opinión sobre los comercios de esos movimientos (llegó evidencia NUEVA del ②): la
+    siguiente revisión los vuelve a juzgar, ahora con el tipo verificado. No hace commit."""
+    keys = {k for t in txs if (k := merchant_key(t))}
+    if not keys:
+        return 0
+    rows = session.exec(select(MerchantJudgment).where(MerchantJudgment.company_id == company.id,
+                                                       MerchantJudgment.merchant_key.in_(keys))).all()
+    for r in rows:
+        session.delete(r)
+    session.flush()
+    return len(rows)
+
+
 def findings(session: Session, company: Company, txs: list[Transaction], skip_ids: set[int]) -> list[dict]:
     """El hallazgo `personal_use`: comercios que el modelo juzgó "probablemente personal" (confianza alta
     o media) y que el libro tiene como gasto del negocio. Se aplica en código, gratis, en cada revisión.

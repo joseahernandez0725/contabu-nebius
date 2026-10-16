@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AgentError, applyRuleProposals, dismissProposal, getAgentUsage, getAuditBoard, getCategories, money,
-  resolveFinding, runFormulaDrafter, runMerchantVerifier, runReviewer, updateTransaction,
-  type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts, type DismissReason,
+  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentUsage, getAuditBoard, getCategories, money,
+  resolveFinding, runAudit, runFormulaDrafter, runMerchantVerifier, updateTransaction,
+  type AgentEstimate, type AgentSpent, type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts, type DismissReason,
   type FormulaProposal, type PendingGroup, type TxSummary,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import BookNotes from "./BookNotes";
+import MerchantSearch from "./MerchantSearch";
 import {
   BTN_PRIMARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, PageHeader, Stat, TONE, Tabs,
   agoText, DetailEmpty,
@@ -25,7 +26,10 @@ import {
 
 type Tab = "proposals" | "findings" | "pending";
 type Sel = { kind: "finding"; id: number } | { kind: "pending"; merchant: string } | { kind: "proposal"; idx: number } | null;
-type Step = "audit" | "verify" | "review" | "draft";
+// 14-oct (Jose, "los agentes, separados"): "audit" ya incluye las notas, "¿personal?" y el ①; "verify" busca
+// en internet SOLO los comercios marcados y el ① vuelve a juzgar esos (ida y vuelta); "draft" es el ④.
+type Step = "audit" | "verify" | "draft";
+const STEPS: Step[] = ["audit", "verify", "draft"];
 type StepState = "idle" | "running" | "done" | "error" | "skipped";
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
@@ -48,7 +52,7 @@ export default function AuditWorkspace({
 }) {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || "en").split("-")[0];
-  const { label, fmtDate, ago, webLabel, detectorSentence } = useAuditText();
+  const { label, fmtDate, ago, webLabel, detectorSentence, estimateText, spentText } = useAuditText();
 
   const [board, setBoard] = useState<AuditBoard | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
@@ -57,12 +61,15 @@ export default function AuditWorkspace({
   const [tab, setTab] = useState<Tab>("findings");
   const [sel, setSel] = useState<Sel>(null);
   // En pantalla angosta el detalle queda DEBAJO de la cola: al elegir algo, `ListDetail` baja hasta él.
-  const [steps, setSteps] = useState<Record<Step, StepState>>({ audit: "idle", verify: "idle", review: "idle", draft: "idle" });
+  const [steps, setSteps] = useState<Record<Step, StepState>>({ audit: "idle", verify: "idle", draft: "idle" });
   const [running, setRunning] = useState<Step | null>(null);
   const [stepNote, setStepNote] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState<AgentUsageSummary | null>(null);
+  // Lo que costaría cada acción (ANTES) y lo que costó la última (DESPUÉS), 14-oct.
+  const [est, setEst] = useState<{ audit?: AgentEstimate; review_book?: AgentEstimate }>({});
+  const [lastSpent, setLastSpent] = useState<AgentSpent | null>(null);
   // La decisión se guarda como DATO y se traduce al mostrarla (si se cambia de idioma, sigue bien).
   type Decision = { kind: "approved"; count: number } | { kind: "dismissed" } | { kind: "failed" };
   const [decided, setDecided] = useState<Record<number, Decision>>({});
@@ -75,6 +82,9 @@ export default function AuditWorkspace({
     const b = await getAuditBoard(lang);
     setBoard(b);
     onStats?.(b.stats);
+    // Los estimados se recalculan con el libro como quedó (no bloquean la pantalla).
+    Promise.all([getAgentEstimate("audit", { lang }), getAgentEstimate("review_book", { lang })])
+      .then(([audit, review_book]) => setEst({ audit, review_book })).catch(() => {});
     return b;
   }, [onStats, lang]);
 
@@ -100,23 +110,31 @@ export default function AuditWorkspace({
   }
 
   // ── El flujo "Revisar el libro" ──────────────────────────────────────────────────────────────
+  /** Suma lo gastado de cada paso: al final se muestra el total de la acción. */
+  const addSpent = (s?: AgentSpent) => s && setLastSpent((p) => p ? {
+    calls: p.calls + s.calls, cost_usd: p.cost_usd + s.cost_usd, searches: p.searches + s.searches, credits: p.credits + s.credits,
+  } : s);
+
   async function runStep(step: Step, b: AuditBoard | null) {
     setRunning(step);
     setSteps((s) => ({ ...s, [step]: "running" }));
     try {
       if (step === "audit") {
         setStepNote(t("auditView.step.auditing"));
+        const r = await runAudit(lang);
+        addSpent(r.spent);
         b = await loadBoard();
       } else if (step === "verify") {
-        setStepNote(t("auditView.step.verifying", { count: b?.stats.pending_merchants ?? 0 }));
-        const r = await runMerchantVerifier();
-        setStepNote(t("auditView.step.verified", { count: r.items.length, credits: r.credits }));
-      } else if (step === "review") {
-        setStepNote(t("auditView.step.reviewing", { count: b?.stats.to_review ?? 0 }));
-        await runReviewer(lang);
+        const e = await getAgentEstimate("verify", { lang }).catch(() => null);
+        setStepNote(t("auditView.step.searching", { count: e?.searches ?? 0 }));
+        const r = await runMerchantVerifier(lang);
+        addSpent(r.spent);
+        setStepNote(t("auditView.step.searched", { searched: r.searched, cached: r.from_cache, credits: r.credits,
+                                                   rejudged: r.rejudge?.rejudged ?? 0 }));
       } else {
         setStepNote(t("auditView.step.drafting"));
         const r = await runFormulaDrafter(lang);
+        addSpent(r.spent);
         setProposals(r.proposals);
         setRejected(r.rejected.length);
         setDecided({});
@@ -132,9 +150,10 @@ export default function AuditWorkspace({
 
   async function reviewBook() {
     setError(null);
-    setSteps({ audit: "idle", verify: "idle", review: "idle", draft: "idle" });
+    setLastSpent(null);
+    setSteps({ audit: "idle", verify: "idle", draft: "idle" });
     let b: AuditBoard | null = board;
-    for (const step of ["audit", "verify", "review", "draft"] as Step[]) b = await runStep(step, b);
+    for (const step of STEPS) b = await runStep(step, b);
     setRunning(null);
     setStepNote("");
     await loadBoard().catch(() => {});
@@ -143,6 +162,7 @@ export default function AuditWorkspace({
 
   async function runOne(step: Step) {
     setError(null);
+    setLastSpent(null);
     await runStep(step, board);
     setRunning(null);
     setStepNote("");
@@ -173,6 +193,7 @@ export default function AuditWorkspace({
     setBusy(true); setError(null);
     try {
       const r = await runFormulaDrafter(lang, g.transactions.map((x) => x.id));
+      setLastSpent(r.spent ?? null);
       if (r.proposals.length) {
         setProposals((prev) => [...r.proposals, ...prev]);
         setDecided({});
@@ -183,6 +204,28 @@ export default function AuditWorkspace({
       }
       getAgentUsage().then(setUsage).catch(() => {});
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+  }
+
+  /** "Proponer las filas para esta nota" (14-oct): el ④ corre SOLO para esa nota. */
+  async function proposeForNote(noteId: number): Promise<number> {
+    setError(null);
+    const r = await runFormulaDrafter(lang, undefined, noteId);
+    setLastSpent(r.spent ?? null);
+    if (r.proposals.length) {
+      setProposals((prev) => [...r.proposals, ...prev]);
+      setDecided({});
+      setTab("proposals");
+      setSel({ kind: "proposal", idx: 0 });
+    }
+    getAgentUsage().then(setUsage).catch(() => {});
+    return r.proposals.length;
+  }
+
+  /** Después de "Buscar este comercio": la evidencia y el veredicto nuevos se ven en el tablero. */
+  async function afterSearch(s?: AgentSpent) {
+    setLastSpent(s ?? null);
+    await loadBoard().catch(() => {});
+    getAgentUsage().then(setUsage).catch(() => {});
   }
 
   async function approve(idx: number, p: FormulaProposal) {
@@ -235,17 +278,25 @@ export default function AuditWorkspace({
       <PageHeader
         meta={stats?.reviewed_seconds_ago != null ? t("auditView.reviewed", { when: ago(stats.reviewed_seconds_ago) }) : t("auditView.neverReviewed")}
         primary={
-          <button onClick={reviewBook} disabled={running !== null || busy} className={BTN_PRIMARY}>
-            {running ? t("auditView.running") : t("auditView.reviewBook")}
-          </button>
+          <span className="flex items-center gap-2">
+            <button onClick={() => void runOne("audit")} disabled={running !== null || busy}
+                    title={`${t("auditView.auditTip")} · ${estimateText(est.audit)}`}
+                    className="px-3 py-1.5 rounded-lg text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-50 disabled:opacity-50">
+              {t("auditView.auditBtn")}
+            </button>
+            <button onClick={reviewBook} disabled={running !== null || busy} className={BTN_PRIMARY}
+                    title={estimateText(est.review_book)}>
+              {running ? t("auditView.running") : t("auditView.reviewBook")}
+            </button>
+          </span>
         }
         moreLabel={t("auditView.moreActions")}
-        more={(["audit", "verify", "review", "draft"] as Step[]).map((s) => ({
+        more={STEPS.map((s) => ({
           label: t(`auditView.only.${s}`), onClick: () => void runOne(s), disabled: running !== null,
         }))}
-        below={running && (
+        below={running ? (
           <div className="flex items-center gap-2 text-xs text-slate-600">
-            {(["audit", "verify", "review", "draft"] as Step[]).map((s, i) => (
+            {STEPS.map((s, i) => (
               <span key={s} className="flex items-center gap-1">
                 {i > 0 && <span className="text-slate-300">›</span>}
                 <span className={steps[s] === "running" ? "font-semibold text-emerald-800" : steps[s] === "done" ? "text-emerald-700" : steps[s] === "error" ? "text-rose-600" : "text-slate-400"}>
@@ -254,6 +305,13 @@ export default function AuditWorkspace({
               </span>
             ))}
             <span className="ms-2 text-slate-500">{stepNote}</span>
+          </div>
+        ) : (
+          // ANTES: lo que costaría cada botón. DESPUÉS: lo que costó la última acción.
+          <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3">
+            {lastSpent && <span className="text-emerald-800">{spentText(lastSpent)}</span>}
+            {est.audit && <span>{t("auditView.est.line", { action: t("auditView.auditBtn"), what: estimateText(est.audit) })}</span>}
+            {est.review_book && <span>{t("auditView.est.line", { action: t("auditView.reviewBook"), what: estimateText(est.review_book) })}</span>}
           </div>
         )}
       >
@@ -265,7 +323,7 @@ export default function AuditWorkspace({
       {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{error}</p>}
 
       {/* 2. LAS NOTAS (compactas si están vacías) */}
-      <BookNotes compact />
+      <BookNotes compact onProposeForNote={proposeForNote} />
 
       {/* 3. LA COLA + EL DETALLE (estructura común: `ListDetail`) */}
       <ListDetail
@@ -314,9 +372,15 @@ export default function AuditWorkspace({
                              fmtDate={fmtDate} chart={chart} catToType={catToType} busy={busy}
                              onCategorize={categorize} onOk={markOk} onOpenSheet={onOpenSheet} />
             )}
+            {selFinding && selFinding.transactions[0] && (
+              <MerchantSearch transactionId={selFinding.transactions[0].id} onDone={afterSearch} />
+            )}
             {selGroup && (
               <PendingDetail g={selGroup} t={t} webLabel={webLabel} fmtDate={fmtDate} chart={chart} catToType={catToType}
                              busy={busy} onCategorize={categorize} onAskRule={askRule} onOpenSheet={onOpenSheet} />
+            )}
+            {selGroup && !selGroup.person_payment && selGroup.transactions[0] && (
+              <MerchantSearch transactionId={selGroup.transactions[0].id} onDone={afterSearch} />
             )}
             {selProposal && sel?.kind === "proposal" && (
               <ProposalDetail p={selProposal} idx={sel.idx} decided={decided[sel.idx]?.kind === "failed" ? undefined : decisionText(decided[sel.idx])} t={t} label={label} webLabel={webLabel}
@@ -405,7 +469,20 @@ export function useAuditText() {
     }
   }
 
-  return { label, fmtDate, fmtMonth, ago, webLabel, detectorSentence };
+  /** "~2 llamadas a la IA · hasta 3 búsquedas (3–9 créditos)": lo que costaría, ANTES (14-oct). */
+  const estimateText = (e: AgentEstimate | null | undefined) => {
+    if (!e) return "";
+    const parts = [
+      e.calls ? t("auditView.est.calls", { count: e.calls }) : "",
+      e.searches ? t("auditView.est.searches", { count: e.searches, min: e.credits_min, max: e.credits_max }) : "",
+    ].filter(Boolean);
+    return parts.length ? parts.join(" · ") : t("auditView.est.free");
+  };
+  /** Lo que costó, DESPUÉS. */
+  const spentText = (s: AgentSpent | null | undefined) => !s ? "" : t("auditView.spent", {
+    calls: s.calls, cost: `$${s.cost_usd.toFixed(5)}`, searches: s.searches, credits: s.credits,
+  });
+  return { label, fmtDate, fmtMonth, ago, webLabel, detectorSentence, estimateText, spentText };
 }
 
 // ── Piezas ─────────────────────────────────────────────────────────────────────────────────────

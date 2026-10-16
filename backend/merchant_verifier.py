@@ -22,13 +22,23 @@ categorías.**
 Tavily por `httpx` (sin SDK), clave `TAVILY_API_KEY` en `backend/.env`. Búsqueda `basic` = 1 crédito
 (✅ documentación oficial, 8-oct). Cada búsqueda deja su fila en `agentcall` y cuenta contra el tope
 diario de búsquedas de la oficina (`AGENT_DAILY_SEARCHES`).
+
+🔄 REDISEÑADO PARA GASTAR POCO (Jose, 14-oct; tablero → *Decisiones*):
+- **Un comercio a pedido** (`search_one`): "Buscar este comercio" desde un hallazgo o desde el panel de
+  la transacción. Primero la memoria de la oficina; si no está, se busca al instante.
+- **En la revisión, solo lo que la auditoría marcó** (`verify_flagged`): los comercios de los hallazgos
+  abiertos (lo que vio el código, una nota o "¿personal?", y lo que el ① llamó problema o inseguro; no lo
+  que llamó legítimo, ni las observaciones). Ya no todos los comercios del libro.
+- **Primero "basic" (1 crédito); si la confianza no sale alta, "advanced" (2 créditos) UNA vez**, y se
+  queda la mejor de las dos. Se guarda cuál se usó (`MerchantLookup.search_depth`).
+- Las garantías de arriba no cambian: el filtro de personas corre igual antes de cada búsqueda.
 """
 
 import os
 import re
 import time
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -252,19 +262,20 @@ def classify(results: list[dict], query: str) -> tuple[Optional[str], Optional[s
     return top, conf, best_url.get(top, (0, None))[1]
 
 
-def _search(query: str) -> tuple[list[dict], int, int]:
-    """Una búsqueda `basic` en Tavily → (resultados, créditos, latencia ms). Sin respuesta generada
-    (`include_answer=False`) ni contenido completo de la página: solo título, enlace y fragmento."""
+def _search(query: str, depth: str = "basic") -> tuple[list[dict], int, int]:
+    """Una búsqueda en Tavily (`basic` = 1 crédito, `advanced` = 2) → (resultados, créditos, latencia ms).
+    Sin respuesta generada (`include_answer=False`) ni contenido completo de la página: solo título,
+    enlace y fragmento."""
     key = os.getenv("TAVILY_API_KEY")
     if not key:
         raise TavilyUnavailable("TAVILY_API_KEY no está configurada en backend/.env")
     started = time.monotonic()
     r = httpx.post(TAVILY_URL, headers={"Authorization": f"Bearer {key}"}, timeout=30.0,
-                   json={"query": query, "search_depth": "basic", "max_results": 5, "include_answer": False,
+                   json={"query": query, "search_depth": depth, "max_results": 5, "include_answer": False,
                          "include_raw_content": False, "topic": "general", "include_usage": True})
     r.raise_for_status()
     body = r.json()
-    credits = int((body.get("usage") or {}).get("credits") or 1)
+    credits = int((body.get("usage") or {}).get("credits") or (2 if depth == "advanced" else 1))
     return body.get("results") or [], credits, int((time.monotonic() - started) * 1000)
 
 
@@ -291,57 +302,98 @@ class VerifyResult:
     skipped: Counter
     credits: int
     outcome: str = "ok"
+    finding_ids: list = field(default_factory=list)   # hallazgos con evidencia nueva (ida y vuelta, 14-oct)
 
 
-def verify(session: Session, company: Company, *, user_id: Optional[int] = None,
-           limit: int = MAX_SEARCHES_PER_RUN, record: bool = True) -> VerifyResult:
-    """Verifica los comercios del libro: lo que está en la caché de la oficina no se vuelve a buscar.
-    Devuelve, por comercio, el dato estructurado (y por qué se saltó lo que no se buscó)."""
-    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+_RANK = {"high": 3, "medium": 2, "low": 1, None: 0}
+# Medición sin gastar créditos (`measure.py`): fingerprint → la verificación guardada del demo. Hace de
+# Tavily: la "básica" responde lo guardado y, si no es de confianza alta, la "avanzada" cuesta igual sus
+# 2 créditos y responde lo mismo (no hay con qué simularla mejor). None = Tavily de verdad.
+ORACLE: Optional[dict[str, dict]] = None
+
+
+@dataclass
+class Looked:
+    hit: MerchantLookup
+    searched: bool = False
+    credits: int = 0
+    outcome: str = "ok"
+
+
+def _lookup(session: Session, company: Company, c: Candidate, cache: dict, *, user_id: Optional[int] = None,
+            record: bool = True) -> Optional[Looked]:
+    """UN comercio: la memoria de la oficina primero; si no está, "basic" y, si la confianza no sale alta,
+    "advanced" una sola vez (se queda la mejor). None = se acabó el tope de búsquedas del día."""
+    hit = cache.get(c.fingerprint)
+    if hit is not None:
+        return Looked(hit=hit)
+    if record:
+        try:
+            agent_calls.check_cap(session, company, agent="verifier")
+        except agent_calls.CapReached:
+            return None
+    best = (None, None, None)
+    status, total, depth, n_results, outcome = "not_found", 0, "basic", 0, "ok"
+    for level in ("basic", "advanced"):
+        if level == "advanced":
+            if _RANK[best[1]] >= _RANK["high"] or status == "error":
+                break
+            depth = "basic+advanced"
+        SENT_QUERIES.append(c.query)
+        try:
+            if ORACLE is not None:
+                row = ORACLE.get(c.fingerprint) or {}
+                results, used, latency = ([{}] * int(row.get("results_count") or 0)), (1 if level == "basic" else 2), 0
+                got = (row.get("business_type"), row.get("confidence"), row.get("source_url"))
+            else:
+                results, used, latency = _search(c.query, level)
+                got = classify(results, c.query)
+            if results:
+                status = "ok"
+            n_results = max(n_results, len(results))
+            if _RANK[got[1]] > _RANK[best[1]]:
+                best = got
+        except httpx.HTTPError as e:
+            used, latency, status, outcome = 0, 0, "error", f"search_error:{type(e).__name__}"
+        total += used
+        if record:
+            agent_calls.record(session, company, "verifier", None, model=f"tavily:{level}",
+                               outcome="ok" if status != "error" else "error", user_id=user_id,
+                               items_out=n_results, items_valid=int(best[0] is not None), credits=used,
+                               latency_ms=latency)
+    btype, conf, url = best
+    hit = MerchantLookup(firm_id=company.firm_id, company_id=None if company.firm_id else company.id,
+                         fingerprint=c.fingerprint, query=c.query, status=status, business_type=btype,
+                         confidence=conf, source_url=url, source_domain=urlparse(url).netloc if url else None,
+                         results_count=n_results, credits=total, search_depth=depth)
+    session.add(hit)
+    cache[c.fingerprint] = hit
+    return Looked(hit=hit, searched=True, credits=total, outcome=outcome)
+
+
+def _run(session: Session, company: Company, chosen: list[Candidate], *, user_id: Optional[int], limit: int,
+         record: bool, skipped: Optional[Counter] = None) -> VerifyResult:
     cache = cached(session, company)
-    items, skipped = [], Counter()
+    items, skipped = [], skipped if skipped is not None else Counter()
     searched = from_cache = credits = 0
     outcome = "ok"
-    for c in candidates(txs):
+    for c in chosen:
         if c.skip:
             skipped[c.skip] += 1
             continue
-        hit = cache.get(c.fingerprint)
-        if hit is not None:
-            from_cache += 1
-        else:
-            if searched >= limit:
-                skipped["limit"] += 1
-                continue
-            if record:
-                try:
-                    agent_calls.check_cap(session, company, agent="verifier")
-                except agent_calls.CapReached:
-                    outcome = "agent_cap_reached"
-                    break
-            SENT_QUERIES.append(c.query)
-            try:
-                results, used, latency = _search(c.query)
-                status = "ok" if results else "not_found"
-                btype, conf, url = classify(results, c.query)
-            except httpx.HTTPError as e:
-                results, used, latency, status, btype, conf, url = [], 0, 0, "error", None, None, None
-                outcome = f"search_error:{type(e).__name__}"
-            hit = MerchantLookup(firm_id=company.firm_id, company_id=None if company.firm_id else company.id,
-                                 fingerprint=c.fingerprint, query=c.query, status=status, business_type=btype,
-                                 confidence=conf, source_url=url,
-                                 source_domain=urlparse(url).netloc if url else None,
-                                 results_count=len(results), credits=used)
-            session.add(hit)
-            cache[c.fingerprint] = hit
-            searched += 1
-            credits += used
-            if record:
-                agent_calls.record(session, company, "verifier", None, model="tavily:basic",
-                                   outcome="ok" if status != "error" else "error", user_id=user_id,
-                                   items_out=len(results), items_valid=int(btype is not None),
-                                   credits=used, latency_ms=latency)
-        items.append(lookup_dict(hit, c.keyword, c.rows))
+        if c.fingerprint not in cache and searched >= limit:
+            skipped["limit"] += 1
+            continue
+        got = _lookup(session, company, c, cache, user_id=user_id, record=record)
+        if got is None:
+            outcome = "agent_cap_reached"
+            break
+        searched += int(got.searched)
+        from_cache += int(not got.searched)
+        credits += got.credits
+        if got.outcome != "ok":
+            outcome = got.outcome
+        items.append(lookup_dict(got.hit, c.keyword, c.rows))
     if record:
         session.commit()
     else:
@@ -350,10 +402,99 @@ def verify(session: Session, company: Company, *, user_id: Optional[int] = None,
                         credits=credits, outcome=outcome)
 
 
+def verify(session: Session, company: Company, *, user_id: Optional[int] = None,
+           limit: int = MAX_SEARCHES_PER_RUN, record: bool = True) -> VerifyResult:
+    """TODOS los comercios buscables del libro (lo que ya está en la memoria de la oficina no se busca).
+    Desde el 14-oct la pantalla ya no lo usa: lo usa `demo_web_evidence.py` para guardar las del demo."""
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    return _run(session, company, candidates(txs), user_id=user_id, limit=limit, record=record)
+
+
+# Hallazgos donde saber QUÉ NEGOCIO es el comercio puede cambiar la decisión: lo que puede ser PERSONAL (lo
+# marcó "¿personal?", una nota, o internet ya lo dijo). Fuera, a propósito (✅ 14-oct, medido con el primer
+# examen y el oráculo): una fila desalineada de su regla, el signo contra la sección y dos reglas que
+# chocan son problemas MECÁNICOS; y "mismo comercio, dos categorías" encontró lo mismo (30/32) con 62
+# créditos en vez de 40. Internet no decide ninguno de esos. ACEPTADO por Jose el 15-oct.
+SEARCH_TYPES = {"personal_use", "note_check", "merchant_type_mismatch"}
+
+
+def flagged_candidates(session: Session, company: Company, txs: list[Transaction]) -> tuple[list[Candidate], dict]:
+    """Los comercios que la AUDITORÍA marcó (hallazgos abiertos), y fingerprint → ids de esos hallazgos.
+    Entra lo que vio una nota o "¿personal?", un comercio con dos categorías, y lo que el ① llamó problema
+    o inseguro. No entra lo que el ① llamó legítimo, las observaciones (nómina, datos que faltan, montos
+    inusuales) ni los problemas mecánicos (ver `SEARCH_TYPES`)."""
+    import book_review
+    findings = [f for f in book_review.sync(session, company)
+                if f.type in SEARCH_TYPES and f.agent_verdict != "legitimate"]
+    full = {(t.description or "").strip().upper() for t in txs}
+    by_id = {t.id: t for t in txs}
+    wanted: dict[str, set[int]] = {}
+    for f in findings:
+        for i in f.transaction_ids or []:
+            t = by_id.get(i)
+            if t is not None and not is_check(t.description):
+                wanted.setdefault(query_for(t.description, full).upper(), set()).add(f.id)
+    return [c for c in candidates(txs) if c.fingerprint in wanted], wanted
+
+
+def verify_flagged(session: Session, company: Company, *, user_id: Optional[int] = None,
+                   limit: int = MAX_SEARCHES_PER_RUN, record: bool = True) -> VerifyResult:
+    """En la revisión: busca SOLO los comercios de los hallazgos abiertos (memoria de la oficina primero).
+    `finding_ids`: los hallazgos cuyo comercio tiene evidencia NUEVA de esta corrida (para la ida y vuelta:
+    el ① los vuelve a juzgar)."""
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    chosen, _wanted = flagged_candidates(session, company, txs)
+    before = set(cached(session, company))
+    res = _run(session, company, chosen, user_id=user_id, limit=limit, record=record)
+    # "Evidencia nueva" = un tipo de negocio con confianza alta o media (la baja no la usa ningún agente).
+    fresh = {i["fingerprint"] for i in res.items if i["fingerprint"] not in before and i.get("business_type")
+             and i.get("confidence") in ("high", "medium")}
+    res.finding_ids = _findings_for(session, company, txs, fresh)
+    return res
+
+
+def _findings_for(session: Session, company: Company, txs: list[Transaction], fingerprints: set[str]) -> list[int]:
+    """Los hallazgos abiertos (DESPUÉS de la búsqueda) que tocan esos comercios. Se miran después porque la
+    evidencia nueva puede cambiar el hallazgo: "¿personal?" pasa a "internet dice uso personal" (✅ 14-oct,
+    Netflix), y es ESE el que el ① tiene que juzgar."""
+    if not fingerprints:
+        return []
+    import book_review
+    import personal_use
+    full = {(t.description or "").strip().upper() for t in txs}
+    ids = {t.id for t in txs if not is_check(t.description) and query_for(t.description, full).upper() in fingerprints}
+    # La ida y vuelta incluye "¿personal?": su opinión sobre esos comercios se hizo SIN el tipo verificado;
+    # se olvida y la siguiente revisión la rehace con él (✅ 14-oct: sin esto, una renta o un proveedor de
+    # comida quedaban "personal" aunque internet ya dijera qué negocio eran).
+    personal_use.forget(session, company, [t for t in txs if t.id in ids])
+    return sorted(f.id for f in book_review.sync(session, company)
+                  if set(f.transaction_ids or []) & ids and f.type not in book_review.INFO_TYPES)
+
+
+def search_one(session: Session, company: Company, transaction_id: int, *, user_id: Optional[int] = None,
+               record: bool = True) -> VerifyResult:
+    """"Buscar este comercio": el comercio de UN movimiento, al instante. Memoria de la oficina primero. Un
+    pago a una persona, un cheque o una transferencia no se buscan nunca (`skipped` dice por qué)."""
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    t = next((x for x in txs if x.id == transaction_id), None)
+    if t is None:
+        raise LookupError("transaction not found")
+    full = {(x.description or "").strip().upper() for x in txs}
+    fp = f"__check_{t.id}" if is_check(t.description) else query_for(t.description, full).upper()
+    chosen = [c for c in candidates(txs) if c.fingerprint == fp]
+    if not chosen:
+        return VerifyResult(items=[], searched=0, from_cache=0, skipped=Counter({"not_a_merchant": 1}), credits=0)
+    before = set(cached(session, company))
+    res = _run(session, company, chosen, user_id=user_id, limit=1, record=record)
+    useful = bool(res.items) and res.items[0].get("confidence") in ("high", "medium")
+    res.finding_ids = _findings_for(session, company, txs, {fp} if res.searched and useful and fp not in before else set())
+    return res
+
+
 def lookup_dict(m: MerchantLookup, keyword: str, rows: int) -> dict:
     return {"merchant": keyword, "rows": rows, "status": m.status, "business_type": m.business_type,
             "confidence": m.confidence, "source_url": m.source_url, "source_domain": m.source_domain,
-            "fingerprint": m.fingerprint}
+            "fingerprint": m.fingerprint, "search_depth": m.search_depth, "credits": m.credits}
 
 
 def web_by_tx(session: Session, company: Company, txs: list[Transaction]) -> dict[int, MerchantLookup]:

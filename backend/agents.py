@@ -443,12 +443,17 @@ def history_test(view: BookView, row: formula.FormulaRow) -> dict:
 
 def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
           cutoff: Optional[date] = None, user_id: Optional[int] = None, record: bool = True,
-          model: Optional[str] = None, focus_tx_ids: Optional[list[int]] = None) -> DraftResult:
+          model: Optional[str] = None, focus_tx_ids: Optional[list[int]] = None,
+          note_id: Optional[int] = None) -> DraftResult:
     """④ — Nemotron propone filas. Devuelve las válidas con su prueba contra la historia y las
     rechazadas con sus códigos. Guarda el costo en `agentcall` (salvo `record=False`, la medición).
 
     `focus_tx_ids`: "pedirle al ④ una regla para ESTE comercio" (un grupo de Pendientes): una sola
-    llamada, centrada en ese comercio, y solo se devuelven filas que cazan esos movimientos."""
+    llamada, centrada en ese comercio, y solo se devuelven filas que cazan esos movimientos.
+
+    `note_id` (14-oct, "Proponer las filas para esta nota"): el ④ corre SOLO para esa nota. Una nota con
+    periodo usa su llamada corta de siempre; una sin periodo, la llamada general con la orden de proponer
+    solo lo que sale de esa nota. Solo se devuelven filas que citan esa nota."""
     if record:
         agent_calls.check_cap(session, company)
     view = build_view(session, company, cutoff=cutoff)
@@ -467,16 +472,24 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
     # 1) Una llamada CORTA por cada nota con periodo que tenga comercios vistos solo en ese periodo.
     #    Un solo prompt con todo hacía que Nano copiara la categoría actual y que Super no propusiera
     #    nada (✅ medido el 7-oct); enfocado, el modelo chico decide una cosa a la vez.
-    for note in ([] if focus else view.notes):
+    only_note = next((n for n in view.notes if n["id"] == note_id), None) if note_id is not None else None
+    if note_id is not None and only_note is None:
+        raise LookupError("note not found")
+    for note in ([] if focus else [only_note] if only_note else view.notes):
         if note["kind"] == "keep_in_mind" and any(m["only_seen_in_period"] for m in note.get("merchants_inside_period", [])):
             calls.append((_NOTE_SYSTEM.replace("{lang}", language), _note_user(view, note)))
-    # 2) Correcciones + Pendientes recurrentes (sin ventanas de fechas).
+    # 2) Correcciones + Pendientes recurrentes (sin ventanas de fechas). Con `note_id`: solo si la nota no
+    #    tiene periodo (si lo tiene, su llamada corta de arriba ya es la de esa nota).
     user = _draft_user(view, findings, dismissed_ctx)
+    if only_note is not None:
+        user += (f"\n\nFOCUS: the bookkeeper just saved note {only_note['id']}. Propose ONLY rows that come from "
+                 f"that note (put {only_note['id']} in from_notes). If the note asks for no row, return no rows.")
     if focus:
         keyword = _huella(focus[0], view.names)[1]
         user += (f"\n\nFOCUS: the bookkeeper asked for a row for ONE merchant only: \"{keyword}\" "
                  f"({len(focus)} pending transactions). Propose at most one row, for that merchant only.")
-    calls.append((_DRAFT_SYSTEM.replace("{lang}", language).replace("{max_rows}", str(MAX_ROWS)), user))
+    if only_note is None or not (only_note.get("valid_from") or only_note.get("valid_to")):
+        calls.append((_DRAFT_SYSTEM.replace("{lang}", language).replace("{max_rows}", str(MAX_ROWS)), user))
 
     note_text = {n.id: n.text for n in book_notes.list_notes(session, company.id)}
     raw_rows, usages, outcome = [], [], "ok"
@@ -516,6 +529,9 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: bo
             continue
         if key + (checked.row.category,) in dismissed_keys:
             rejected.append({"raw": raw, "errors": ["dismissed_before"]})   # ya lo descartaste
+            continue
+        if only_note is not None and only_note["id"] not in checked.row.from_notes:
+            rejected.append({"raw": raw, "errors": ["outside_note"]})
             continue
         if focus:
             rule = formula.to_rule(checked.row, company.id)
@@ -778,6 +794,9 @@ def review_input(session: Session, company: Company, view: BookView,
         elif f.type == "merchant_type_mismatch":
             facts["meaning"] = ("the internet says this merchant is a business for PERSONAL use, but the book "
                                 "has it as a business expense")
+            if book_review.ai_cannot_dismiss(f):
+                facts["alert_stays"] = ("verified with high confidence: this alert stays whatever you say; explain "
+                                        "what the bookkeeper should check")
         hit = view.web.get(group[0].id)
         if hit is not None and hit.confidence in ("high", "medium"):
             facts["web_business_type"] = f"{hit.business_type} ({hit.confidence} confidence, verified on the internet)"
@@ -800,10 +819,14 @@ class ReviewResult:
 
 
 def review(session: Session, company: Company, *, lang: str = "es", reasoning: bool = False,
-           user_id: Optional[int] = None, model: Optional[str] = None, force: bool = False) -> ReviewResult:
+           user_id: Optional[int] = None, model: Optional[str] = None, force: bool = False,
+           finding_ids: Optional[list[int]] = None) -> ReviewResult:
     """① — UNA llamada a Nemotron sobre los hallazgos abiertos que todavía no tienen veredicto (con
     `force`, sobre todos). El veredicto y la observación quedan GUARDADOS en el hallazgo: la pestaña
-    muestra una sola tarjeta por hallazgo. Sin nada que juzgar, no llama."""
+    muestra una sola tarjeta por hallazgo. Sin nada que juzgar, no llama.
+
+    `finding_ids` (la IDA Y VUELTA con el ②, 14-oct): vuelve a juzgar SOLO esos hallazgos, que tienen
+    evidencia de internet nueva. Una vuelta, no un bucle: quien llama lo hace una vez."""
     import book_review
     view = build_view(session, company)
     # Antes de revisar: las notas 📌 nuevas o cambiadas se traducen a chequeos del auditor (una llamada,
@@ -815,8 +838,14 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: b
     personal_usage = personal_use.refresh(session, company, view, model=model, user_id=user_id)
     open_findings = book_review.sync(session, company)
     # Sin veredicto, o con un veredicto guardado en OTRO idioma (se rehace en el de la pantalla, 13-oct).
-    todo = open_findings if force else [f for f in open_findings
-                                        if f.agent_verdict is None or book_review.observation_stale(f, lang)]
+    if finding_ids is not None:
+        todo = [f for f in open_findings if f.id in set(finding_ids)]
+    else:
+        # "Sin juzgar" = sin explicación guardada (un hallazgo que el ① no puede despachar queda con veredicto
+        # vacío pero CON explicación: no se vuelve a pagar en cada revisión).
+        todo = open_findings if force else [f for f in open_findings
+                                            if (f.agent_verdict is None and not f.agent_observation)
+                                            or book_review.observation_stale(f, lang)]
     findings, silenced, ids_of = review_input(session, company, view, todo)
     if not findings:
         session.commit()
@@ -848,7 +877,8 @@ Findings to review:
     for item in findings:
         f, v = ids_of[item["ref"]], verdicts.get(item["ref"])
         if v is not None:
-            f.agent_verdict = v.verdict
+            # El ① explica, pero no despacha lo que no puede despachar: un "legítimo" ahí no se guarda.
+            f.agent_verdict = None if (v.verdict == "legitimate" and book_review.ai_cannot_dismiss(f)) else v.verdict
             f.agent_observation = view.names.unmask(v.observation)[:400]
             # El idioma que se guarda es el que TIENE el texto (comprobado), no el que se pidió: si el modelo
             # contestó en otro idioma, queda marcado viejo y se rehace la próxima vez.
@@ -877,3 +907,67 @@ def privacy_scan(sent: list[dict], txs: list[Transaction], persons: set[str]) ->
         "amounts": sum(1 for a in amounts if re.search(rf"(?<![\d.]){re.escape(a)}(?!\d)", blob)),
         "person_names": sum(1 for p in persons if re.search(rf"\b{re.escape(p.upper())}\b", blob)),
     }
+
+
+# ── Cuánto va a costar (14-oct: cada acción lo dice ANTES) ───────────────────────────────────────
+
+def estimate(session: Session, company: Company, action: str, *, note_id: Optional[int] = None,
+             transaction_id: Optional[int] = None, lang: str = "es") -> dict:
+    """Un estimado honesto, contado por el código sin llamar a nadie: cuántas llamadas a Nemotron y
+    cuántas búsquedas de Tavily haría la acción (cada búsqueda cuesta 1 crédito, o 3 si la básica no da
+    confianza alta y se repite a fondo). `action`: audit · verify · draft · review_book · note · search."""
+    nested = session.begin_nested()   # contar no deja nada escrito (sync guarda hallazgos): se deshace al final
+    try:
+        return _estimate(session, company, action, note_id=note_id, transaction_id=transaction_id, lang=lang)
+    finally:
+        nested.rollback()
+
+
+def _estimate(session: Session, company: Company, action: str, *, note_id: Optional[int],
+              transaction_id: Optional[int], lang: str) -> dict:
+    import note_checks
+    import personal_use
+    view = build_view(session, company)
+    calls = searches = 0
+    if action in ("audit", "review_book"):
+        calls += any(n.kind == "keep_in_mind" and not note_checks.is_current(n)
+                     for n in book_notes.active_notes(session, company.id))
+        h = personal_use.context_hash(company, view)
+        have = personal_use.current(session, company, h)
+        calls += any(k not in have for k in personal_use.candidates(view.ctx.txs))
+        open_findings = book_review.sync(session, company)
+        calls += any(f.type not in book_review.UNJUDGED_TYPES and ((f.agent_verdict is None and not f.agent_observation)
+                                                                or book_review.observation_stale(f, lang))
+                     for f in open_findings) or calls > 0
+    if action in ("verify", "review_book"):
+        cache = merchant_verifier.cached(session, company)
+        audited = bool(personal_use.current(session, company, personal_use.context_hash(company, view)))
+        if action == "review_book" and not audited:
+            # Todavía nadie marcó nada: el tope honesto son los gastos del negocio buscables que la oficina
+            # no tiene en memoria (la auditoría de este mismo botón decidirá cuáles).
+            fps = {merchant_verifier.query_for(t.description, {(x.description or "").strip().upper() for x in view.ctx.txs}).upper()
+                   for ts in personal_use.candidates(view.ctx.txs).values() for t in ts}
+            pool = [c for c in merchant_verifier.candidates(view.ctx.txs) if c.fingerprint in fps]
+        else:
+            pool, _ = merchant_verifier.flagged_candidates(session, company, view.ctx.txs)
+        searches += min(merchant_verifier.MAX_SEARCHES_PER_RUN,
+                        sum(1 for c in pool if not c.skip and c.fingerprint not in cache))
+        calls += 1 if searches else 0          # la ida y vuelta: el ① vuelve a juzgar esos hallazgos
+    if action in ("draft", "review_book"):
+        calls += 1 + sum(1 for n in view.notes if n["kind"] == "keep_in_mind"
+                         and any(m["only_seen_in_period"] for m in n.get("merchants_inside_period", [])))
+    if action == "note":
+        calls += 1
+    if action == "search" and transaction_id is not None:
+        full = {(t.description or "").strip().upper() for t in view.ctx.txs if t.description}
+        t = next((x for x in view.ctx.txs if x.id == transaction_id), None)
+        if t is not None:
+            fp = merchant_verifier.query_for(t.description, full).upper()
+            c = next((c for c in merchant_verifier.candidates(view.ctx.txs) if c.fingerprint == fp), None)
+            if c is not None and not c.skip and fp not in merchant_verifier.cached(session, company):
+                searches = 1
+                calls = 1   # si el comercio tiene hallazgos, el ① los vuelve a juzgar con la evidencia
+    return {"action": action, "calls": int(calls), "searches": searches,
+            "credits_min": searches, "credits_max": 3 * searches,
+            # Precio de catálogo de Nano: ~$0.0002–0.0015 por llamada en los libros medidos.
+            "cost_usd_max": round(0.0015 * int(calls), 4)}

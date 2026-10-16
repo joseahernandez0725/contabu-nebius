@@ -36,13 +36,22 @@ def load() -> list[dict]:
     return json.loads(DATA.read_text(encoding="utf-8")) if DATA.exists() else []
 
 
-def seed_lookups(session: Session, firm: Firm) -> int:
+# TAVILY EN VIVO EN EL DEMO (decisión de Jose, 15-oct; fila de Entregables en el Buzón): estos 3 comercios
+# NO se siembran, para que la primera "Revisar el libro" de cada visitante haga búsquedas REALES. Elegidos
+# porque el ⑤ los marca como posible gasto personal en todas las corridas medidas (14-oct) y porque Tavily
+# los identifica con confianza ALTA en la búsqueda básica (5 resultados): ~1 crédito cada uno, ~3 por
+# visitante (hasta 9 si alguno pidiera la avanzada). Netflix (Rivera), 24 Hour Fitness y Safeway (Sparkle).
+LIVE_IN_DEMO = {"NETFLIX", "24 HOUR FITNESS", "SAFEWAY"}
+
+
+def seed_lookups(session: Session, firm: Firm, include_live: bool = False) -> int:
     """Copia las verificaciones del demo a la caché de ESTA oficina (sin las que ya tenga). Solo `add`:
-    el `flush`/`commit` es de quien llama (el generador del demo). Devuelve cuántas sembró."""
+    el `flush`/`commit` es de quien llama (el generador del demo). Devuelve cuántas sembró. Sin
+    `include_live`, deja fuera `LIVE_IN_DEMO` (se buscan en vivo); la medición y el `--refresh` las piden."""
     have = set(session.exec(select(MerchantLookup.fingerprint).where(MerchantLookup.firm_id == firm.id)).all())
     n = 0
     for row in load():
-        if row["fingerprint"] in have:
+        if row["fingerprint"] in have or (not include_live and row["fingerprint"] in LIVE_IN_DEMO):
             continue
         session.add(MerchantLookup(firm_id=firm.id, credits=0, **{k: row.get(k) for k in _FIELDS}))
         n += 1
@@ -69,7 +78,7 @@ def refresh(everything: bool = False) -> None:
         try:
             firm, books = _seed_books(s)
             if not everything:
-                seed_lookups(s, firm)
+                seed_lookups(s, firm, include_live=True)
                 s.flush()
             rows, credits = {}, 0
             for b in books:

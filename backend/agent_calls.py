@@ -113,3 +113,19 @@ def summary(session: Session, company: Company, limit: int = 20) -> dict:
                     "credits": r.credits,
                     "created_at": r.created_at.isoformat()} for r in rows[:limit]],
     }
+
+
+# ── Lo que costó UNA acción (14-oct: cada botón dice antes cuánto costará y después cuánto costó) ──
+
+def mark(session: Session, company: Company) -> int:
+    """El id de la última llamada del libro: lo que se registre después es de ESTA acción."""
+    return int(session.exec(select(func.max(AgentCall.id)).where(AgentCall.company_id == company.id)).one() or 0)
+
+
+def spent(session: Session, company: Company, since_id: int) -> dict:
+    """Lo que se gastó desde `mark()`: llamadas a Nemotron, costo, búsquedas y créditos de Tavily."""
+    rows = session.exec(select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.id > since_id)).all()
+    model = [r for r in rows if r.agent != "verifier"]
+    web = [r for r in rows if r.agent == "verifier"]
+    return {"calls": len(model), "cost_usd": round(sum(r.cost_usd or 0.0 for r in model), 6),
+            "searches": len(web), "credits": sum(r.credits or 0 for r in web)}

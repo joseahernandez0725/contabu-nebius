@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  BankApiError, createBankConnection, createBankLinkToken, deleteBankConnection,
-  getBankConnections, syncBankConnection,
+  BankApiError, checkBankConnection, createBankConnection, createBankLinkToken, deleteBankConnection,
+  getBankConnections, syncBankConnection, type BankLinkMeta,
   type BankConfig, type BankConnection, type BankSync,
 } from "../api";
 
@@ -15,6 +15,11 @@ import {
  *
  * Reparar: si el banco cortó la conexión, Link se abre en modo actualización (link_token con la
  * conexión) y, al terminar, se vuelve a sincronizar.
+ *
+ * SIN DUPLICADOS (Jose, 14-oct): en el plan Trial de Plaid cada conexión cuenta y no se recupera, y el
+ * mismo banco vinculado dos veces cuenta como dos. Antes de canjear el public_token se pregunta si ese
+ * banco (institución + máscaras de las cuentas) ya está vinculado en este libro o en otro de la oficina;
+ * si lo está, NO se canjea. El backend repite la comprobación antes de `/item/public_token/exchange`.
  */
 
 const PLAID_SCRIPT = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
@@ -24,7 +29,10 @@ declare global {
   interface Window {
     Plaid?: { create: (cfg: {
       token: string;
-      onSuccess: (publicToken: string, metadata: { institution?: { name?: string } | null }) => void;
+      onSuccess: (publicToken: string, metadata: {
+        institution?: { name?: string; institution_id?: string } | null;
+        accounts?: { mask?: string | null }[];
+      }) => void;
       onExit?: (err: unknown) => void;
     }) => PlaidHandler };
   }
@@ -94,7 +102,8 @@ export function useBanks() {
 
   const errText = useCallback((e: unknown) => {
     const code = e instanceof BankApiError ? e.code : "bank_error";
-    return t(`bank.err.${code}`, { defaultValue: t("bank.err.bank_error") });
+    return t(`bank.err.${code}`, { defaultValue: t("bank.err.bank_error"),
+                                   book: (e instanceof BankApiError && e.reason) || t("bank.thisBook") });
   }, [t]);
 
   const load = useCallback(() => {
@@ -115,10 +124,25 @@ export function useBanks() {
         token: link_token,
         onSuccess: async (publicToken, metadata) => {
           try {
-            const r = repair
-              ? await syncBankConnection(repair.id)   // modo actualización: el token no cambia
-              : await createBankConnection(publicToken, metadata?.institution?.name);
-            setLast(r.sync);
+            if (repair) {
+              setLast((await syncBankConnection(repair.id)).sync);   // modo actualización: el token no cambia
+              return;
+            }
+            const meta: BankLinkMeta = {
+              institution_id: metadata?.institution?.institution_id ?? null,
+              institution_name: metadata?.institution?.name ?? null,
+              account_masks: (metadata?.accounts ?? []).map((a) => a.mask ?? "").filter(Boolean),
+            };
+            // ¿Ya vinculado? Entonces NO se canjea el token: no se gasta otra conexión de Plaid.
+            const { duplicate: d } = await checkBankConnection(meta);
+            if (d) {
+              setError(d.same_book
+                ? t("bank.dupSame", { bank: d.institution_name ?? meta.institution_name ?? t("bank.unnamed") })
+                : t("bank.dupOther", { bank: d.institution_name ?? meta.institution_name ?? t("bank.unnamed"),
+                                       book: d.company_name ?? "—" }));
+              return;
+            }
+            setLast((await createBankConnection(publicToken, meta)).sync);
           } catch (e) { setError(errText(e)); }
           finally { handler.destroy(); setBusy(null); load(); }
         },

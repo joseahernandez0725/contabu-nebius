@@ -54,6 +54,13 @@ SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
 INFO_TYPES = {"payroll_net_only", "coverage_gap", "bank_disconnected", "unusual_amount"}
 # Lo que el ① no juzga: las observaciones y lo que el bookkeeper pidió en una nota.
 UNJUDGED_TYPES = INFO_TYPES | {"note_check", "personal_use"}
+
+
+def ai_cannot_dismiss(f) -> bool:
+    """"Internet dice uso personal" con confianza ALTA: el ① lo explica pero NO lo puede despachar; sigue
+    siendo alerta (decisión de Jose, 14-oct, igual que el ⑤ y los chequeos de las notas). ✅ Medido el
+    14-oct: una vez de 7 el ① llamó "legítimo" a Netflix (escrito a mano como suscripción)."""
+    return f.type == "merchant_type_mismatch" and (f.payload or {}).get("confidence") == "high"
 # Monto inusual: N veces la mediana del comercio, por encima de todo lo anterior, con historia mínima.
 UNUSUAL_TIMES, UNUSUAL_MIN_HISTORY, UNUSUAL_MIN_AMOUNT = 3, 3, Decimal("100")
 

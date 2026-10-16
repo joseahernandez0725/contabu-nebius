@@ -160,6 +160,38 @@ def remove_item(access_token: str, env: str) -> None:
     _post("/item/remove", {"access_token": access_token}, env)
 
 
+def find_duplicate(session: Session, company: Company, institution_id: Optional[str],
+                   institution_name: Optional[str], masks: list[str]) -> Optional[BankConnection]:
+    """¿Este banco YA está vinculado, en este libro o en otro de la misma oficina? (Jose, 14-oct: en el plan
+    Trial de Plaid cada conexión cuenta y no se recupera, y vincular dos veces el mismo banco cuenta como dos.)
+
+    Se mira ANTES de canjear el public_token, con lo que Plaid Link devuelve en `metadata`: la institución
+    (por id; si la conexión vieja no lo tiene, por nombre) y las máscaras de las cuentas. Mismo banco Y al
+    menos una cuenta con la misma máscara = la misma conexión. Dos clientes de la oficina con cuentas en
+    Chase NO chocan (sus máscaras son otras). Sin máscaras para comparar, solo cuenta el mismo libro."""
+    inst_id = (institution_id or "").strip()
+    inst_name = (institution_name or "").strip().lower()
+    if not inst_id and not inst_name:
+        return None
+    new_masks = {m for m in masks if m}
+    books = [company.id]
+    if company.firm_id is not None:
+        books = list(session.exec(select(Company.id).where(Company.firm_id == company.firm_id)).all())
+    for c in session.exec(select(BankConnection).where(BankConnection.company_id.in_(books))
+                          .order_by(BankConnection.id)).all():
+        same_bank = (c.institution_id == inst_id) if (c.institution_id and inst_id) \
+            else (bool(inst_name) and (c.institution_name or "").strip().lower() == inst_name)
+        if not same_bank:
+            continue
+        old_masks = {a.get("mask") for a in (c.accounts or []) if a.get("mask")}
+        if new_masks and old_masks:
+            if new_masks & old_masks:
+                return c
+        elif c.company_id == company.id:
+            return c
+    return None
+
+
 def account_label(a: dict) -> Optional[str]:
     """Cómo se ve la cuenta en la Hoja: nombre y últimos 4, enmascarados como en un CSV."""
     return mask_account(f"{a.get('name') or ''} {a.get('mask') or ''}".strip())

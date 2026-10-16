@@ -19,7 +19,12 @@ function fmtDay(iso: string, lang: string): string {
   return new Date(y, m - 1, d).toLocaleDateString(lang, { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function BookNotes({ compact = false }: { compact?: boolean }) {
+export default function BookNotes({ compact = false, onProposeForNote }: {
+  compact?: boolean;
+  // 14-oct ("los agentes, separados"): al guardar una nota 📌, ofrecer que el ④ proponga filas SOLO para
+  // ella. Devuelve cuántas filas propuso.
+  onProposeForNote?: (noteId: number) => Promise<number>;
+}) {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || "en").split("-")[0];
   const [notes, setNotes] = useState<BookNote[] | null>(null);
@@ -27,6 +32,7 @@ export default function BookNotes({ compact = false }: { compact?: boolean }) {
   const [draft, setDraft] = useState<BookNoteInput>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [offer, setOffer] = useState<{ id: number; state: "ask" | "running" | "done"; count?: number } | null>(null);
 
   const errText = (e: unknown) =>
     e instanceof BookNoteError
@@ -57,9 +63,11 @@ export default function BookNotes({ compact = false }: { compact?: boolean }) {
     };
     setSaving(true); setError(null);
     try {
-      if (editing === "new") await createBookNote(body);
-      else if (typeof editing === "number") await updateBookNote(editing, body);
+      let saved: BookNote | null = null;
+      if (editing === "new") saved = await createBookNote(body);
+      else if (typeof editing === "number") saved = await updateBookNote(editing, body);
       setEditing(null);
+      if (saved && saved.kind === "keep_in_mind" && onProposeForNote) setOffer({ id: saved.id, state: "ask" });
       await load();
     } catch (e) {
       setError(errText(e));
@@ -167,6 +175,30 @@ export default function BookNotes({ compact = false }: { compact?: boolean }) {
       </div>
 
       {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{error}</p>}
+      {offer && onProposeForNote && (
+        <div className="flex flex-wrap items-center gap-2 text-xs bg-emerald-50/60 border border-emerald-100 rounded-lg px-3 py-2">
+          {offer.state === "ask" && <>
+            <span className="text-slate-700">{t("auditView.noteOffer.ask")}</span>
+            <span className="text-slate-400">{t("auditView.est.calls", { count: 1 })}</span>
+            <button className="ms-auto px-2.5 py-1 rounded-lg font-semibold text-white bg-emerald-700"
+                    onClick={async () => {
+                      setOffer({ ...offer, state: "running" });
+                      try { setOffer({ ...offer, state: "done", count: await onProposeForNote(offer.id) }); }
+                      catch (e) { setOffer(null); setError(errText(e)); }
+                    }}>
+              {t("auditView.noteOffer.propose")}
+            </button>
+            <button className="px-2.5 py-1 rounded-lg text-slate-600 hover:bg-slate-100" onClick={() => setOffer(null)}>
+              {t("auditView.noteOffer.later")}
+            </button>
+          </>}
+          {offer.state === "running" && <span className="text-slate-600">{t("auditView.noteOffer.running")}</span>}
+          {offer.state === "done" && <>
+            <span className="text-slate-700">{offer.count ? t("auditView.noteOffer.done", { count: offer.count }) : t("auditView.noteOffer.none")}</span>
+            <button className="ms-auto px-2 py-0.5 rounded text-slate-500 hover:bg-slate-100" onClick={() => setOffer(null)}>✕</button>
+          </>}
+        </div>
+      )}
       {editing === "new" && form}
 
       {notes === null ? (

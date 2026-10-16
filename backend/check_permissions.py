@@ -120,7 +120,9 @@ BODIES: dict[tuple[str, str], dict] = {
     ("PATCH", "/api/firm"): {"brand_name": "PERMCHECK"},
     ("PATCH", "/api/companies/{company_id}/settlement"): {"wait_days": 5},
     ("POST", "/api/companies/{company_id}/bank-connections"): {"public_token": "public-permcheck"},
+    ("POST", "/api/companies/{company_id}/bank-connections/check"): {"institution_name": "First Platypus Bank", "account_masks": ["0000"]},
     ("POST", "/api/companies/{company_id}/rules/preview"): {"keyword": "HOME DEPOT"},
+    ("POST", "/api/companies/{company_id}/rules/{rule_id}/edit-preview"): {"match_text": "HOME DEPOT"},
     ("POST", "/api/companies/{company_id}/transactions/{transaction_id}/bank-removed"): {"action": "keep"},
     ("POST", "/api/companies/{company_id}/bank-connections/link-token"): {"language": "es"},
     ("POST", "/api/companies/{company_id}/checkout/confirm"): {"session_id": "cs_x"},
@@ -135,6 +137,8 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/agents/draft"): {"lang": "es"},
     ("POST", "/api/companies/{company_id}/agents/review"): {"lang": "es"},
     ("POST", "/api/companies/{company_id}/agents/verify"): {},
+    ("POST", "/api/companies/{company_id}/agents/audit"): {"lang": "es"},
+    ("POST", "/api/companies/{company_id}/agents/verify-merchant"): {"transaction_id": 999999},
     ("POST", "/api/companies/{company_id}/audit/findings/{finding_id}/resolve"): {"status": "ok"},
     ("POST", "/api/companies/{company_id}/agents/dismissals"): {"keyword": "PERMCHECK"},
     # "__TX__" se reemplaza por el id de la transacción REAL de prueba: con una lista vacía el
@@ -144,6 +148,7 @@ BODIES: dict[tuple[str, str], dict] = {
 
 # Parámetros OBLIGATORIOS en la URL (query). Sin ellos FastAPI responde 422 antes del permiso.
 QUERY: dict[tuple[str, str], dict] = {
+    ("GET", "/api/companies/{company_id}/agents/estimate"): {"action": "audit"},
     ("GET", "/api/companies/{company_id}/pivot/leaves"): {
         "section": "COGS", "category": "Materials", "subcategory": "Home Depot", "month": "2026-06"},
 }

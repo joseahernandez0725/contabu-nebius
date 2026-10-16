@@ -208,10 +208,14 @@
     "confirmRemove": "Unlink {{name}}? Transactions already imported stay in the book.",
     "notReady": "The bank is still preparing its history. Press Refresh in a few minutes.",
     "synced": "{{inserted}} new · {{skipped}} already in the book · {{held}} still pending at the bank · {{pending}} with no rule yet",
+    "dupSame": "{{bank}} is already linked in this book, so it wasn't linked again (that would use a second Plaid connection). If it stopped updating, use Reconnect.",
+    "dupOther": "{{bank}} is already linked in {{book}}, so it wasn't linked again (that would use a second Plaid connection).",
+    "thisBook": "this book",
     "err": {
       "bank_not_configured": "Bank linking isn't set up on this server yet.",
       "bank_disconnected": "The bank cut the connection. Reconnect to keep importing.",
       "bank_error": "The bank didn't respond. Try again in a moment.",
+      "bank_duplicate": "This bank is already linked in {{book}}. It wasn't linked again.",
       "bank_script": "Couldn't load Plaid. Check your connection and try again."
     },
     "beforeCsv_one": "{{count}} skipped: that day was already in the book from a CSV upload",
@@ -431,7 +435,12 @@
       "food_delivery": "Food delivery",
       "payment_processor": "Payment processor",
       "property_management": "Property management",
-      "bank_financial": "Bank / financial"
+      "bank_financial": "Bank / financial",
+      "consumer_electronics": "Electronics store",
+      "convenience_store": "Convenience store",
+      "department_store": "Department store",
+      "streaming_entertainment": "Streaming / entertainment",
+      "tolls_parking": "Tolls / parking"
     },
     "warning": {
       "web_says_personal": "The web says this merchant is for personal use, but this row books it as a business expense. Check before approving."
@@ -445,14 +454,14 @@
     "running": "Reviewing…",
     "moreActions": "Run one step",
     "only": {
-      "audit": "Audit only (free)",
-      "verify": "② Verify merchants (web)",
+      "audit": "Audit only (code, notes, ⑤ and ①)",
+      "verify": "⑤ Personal? → ② verify on the web",
       "review": "① Review findings",
       "draft": "④ Propose formula rows"
     },
     "stepName": {
-      "audit": "Audit",
-      "verify": "② Verify",
+      "audit": "Audit (code + ①)",
+      "verify": "⑤ Personal? → ② verified on the web",
       "review": "① Review",
       "draft": "④ Draft"
     },
@@ -464,7 +473,10 @@
       "verified_other": "{{count}} merchants verified · {{credits}} credits",
       "reviewing_one": "Reviewing {{count}} finding…",
       "reviewing_other": "Reviewing {{count}} findings…",
-      "drafting": "Drafting formula rows…"
+      "drafting": "Drafting formula rows…",
+      "searching_one": "⑤ flagged {{count}} merchant as possibly personal: verifying it on the web…",
+      "searching_other": "⑤ flagged {{count}} merchants as possibly personal: verifying them on the web…",
+      "searched": "{{searched}} searched · {{cached}} from the office's memory · {{credits}} credits · ① re-judged {{rejudged}}"
     },
     "stat": {
       "toReview": "to review",
@@ -494,13 +506,13 @@
       "inconsistent_merchant": "Same merchant, different categories",
       "sign_mismatch": "Direction doesn't match the category",
       "rule_collision": "Two rules collide",
-      "merchant_type_mismatch": "Personal-use merchant booked as a business expense",
+      "merchant_type_mismatch": "② The web says: personal use",
       "payroll_net_only": "Payroll: the bank only sees the net",
       "coverage_gap": "Missing data",
       "bank_disconnected": "Bank disconnected",
       "unusual_amount": "Unusual amount",
       "note_check": "What your note asks",
-      "personal_use": "Personal for this business?"
+      "personal_use": "⑤ Personal for this business?"
     },
     "say": {
       "rule_deviation": "Your rule “{{rule}}” says {{says}}, but this row has {{has}}.",
@@ -557,7 +569,42 @@
     "reasonText": "Why? (optional — the drafter learns from it)",
     "poweredBy": "Agents on {{model}} · web verification by Tavily",
     "costLine": "This book: {{cost}} · {{left}} agent calls left today",
-    "costTip": "Spent on this book: {{cost}} · agent calls left today: {{calls}} of {{cap}} · web searches left: {{searches}} of {{scap}}"
+    "costTip": "Spent on this book: {{cost}} · agent calls left today: {{calls}} of {{cap}} · web searches left: {{searches}} of {{scap}}",
+    "auditBtn": "Audit",
+    "auditTip": "The auditor (code), your notes, ⑤ \"personal for this business?\" and the ① reviewer. No drafting, no web searches.",
+    "est": {
+      "calls_one": "~{{count}} AI call",
+      "calls_other": "~{{count}} AI calls",
+      "searches_one": "up to {{count}} web search ({{min}}–{{max}} credits)",
+      "searches_other": "up to {{count}} web searches ({{min}}–{{max}} credits)",
+      "free": "no AI calls, no web searches",
+      "line": "{{action}}: {{what}}"
+    },
+    "spent": "Cost: {{calls}} AI calls · {{cost}} · {{searches}} web searches ({{credits}} credits)",
+    "search": {
+      "button": "🔎 Search this merchant",
+      "hint": "1 web search (1–3 credits), unless your office already looked it up",
+      "searching": "Searching…",
+      "cached": "Already in your office's memory: 0 credits.",
+      "found": "{{type}} · {{confidence}} · {{depth}} · {{credits}} credits.",
+      "notFound": "The web didn't say what this business is ({{credits}} credits).",
+      "depth": {
+        "basic": "basic search",
+        "basic+advanced": "basic + deep search"
+      },
+      "skipped": "Not searched: payments to people, checks and transfers are never searched.",
+      "rejudged_one": "The ① reviewer re-judged {{count}} finding with it.",
+      "rejudged_other": "The ① reviewer re-judged {{count}} findings with it."
+    },
+    "noteOffer": {
+      "ask": "Propose formula rows for this note?",
+      "propose": "Propose",
+      "later": "Not now",
+      "running": "Drafting rows for this note…",
+      "none": "The drafter proposed no rows for this note.",
+      "done_one": "{{count}} row proposed for this note.",
+      "done_other": "{{count}} rows proposed for this note."
+    }
   },
   "audit": {
     "title": "Audit my categorization",
@@ -734,6 +781,48 @@
     "deleteToPending_one": "{{count}} stays Pending",
     "deleteToPending_other": "{{count}} stay Pending",
     "deleteManual": "What you wrote by hand doesn't change. You can undo it.",
+    "kwAsk": "Change the keyword “{{a}}” → “{{b}}”?",
+    "kwKeep_one": "It keeps {{count}} transaction",
+    "kwKeep_other": "It keeps {{count}} transactions",
+    "kwRelease_one": "It lets go of {{count}} transaction, which goes:",
+    "kwRelease_other": "It lets go of {{count}} transactions, which go:",
+    "kwTake_one": "It takes {{count}} transaction:",
+    "kwTake_other": "It takes {{count}} transactions:",
+    "kwFromRule_one": "{{count}} from the rule {{k}}",
+    "kwFromRule_other": "{{count}} from the rule {{k}}",
+    "kwFromPending_one": "{{count}} that was Pending",
+    "kwFromPending_other": "{{count}} that were Pending",
+    "kwFromTransfer_one": "{{count}} that was a transfer",
+    "kwFromTransfer_other": "{{count}} that were transfers",
+    "kwFromOther_one": "{{count}} with an old categorization",
+    "kwFromOther_other": "{{count}} with an old categorization",
+    "kwNone": "No transaction changes.",
+    "kwManual_one": "{{count}} written by hand also matches; it doesn't change. You can undo this.",
+    "kwManual_other": "{{count}} written by hand also match; they don't change. You can undo this.",
+    "kwDone": "Keyword changed: {{r}} let go, {{k}} taken.",
+    "undoKeyword": "keyword of {{k}}",
+    "winThis": "make this win",
+    "winHint": "Put this rule ahead of {{k}}: the rows both match go to this one",
+    "winAsk_one": "Make “{{a}}” win over “{{b}}”? {{count}} transaction moves to this rule.",
+    "winAsk_other": "Make “{{a}}” win over “{{b}}”? {{count}} transactions move to this rule.",
+    "winAlso": "It will also win over: {{list}}.",
+    "undoWin": "{{a}} wins over {{b}}",
+    "showPriority": "Show the priority number",
+    "trace": {
+      "title": "Why this category",
+      "manual": "Written by hand: no rule touches it. The formula would say:",
+      "bareCheck": "A check with no text: rules don't take it until you write what it was for (+ add).",
+      "lone_one": "Only this rule mentions the description ({{count}} rule in the book).",
+      "lone_other": "Only this rule mentions the description (of {{count}} rules in the book).",
+      "date": "no: the date is outside",
+      "amount": "no: the amount is outside",
+      "after": "also matches, but comes later",
+      "noneFits": "No rule fits.",
+      "noneMentions_one": "The book's {{count}} rule doesn't mention this description.",
+      "noneMentions_other": "None of the book's {{count}} rules mentions this description.",
+      "transferYes": "Transfer between your accounts",
+      "transferNo": "Not a transfer between your accounts → Pending"
+    },
     "undoDelete": "delete rule {{k}}",
     "deleted": "Rule deleted. {{r}} went to another rule, {{tr}} to transfers, {{p}} are Pending.",
     "goMissing": "The rule that decided this row no longer exists. Its transactions went back to the other rules or are Pending.",

@@ -48,8 +48,9 @@ from reports import pivot, pivot_leaves, income_statement
 import bank
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
-    in_amount, in_window, is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
+    is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
     place_priority, reapply_rule_precedence, redecide_transaction, rule_overlaps, simulate_delete,
+    simulate_rule_change, rule_trace,
     suggest_keyword, normalize,
 )
 
@@ -125,6 +126,7 @@ class CustomCategoryCreate(BaseModel):
 
 class RuleUpdate(BaseModel):
     """Edición de una regla de empresa desde la tabla de reglas (comercio → categoría)."""
+    match_text: Optional[str] = None   # la palabra clave (14-oct): la hoja muestra antes la vista previa
     account_type: Optional[AccountType] = None
     category: Optional[str] = None
     subcategory: Optional[str] = None  # comercio presentable que asigna la regla ("" → limpiar)
@@ -461,10 +463,26 @@ class BankLinkTokenRequest(BaseModel):
     language: Optional[str] = None  # "es" | "en" — el idioma de Link
 
 
-class BankConnectionCreate(BaseModel):
+class BankLinkMetadata(BaseModel):
+    """Lo que Plaid Link devuelve en `metadata` y sirve para reconocer un banco ya vinculado (14-oct)."""
+    institution_id: Optional[str] = None
+    institution_name: Optional[str] = None
+    account_masks: list[str] = []
+
+
+class BankConnectionCreate(BankLinkMetadata):
     """Lo que devuelve Plaid Link en `onSuccess`: el public_token (de un solo uso) y el banco."""
     public_token: str
-    institution_name: Optional[str] = None
+
+
+def _bank_duplicate(session: Session, company: Company, meta: BankLinkMetadata) -> Optional[dict]:
+    """El banco ya vinculado (en este libro u otro de la oficina), o None. Ver `bank.find_duplicate`."""
+    dup = bank.find_duplicate(session, company, meta.institution_id, meta.institution_name, meta.account_masks)
+    if dup is None:
+        return None
+    book = session.get(Company, dup.company_id)
+    return {"connection_id": dup.id, "company_id": dup.company_id, "company_name": book.name if book else None,
+            "institution_name": dup.institution_name, "same_book": dup.company_id == company.id}
 
 
 def _bank_connection_out(c: BankConnection) -> dict:
@@ -550,6 +568,19 @@ def create_bank_link_token(
         raise _bank_http_error(e)
 
 
+@app.post("/api/companies/{company_id}/bank-connections/check")
+def check_bank_connection(
+    company_id: int,
+    payload: BankLinkMetadata,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """ANTES de canjear el public_token (14-oct): ¿este banco ya está vinculado, aquí o en otro libro de la
+    oficina? La pantalla lo pregunta en el `onSuccess` de Link y, si lo está, NO canjea. No toca nada."""
+    company = owned_company(company_id, user, session, write=True)
+    return {"duplicate": _bank_duplicate(session, company, payload)}
+
+
 @app.post("/api/companies/{company_id}/bank-connections")
 def create_bank_connection(
     company_id: int,
@@ -563,6 +594,12 @@ def create_bank_connection(
     public_token = (payload.public_token or "").strip()
     if not public_token:
         raise HTTPException(status_code=422, detail="public_token es obligatorio")
+    # SEGUNDA BARRERA (14-oct): la pantalla ya lo preguntó, pero si el banco está vinculado, el token NO se
+    # canjea. Canjear crea la conexión en Plaid, y en el plan Trial cada conexión cuenta y no se recupera.
+    dup = _bank_duplicate(session, company, payload)
+    if dup is not None:
+        raise HTTPException(status_code=409, detail={"code": "bank_duplicate", "reason": dup["company_name"],
+                                                     "duplicate": dup})
     try:
         access_token, item_id = bank.exchange_public_token(public_token)
         enc = bank.encrypt_token(access_token)
@@ -575,6 +612,7 @@ def create_bank_connection(
                               item_id=item_id, access_token_enc=enc, created_by_user_id=user.id)
     conn.access_token_enc = enc
     conn.institution_name = (payload.institution_name or "").strip() or conn.institution_name
+    conn.institution_id = (payload.institution_id or "").strip() or conn.institution_id
     session.add(conn)
     session.commit()
     session.refresh(conn)
@@ -1099,7 +1137,12 @@ def update_rule(
         clean = {"bg": bg if isinstance(bg, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", bg) else None,
                  "bold": bool(st.get("bold")), "italic": bool(st.get("italic"))}
         data["style"] = clean if (clean["bg"] or clean["bold"] or clean["italic"]) else None
-    if data.keys() & {"valid_from", "valid_to", "amount_min", "amount_max"}:
+    if "match_text" in data:
+        data["match_text"] = (data["match_text"] or "").strip().upper()
+        if len(normalize(data["match_text"])) < 2:
+            raise HTTPException(status_code=422, detail="keyword demasiado corto")
+    if data.keys() & {"match_text", "valid_from", "valid_to", "amount_min", "amount_max"}:
+        mt = data.get("match_text", rule.match_text)
         vf = data.get("valid_from", rule.valid_from)
         vt = data.get("valid_to", rule.valid_to)
         amin = _money(data.get("amount_min", rule.amount_min))
@@ -1111,15 +1154,16 @@ def update_rule(
         _valid_amount(amin, amax)
         others = session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
                               .where(CategoryRule.id != rule.id)).all()
-        if any(_same_rule(r, rule.match_text, vf, vt, amin, amax) for r in others):
+        if any(_same_rule(r, mt, vf, vt, amin, amax) for r in others):
             raise HTTPException(status_code=409, detail="ya existe una regla con ese keyword y esas condiciones")
-        # Cambiar las condiciones puede SOLTAR filas que ya no caen en ellas: vuelven al motor (otra
-        # regla, transferencia o Pendiente). Lo manual no se toca.
-        cond = CategoryRule(match_text=rule.match_text, category="-", scope=RuleScope.COMPANY,
+        # Cambiar la palabra clave o las condiciones puede SOLTAR filas que ya no caen en ellas: vuelven
+        # al motor (otra regla, transferencia o Pendiente). Lo manual no se toca.
+        cond = CategoryRule(match_text=mt, category="-", scope=RuleScope.COMPANY,
                             valid_from=vf, valid_to=vt, amount_min=amin, amount_max=amax)
         released = [t for t in session.exec(select(Transaction).where(Transaction.company_id == company_id)
                                             .where(Transaction.matched_rule_id == rule.id)).all()
-                    if t.source != "manual" and not (in_window(cond, t.date) and in_amount(cond, t.amount))]
+                    if t.source != "manual"
+                    and match_rule([cond], matchable_text(t.description, t.description_extra), t.date, t.amount) is None]
     else:
         released = []
     moved_priority = bool(data.pop("_priority", False))
@@ -1147,6 +1191,42 @@ def update_rule(
             "category": rule.category, "subcategory": rule.subcategory,
             "priority": rule.priority, "style": rule.style, **_rule_out(rule),
             "applied": applied, "reassigned": reassigned, "released": len(released)}
+
+
+class RuleEditPreviewIn(BaseModel):
+    match_text: str
+
+
+@app.post("/api/companies/{company_id}/rules/{rule_id}/edit-preview")
+def preview_edit_rule(
+    company_id: int,
+    rule_id: int,
+    payload: RuleEditPreviewIn,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """ANTES de cambiar la palabra clave de una regla (14-oct): cuántas filas conserva, cuántas suelta
+    (y a dónde irían) y cuántas toma (y de dónde vienen). No toca nada."""
+    console_company(company_id, user, session)
+    rule = _owned_company_rule(company_id, rule_id, session)
+    match_text = (payload.match_text or "").strip().upper()
+    if len(normalize(match_text)) < 2:
+        raise HTTPException(status_code=422, detail="keyword demasiado corto")
+    changed = CategoryRule(id=rule.id, scope=RuleScope.COMPANY, company_id=company_id, match_text=match_text,
+                           account_type=rule.account_type, category=rule.category, subcategory=rule.subcategory,
+                           priority=rule.priority, valid_from=rule.valid_from, valid_to=rule.valid_to,
+                           amount_min=rule.amount_min, amount_max=rule.amount_max)
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company_id)).all()
+    sim = simulate_rule_change(load_rules(session, company_id, ""), rule.id, changed, txs)
+    names = {r.id: r for r in session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)).all()}
+    named = lambda c: [{"id": k, "match_text": names[k].match_text, "category": names[k].category, "rows": n}
+                       for k, n in c.most_common() if k in names]
+    dup = next((r for r in names.values() if r.id != rule.id and r.scope == RuleScope.COMPANY
+                and _same_rule(r, match_text, rule.valid_from, rule.valid_to, rule.amount_min, rule.amount_max)), None)
+    return {"id": rule.id, "before": rule.match_text, "match_text": match_text,
+            **{k: v for k, v in sim.items() if k not in ("to_rules", "from_rules")},
+            "to_rules": named(sim["to_rules"]), "from_rules": named(sim["from_rules"]),
+            "duplicate": {"id": dup.id, "match_text": dup.match_text, "category": dup.category} if dup else None}
 
 
 def _rule_rows(session: Session, company_id: int, rule_id: int) -> list[Transaction]:
@@ -1534,6 +1614,7 @@ class AgentRunIn(BaseModel):
     lang: Optional[str] = "es"          # idioma de las explicaciones (el de la interfaz)
     reasoning: Optional[bool] = False   # dejar razonar al modelo (más tokens; ver nemotron.py)
     focus_tx_ids: Optional[list[int]] = None   # ④: una regla para ESTE grupo de Pendientes
+    note_id: Optional[int] = None              # ④: las filas de ESTA nota, recién guardada (14-oct)
 
 
 def _agent_error(e: Exception) -> HTTPException:
@@ -1552,12 +1633,15 @@ def run_formula_drafter(company_id: int, payload: AgentRunIn, user: User = Depen
     import agent_calls
     import agents
     company = owned_company(company_id, user, session, write=True)
+    since = agent_calls.mark(session, company)
     try:
         res = agents.draft(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
-                           user_id=user.id, focus_tx_ids=payload.focus_tx_ids)
+                           user_id=user.id, focus_tx_ids=payload.focus_tx_ids, note_id=payload.note_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail={"code": "note_not_found"})
     except Exception as e:
         raise _agent_error(e)
-    return {"outcome": res.outcome, "calls": res.calls,
+    return {"outcome": res.outcome, "calls": res.calls, "spent": agent_calls.spent(session, company, since),
             "proposals": [agents.proposal_dict(p) for p in res.proposals],
             "rejected": [{"keyword": r["raw"].get("keyword") if isinstance(r["raw"], dict) else None,
                           "errors": r["errors"]} for r in res.rejected],
@@ -1570,28 +1654,98 @@ def run_reviewer(company_id: int, payload: AgentRunIn, user: User = Depends(curr
     import agent_calls
     import agents
     company = owned_company(company_id, user, session, write=True)
+    since = agent_calls.mark(session, company)
     try:
         res = agents.review(session, company, lang=payload.lang or "es", reasoning=bool(payload.reasoning),
                             user_id=user.id)
     except Exception as e:
         raise _agent_error(e)
     return {"outcome": res.outcome, "silenced": res.silenced, "reviews": res.reviews,
-            "usage": agent_calls.usage_dict(res.usage)}
+            "usage": agent_calls.usage_dict(res.usage), "spent": agent_calls.spent(session, company, since)}
+
+
+# "Auditar" (14-oct): el auditor (código) + las notas como chequeos + "¿personal para este negocio?" + el
+# ① revisor. Sin redactar. Es la misma corrida que `/agents/review` (que ya hace todo eso), con otro nombre
+# para la pantalla.
+@app.post("/api/companies/{company_id}/agents/audit")
+def run_audit(company_id: int, payload: AgentRunIn, user: User = Depends(current_user),
+              session: Session = Depends(get_session)):
+    return run_reviewer(company_id, payload, user, session)
+
+
+class VerifyIn(BaseModel):
+    lang: Optional[str] = "es"
+
+
+def _rejudge(session: Session, company, res, lang: str, user_id: int) -> Optional[dict]:
+    """La IDA Y VUELTA (14-oct): con la evidencia NUEVA del ②, el ① vuelve a juzgar ESOS hallazgos. Una
+    vuelta, no un bucle. Si se acabó el tope o falla, la evidencia queda guardada igual."""
+    import agents
+    if not res.finding_ids:
+        return None
+    try:
+        r = agents.review(session, company, lang=lang, user_id=user_id, finding_ids=res.finding_ids)
+        return {"rejudged": r.reviewed, "outcome": r.outcome}
+    except Exception:
+        return {"rejudged": 0, "outcome": "error"}
 
 
 @app.post("/api/companies/{company_id}/agents/verify")
-def run_merchant_verifier(company_id: int, user: User = Depends(current_user),
+def run_merchant_verifier(company_id: int, payload: Optional[VerifyIn] = None, user: User = Depends(current_user),
                           session: Session = Depends(get_session)):
-    """② Verificador de comercios (Tavily): tipo de negocio de cada comercio, con enlace y confianza.
-    Nunca busca personas; una búsqueda por comercio, guardada por oficina; no cambia ninguna categoría."""
+    """② Verificador de comercios (Tavily), REDISEÑADO el 14-oct: busca solo los comercios que la
+    auditoría marcó (memoria de la oficina primero; básica y, si no da confianza alta, una avanzada) y
+    el ① vuelve a juzgar esos hallazgos. Nunca busca personas; no cambia ninguna categoría."""
+    import agent_calls
     import merchant_verifier
     company = owned_company(company_id, user, session, write=True)
+    since = agent_calls.mark(session, company)
     try:
-        res = merchant_verifier.verify(session, company, user_id=user.id)
+        res = merchant_verifier.verify_flagged(session, company, user_id=user.id)
     except merchant_verifier.TavilyUnavailable:
         raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
+    again = _rejudge(session, company, res, (payload.lang if payload else None) or "es", user.id)
     return {"outcome": res.outcome, "items": res.items, "searched": res.searched,
-            "from_cache": res.from_cache, "skipped": dict(res.skipped), "credits": res.credits}
+            "from_cache": res.from_cache, "skipped": dict(res.skipped), "credits": res.credits,
+            "rejudge": again, "spent": agent_calls.spent(session, company, since)}
+
+
+class SearchMerchantIn(BaseModel):
+    transaction_id: int
+    lang: Optional[str] = "es"
+
+
+@app.post("/api/companies/{company_id}/agents/verify-merchant")
+def search_merchant(company_id: int, payload: SearchMerchantIn, user: User = Depends(current_user),
+                    session: Session = Depends(get_session)):
+    """"Buscar este comercio" (14-oct): el comercio de UN movimiento, al instante, memoria de la oficina
+    primero. Si trae evidencia nueva y el comercio tiene hallazgos, el ① los vuelve a juzgar."""
+    import agent_calls
+    import merchant_verifier
+    company = owned_company(company_id, user, session, write=True)
+    since = agent_calls.mark(session, company)
+    try:
+        res = merchant_verifier.search_one(session, company, payload.transaction_id, user_id=user.id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail={"code": "transaction_not_found"})
+    except merchant_verifier.TavilyUnavailable:
+        raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
+    again = _rejudge(session, company, res, payload.lang or "es", user.id)
+    return {"outcome": res.outcome, "item": res.items[0] if res.items else None,
+            "skipped": next(iter(res.skipped), None), "searched": res.searched, "from_cache": res.from_cache,
+            "rejudge": again, "spent": agent_calls.spent(session, company, since)}
+
+
+@app.get("/api/companies/{company_id}/agents/estimate")
+def agents_estimate(company_id: int, action: str, note_id: Optional[int] = None,
+                    transaction_id: Optional[int] = None, lang: str = "es",
+                    user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Cuánto costaría una acción, ANTES de correrla (llamadas a Nemotron y búsquedas de Tavily)."""
+    import agents
+    company = owned_company(company_id, user, session, write=True)
+    if action not in ("audit", "verify", "draft", "review_book", "note", "search"):
+        raise HTTPException(status_code=422, detail={"code": "bad_action"})
+    return agents.estimate(session, company, action, note_id=note_id, transaction_id=transaction_id, lang=lang)
 
 
 # ── La revisión del libro (FASE 11, 8-oct): la lista ÚNICA de hallazgos guardados + lo Pendiente
@@ -2294,3 +2448,16 @@ def transaction_insight(company_id: int, transaction_id: int, user: User = Depen
     if tx is None:
         raise HTTPException(status_code=404, detail="transaction not found")
     return tx_insight.insight(session, company, tx)
+
+
+@app.get("/api/companies/{company_id}/transactions/{transaction_id}/rule-trace")
+def transaction_rule_trace(company_id: int, transaction_id: int, user: User = Depends(current_user),
+                           session: Session = Depends(get_session)):
+    """POR QUÉ tiene su categoría (14-oct, Movimientos): las reglas que mencionan su descripción, en el orden
+    real, y qué pasó con cada una. Solo lectura."""
+    import tx_insight
+    company = console_company(company_id, user, session)
+    tx = tx_insight.transaction_of(session, company, transaction_id)
+    if tx is None:
+        raise HTTPException(status_code=404, detail="transaction not found")
+    return rule_trace(load_rules(session, company.id, ""), tx)

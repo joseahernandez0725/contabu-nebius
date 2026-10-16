@@ -232,6 +232,91 @@ def simulate_delete(rules: list[CategoryRule], rule_id: int, txs: list) -> dict:
     return {"to_rules": to_rules, "to_transfer": to_transfer, "to_pending": to_pending}
 
 
+def simulate_rule_change(rules: list[CategoryRule], rule_id: int, changed: CategoryRule, txs: list) -> dict:
+    """Qué pasaría si la regla `rule_id` pasa a ser `changed` (otra palabra clave), sin tocar nada
+    (Jose, 14-oct: editar la palabra clave con vista previa). Hace lo mismo que el PATCH: las filas
+    que la regla deja de ganar se SUELTAN al motor (otra regla → transferencia → Pendiente) y las que
+    pasa a ganar se TOMAN, vengan de donde vengan. `txs` = todas las del libro. Lo escrito a mano y los
+    cheques sin texto no entran (ninguna regla los toca); lo manual que la nueva palabra cazaría se
+    cuenta aparte, para decirlo."""
+    after = sorted([changed if r.id == rule_id else r for r in rules], key=rule_order)
+    to_rules: Counter = Counter()
+    from_rules: Counter = Counter()
+    out = {"keep": 0, "release": 0, "to_transfer": 0, "to_pending": 0,
+           "take": 0, "from_pending": 0, "from_transfer": 0, "from_other": 0, "manual": 0,
+           "release_examples": [], "take_examples": []}
+    for t in txs:
+        text = matchable_text(t.description, t.description_extra)
+        if t.source == "manual":
+            out["manual"] += match_rule([changed], text, t.date, t.amount) is not None
+            continue
+        if is_check(t.description) and not t.description_extra:
+            continue
+        winner = match_rule(after, text, t.date, t.amount)
+        mine_now = t.source == "rule" and t.matched_rule_id == rule_id
+        mine_after = winner is not None and winner.id == rule_id
+        if mine_now and mine_after:
+            out["keep"] += 1
+        elif mine_now:
+            out["release"] += 1
+            if winner is not None:
+                to_rules[winner.id] += 1
+            elif classify_transfer(t.description) is not None:
+                out["to_transfer"] += 1
+            else:
+                out["to_pending"] += 1
+            if len(out["release_examples"]) < 3:
+                out["release_examples"].append(t.description)
+        elif mine_after:
+            out["take"] += 1
+            if t.source == "rule" and t.matched_rule_id is not None:
+                from_rules[t.matched_rule_id] += 1
+            elif t.source == "transfer":
+                out["from_transfer"] += 1
+            elif t.category is None:
+                out["from_pending"] += 1
+            else:
+                out["from_other"] += 1  # historia vieja (banda de monto, IA)
+            if len(out["take_examples"]) < 3:
+                out["take_examples"].append(t.description)
+    return {**out, "to_rules": to_rules, "from_rules": from_rules}
+
+
+def rule_trace(rules: list[CategoryRule], tx) -> dict:
+    """POR QUÉ una fila tiene su categoría (Jose, 14-oct: la fórmula, pero de UNA fila). Recorre las reglas en
+    el orden real (`rules` ya ordenadas, `load_rules`) y devuelve solo las que MENCIONAN la descripción, cada
+    una con lo que pasó: `wins` (decide), `date` / `amount` (la palabra coincide pero la condición no) o
+    `after` (también coincide, pero va detrás de la que ganó). Si ninguna gana: transferencia o Pendiente.
+    Es lo mismo que decide `match_rule`; no toca nada. Lo escrito a mano se explica igual (qué diría la
+    fórmula), aunque ninguna regla lo toque."""
+    text = matchable_text(tx.description, getattr(tx, "description_extra", None))
+    desc = f" {_phrase(text)} "
+    bare_check = is_check(tx.description) and not getattr(tx, "description_extra", None)
+    steps, winner = [], None
+    for i, r in enumerate(rules, start=1):
+        if desc == "  " or not _matches(r.match_text, desc):
+            continue
+        if winner is not None:
+            result = "after"
+        elif not in_window(r, tx.date):
+            result = "date"
+        elif not in_amount(r, tx.amount):
+            result = "amount"
+        else:
+            result, winner = "wins", r
+        steps.append({"id": r.id, "order": i, "keyword": r.match_text, "result": result,
+                      "account_type": r.account_type.value if r.account_type else None, "category": r.category,
+                      "valid_from": r.valid_from.isoformat() if r.valid_from else None,
+                      "valid_to": r.valid_to.isoformat() if r.valid_to else None,
+                      "amount_min": float(r.amount_min) if r.amount_min is not None else None,
+                      "amount_max": float(r.amount_max) if r.amount_max is not None else None})
+    transfer = classify_transfer(tx.description) if winner is None else None
+    return {"steps": steps, "checked": len(rules), "winner_id": winner.id if winner else None,
+            "decision": "rule" if winner else ("transfer" if transfer else "pending"),
+            "transfer": {"account_type": transfer[0].value, "category": transfer[1]} if transfer else None,
+            "manual": tx.source == "manual", "bare_check": bare_check}
+
+
 def has_window(r: CategoryRule) -> bool:
     return getattr(r, "valid_from", None) is not None or getattr(r, "valid_to", None) is not None
 

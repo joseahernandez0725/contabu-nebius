@@ -460,6 +460,9 @@ class BankConnection(SQLModel, table=True):
     environment: str                                   # sandbox | production
     item_id: str = Field(index=True)                   # Item de Plaid (único por libro)
     institution_name: Optional[str] = Field(default=None)
+    # El id de la institución en Plaid (`ins_…`, 14-oct): con las máscaras de las cuentas detecta un banco
+    # ya vinculado ANTES de canjear el token (en el plan Trial cada conexión cuenta). Nulo en las viejas.
+    institution_id: Optional[str] = Field(default=None)
     access_token_enc: str
     # Las cuentas del Item: [{id, name, mask, type, subtype}]
     accounts: list = Field(default_factory=list, sa_column=Column(JSON))
@@ -560,6 +563,9 @@ class MerchantLookup(SQLModel, table=True):
     source_domain: Optional[str] = Field(default=None)
     results_count: int = Field(default=0)
     credits: int = Field(default=0)
+    # 14-oct: "basic" (1 crédito) o "basic+advanced" (1 + 2: la básica no dio confianza alta y se buscó
+    # UNA vez más a fondo). Nulo en las filas viejas y en las sembradas del demo.
+    search_depth: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=_utcnow)
 
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getTransactionInsight, money, resolveFinding, type FlagLevel, type TxInsight } from "../api";
 import { useAuditText, VERDICT_STYLE } from "./AuditWorkspace";
+import RuleTrace from "./RuleTrace";
 import {
   BTN_GHOST, BTN_SECONDARY, Badge, DOT, DetailCard, DetailEmpty, DetailHeader, DetailSection,
 } from "./PageKit";
@@ -107,6 +108,8 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
                 </span>
               )}
               <Provenance x={x} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
+              {/* Por qué (14-oct, Movimientos): la fórmula de ESTA fila — las reglas que la mencionan, en orden. */}
+              <RuleTrace txId={tx.id} refreshKey={refreshKey} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
             </DetailSection>
 
             {/* 3. LO QUE ENCONTRARON LOS AGENTES */}

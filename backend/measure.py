@@ -24,6 +24,12 @@ Uso:
     .venv/bin/python measure.py --demo --audit         # donde la IA APORTA (13-oct): el ④ sobre lo Pendiente
                                                        # y el ① sobre errores plantados, contra respuestas
                                                        # escritas ANTES (demo_data.DEMO_TRUTH_*, Movimientos)
+    .venv/bin/python measure.py --demo --audit --web oracle   # Tavily REDISEÑADO (14-oct): la memoria de la
+                                                       # oficina empieza VACÍA y el ② busca solo lo que la
+                                                       # auditoría marcó; las búsquedas las contesta lo
+                                                       # guardado del demo (0 créditos reales, cuenta los que
+                                                       # costarían). `--web live` = Tavily de verdad.
+                                                       # Sin `--web` (seeded) = antes: todo sembrado.
     .venv/bin/python measure.py --demo --audit --blind # lo mismo contra el SEGUNDO examen, a ciegas (14-oct):
                                                        # DEMO_TRUTH_ERRORS_BLIND, que la F11 no abre antes de
                                                        # medir. Sin --blind, las filas de ese examen se
@@ -318,12 +324,13 @@ def _row_key(description, day, amount, inflow) -> tuple:
     return ((description or "").strip().upper(), str(day), f"{abs(float(amount)):.2f}", bool(inflow))
 
 
-def measure_pending(session: Session, company: Company, truth: dict, *, model=None) -> dict:
+def measure_pending(session: Session, company: Company, truth: dict, *, model=None, reasoning: bool = False,
+                    record: bool = False) -> dict:
     """(a) El ④ sobre lo PENDIENTE: precisión de lo que categorizaría y cobertura de lo que tiene
     respuesta. Con el motor real (`formula.decide`) y TODAS las filas propuestas juntas."""
     import agents
     ctx = BookContext(session, company)
-    res = agents.draft(session, company, record=False, model=model)
+    res = agents.draft(session, company, record=record, model=model, reasoning=reasoning)
     rules = formula.with_rows(ctx.rules, [p.row for p in res.proposals], company.id)
     pending = [t for t in ctx.txs if not t.category or t.account_type is None]
     c = Counter()
@@ -380,7 +387,7 @@ def drafter_alerts(session: Session, company: Company, rows: list, hide: frozens
 
 def measure_review(session: Session, company: Company, truth: list[dict], *, model=None,
                    draft_rows: Optional[list] = None, hide: frozenset = frozenset(),
-                   other_exam: frozenset = frozenset()) -> dict:
+                   other_exam: frozenset = frozenset(), already_reviewed: bool = False) -> dict:
     """(b) El ① sobre ERRORES plantados. Alerta del auditor SOLO = todo hallazgo abierto (incluidas las
     observaciones, como la nómina neta: el examen las pide; sin los chequeos de las notas, que son IA).
     Alerta CON el ① = los hallazgos que el ① NO llama "legítimo" (problema o inseguro) + lo que el ① no
@@ -400,7 +407,9 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
     unmatched = [k for k, ids in planted.items() if not ids]
     all_planted = set().union(*planted.values()) if planted else set()
     # El ① primero: antes de revisar traduce las notas 📌 a chequeos, y `sync` ya los aplica.
-    rev = agents.review(session, company, lang="en", force=True, model=model)
+    # Con el flujo nuevo (`--web oracle|live`) el ① ya corrió en `web_flow` (auditar → ② → ① otra vez): no
+    # se paga una tercera vez.
+    rev = None if already_reviewed else agents.review(session, company, lang="en", force=True, model=model)
     findings = book_review.sync(session, company)
     # Sigue alertando lo que el ① NO despacha: "problema" e "inseguro" piden mirar; solo "legítimo" dice
     # "se puede saltar" (decidido el 13-oct ANTES de medir el cambio; en la línea base "inseguro" era 0).
@@ -409,7 +418,8 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
     # p. ej. un comercio "con dos categorías" por una fila del otro examen.)
     findings = [f for f in findings if not (set(f.transaction_ids or []) & hide)]
     ids_of = {f.id: set(f.transaction_ids or []) for f in findings}
-    flagged = [f for f in findings if f.type in book_review.UNJUDGED_TYPES or f.agent_verdict in ("problem", "unsure")]
+    flagged = [f for f in findings if f.type in book_review.UNJUDGED_TYPES or book_review.ai_cannot_dismiss(f)
+               or f.agent_verdict in ("problem", "unsure")]
 
     # Una alerta que no toca este examen pero SÍ un error del OTRO examen (sus errores siguen en los libros)
     # no cuenta ni a favor ni en contra de la precisión. (✅ 14-oct: sin esto, en la corrida a ciegas los
@@ -460,15 +470,50 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
             "drafter": drafter, "together": len(together),
             # El auditor SOLO es sin IA: los chequeos de las notas los tradujo Nemotron (van con la IA).
             "auditor": score_of([f for f in findings if f.type not in AI_FINDING_TYPES]), "reviewer": score_of(flagged),
-            "notes": score_of([f for f in findings if f.type == "note_check"]), "usage": rev.usage,
+            "notes": score_of([f for f in findings if f.type == "note_check"]), "usage": rev.usage if rev else None,
             "personal": score_of([f for f in findings if f.type == "personal_use"]), "personal_seen": personal_seen,
-            "note_usage": rev.note_usage, "personal_usage": rev.personal_usage,
+            "note_usage": rev.note_usage if rev else None, "personal_usage": rev.personal_usage if rev else None,
             "by_type": dict(Counter(f.type for f in findings)),
             "dismissed_true": [f"{f.type}:{f.merchant}" for f in findings if f.agent_verdict == "legitimate"
                                and ids_of[f.id] & all_planted],
             "false_alerts": [f"{f.type}:{f.merchant}" for f in flagged
                              if not (ids_of[f.id] & all_planted) and f.id not in neutral][:12],
             "neutral": len(neutral)}
+
+
+def web_flow(session: Session, company: Company, *, model=None) -> dict:
+    """El flujo REDISEÑADO (14-oct), como lo corre "Revisar el libro": auditar (código + notas + ¿personal?
+    + ①) → el ② busca SOLO los comercios marcados → el ① vuelve a juzgar los hallazgos con evidencia nueva.
+    Devuelve las búsquedas y los créditos."""
+    import agents
+    import merchant_verifier
+    agents.review(session, company, lang="en", model=model)
+    res = merchant_verifier.verify_flagged(session, company, limit=50)
+    if res.finding_ids:
+        agents.review(session, company, lang="en", model=model, finding_ids=res.finding_ids)
+    # ¿Sirvió la búsqueda a fondo? (cuántas veces la básica no dio confianza alta, y con qué terminó)
+    deep = Counter(f"{i.get('search_depth')}:{i.get('confidence') or 'none'}" for i in res.items if i.get("search_depth"))
+    return {"searched": res.searched, "credits": res.credits, "skipped": dict(res.skipped), "deep": dict(deep),
+            "searched_merchants": sorted(i["merchant"] for i in res.items), "rejudged": len(res.finding_ids)}
+
+
+def old_flow_credits(session: Session, company: Company) -> int:
+    """Lo que el flujo VIEJO gastaba en una oficina nueva: buscaba TODOS los comercios buscables del libro
+    (1 crédito cada uno, con su tope de 12 por corrida)."""
+    import merchant_verifier
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    return sum(1 for c in merchant_verifier.candidates(txs) if not c.skip)
+
+
+def run_costs(session: Session, books: list) -> dict:
+    """Costo de Nebius (las llamadas registradas en `agentcall`) y créditos de Tavily de la corrida."""
+    from models import AgentCall
+    ids = [b.id for b in books]
+    rows = session.exec(select(AgentCall).where(AgentCall.company_id.in_(ids))).all()
+    return {"nebius_usd": sum(r.cost_usd or 0 for r in rows if r.agent != "verifier"),
+            "nebius_calls": sum(1 for r in rows if r.agent != "verifier"),
+            "credits": sum(r.credits or 0 for r in rows if r.agent == "verifier"),
+            "searches": sum(1 for r in rows if r.agent == "verifier")}
 
 
 # Hallazgos que salen de una llamada a Nemotron: el "auditor solo" (sin IA) no los cuenta.
@@ -479,7 +524,8 @@ def _pct(a: int, b: int) -> str:
     return f"{a}/{b} ({100 * a / b:.0f} %)" if b else f"{a}/0"
 
 
-def _print_audit(pend: list[dict], revs: list[dict], privacy: dict, blind: bool = False) -> None:
+def _print_audit(pend: list[dict], revs: list[dict], privacy: dict, blind: bool = False,
+                 costs: Optional[dict] = None, web: Optional[dict] = None) -> None:
     which = "el SEGUNDO examen, A CIEGAS (DEMO_TRUTH_ERRORS_BLIND)" if blind else "el primer examen (DEMO_TRUTH_ERRORS)"
     print(f"\nDONDE LA IA APORTA · {which} · respuestas escritas ANTES por Movimientos\n")
     cost = 0.0
@@ -547,6 +593,17 @@ def _print_audit(pend: list[dict], revs: list[dict], privacy: dict, blind: bool 
     row = lambda side: " · ".join(f"{v} {J.get(f'{side}:{v}', 0)}" for v in ("problem", "unsure", "legitimate", "none"))
     print(f"JUICIO DEL ① · sobre hallazgos que SÍ tocan un error: {row('true')}")
     print(f"               sobre hallazgos que NO tocan ninguno: {row('false')}")
+    if costs is not None:
+        # Nebius = lo registrado en `agentcall` (auditor de notas, ¿personal?, ①) + el ④ (medido sin registrar).
+        draft_usd = sum((r["usage"].cost_usd or 0) for r in pend if r.get("usage"))
+        print(f"TAVILY ({web['mode']}) · {costs['searches']} búsquedas · {costs['credits']} créditos"
+              + (f" · el flujo viejo gastaba {web['old_credits']} en una oficina nueva" if web.get("old_credits") is not None else ""))
+        for b, w in web.get("per_book", {}).items():
+            print(f"      {b}: buscó {w['searched']} ({w['credits']} créditos) · {w.get('deep')} · el ① volvió a juzgar {w['rejudged']}"
+                  f" · {', '.join(w['searched_merchants'][:12])}")
+        print(f"NEBIUS · ${costs['nebius_usd'] + draft_usd:.6f} por corrida ({costs['nebius_calls']} llamadas registradas + el ④)")
+    if costs is not None:
+        cost = costs["nebius_usd"] + sum((r["usage"].cost_usd or 0) for r in pend if r.get("usage"))
     print(f"COSTO · ${cost:.6f} · PRIVACIDAD de lo enviado a Nebius · descripciones completas: "
           f"{privacy['descriptions']} · montos: {privacy['amounts']} · nombres de persona: {privacy['person_names']}\n")
 
@@ -585,6 +642,8 @@ def main() -> int:
     ap.add_argument("--agent", action="store_true", help="corre también el agente ④ real (Nemotron)")
     ap.add_argument("--reasoning", action="store_true", help="deja razonar al modelo (más tokens)")
     ap.add_argument("--model", help="otro modelo de Nebius (por defecto NEBIUS_MODEL)")
+    ap.add_argument("--web", choices=("seeded", "oracle", "live"), default="seeded",
+                    help="con --audit: seeded = antes (todo sembrado); oracle/live = Tavily rediseñado (14-oct)")
     ap.add_argument("--blind", action="store_true",
                     help="con --audit: mide contra el SEGUNDO examen (DEMO_TRUTH_ERRORS_BLIND), a ciegas")
     ap.add_argument("--audit", action="store_true",
@@ -609,7 +668,17 @@ def main() -> int:
                 # otra vez las DUPLICABA (✅ 13-oct: la nota de las vacaciones salía dos veces).
                 # Las verificaciones del ② del demo, como las recibe cada visitante (sin red ni créditos).
                 import demo_web_evidence
-                demo_web_evidence.seed_lookups(session, firm)
+                from models import MerchantLookup
+                if args.web == "seeded":
+                    demo_web_evidence.seed_lookups(session, firm, include_live=True)   # "antes": TODO sembrado
+                else:
+                    # Tavily rediseñado: la memoria de la oficina empieza VACÍA (`seed_demo_books` la siembra
+                    # sola; aquí se borra dentro de la transacción, que se deshace al final).
+                    for m in session.exec(select(MerchantLookup).where(MerchantLookup.firm_id == firm.id)).all():
+                        session.delete(m)
+                    if args.web == "oracle":
+                        import merchant_verifier
+                        merchant_verifier.ORACLE = {r["fingerprint"]: r for r in demo_web_evidence.load()}
                 session.flush()
             else:
                 book = session.get(Company, args.company)
@@ -627,6 +696,10 @@ def main() -> int:
                 session.commit = session.flush  # type: ignore[method-assign]
                 nemotron.SENT.clear()
                 pend, revs = [], []
+                web = {"mode": args.web, "per_book": {}}
+                if args.web == "seeded":
+                    # El flujo viejo, en una oficina NUEVA (sin la siembra del demo): todos los comercios.
+                    web["old_credits"] = None
                 for b in books:
                     tp, te = _truth(b.name, blind=args.blind)
                     book_txs = session.exec(select(Transaction).where(Transaction.company_id == b.id)).all()
@@ -635,17 +708,27 @@ def main() -> int:
                         print(f"⏸️  {b.name}: todavía no hay DEMO_TRUTH_* en demo_data.py (Movimientos)")
                         continue
                     rows = None
+                    if args.web != "seeded":
+                        web["per_book"][b.name] = web_flow(session, b, model=args.model)
                     if tp:
                         pend.append(measure_pending(session, b, tp, model=args.model))
                         rows = pend[-1]["rows"]
                     if te:
                         other = frozenset(_exam_ids(book_txs, "DEMO_TRUTH_ERRORS")) if args.blind else frozenset()
                         revs.append(measure_review(session, b, te, model=args.model, draft_rows=rows, hide=hide,
-                                                   other_exam=other))
+                                                   other_exam=other, already_reviewed=args.web != "seeded"))
                 txs = [t for b in books for t in session.exec(
                     select(Transaction).where(Transaction.company_id == b.id)).all()]
+                if args.web == "seeded":
+                    web["old_credits"] = sum(old_flow_credits(session, b) for b in books)
                 _print_audit(pend, revs, agents.privacy_scan(list(nemotron.SENT), txs,
-                                                             merchant_verifier.protected_names(txs)), blind=args.blind)
+                                                             merchant_verifier.protected_names(txs)), blind=args.blind,
+                             costs=run_costs(session, books), web=web)
+                if merchant_verifier.SENT_QUERIES:
+                    persons = merchant_verifier.protected_names(txs)
+                    bad = [q for q in merchant_verifier.SENT_QUERIES if any(p.upper() in q.upper() for p in persons)]
+                    print(f"PRIVACIDAD de lo enviado a Tavily · {len(merchant_verifier.SENT_QUERIES)} consultas · "
+                          f"con un nombre protegido: {len(bad)}")
                 return 0
             base = [measure_book(session, b, args.cutoff) for b in books]
             _print(base, args.cutoff)
