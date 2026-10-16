@@ -262,7 +262,10 @@ def chat_json(system: str, user: str, schema: Optional[type[BaseModel]] = None, 
         if r.status_code == 401:
             raise NemotronError("unauthorized", "revisa NEBIUS_API_KEY")
         if r.status_code == 402:
-            raise NemotronError("no_credits", "la cuenta de Nebius no tiene saldo")
+            # Se guarda lo que diga Nebius (✅ 16-oct: el 402 del fin del trial no decía por qué, y el cuerpo
+            # no quedaba en ninguna parte para mirarlo después).
+            logger.warning("Nebius 402: %s", r.text[:300])
+            raise NemotronError("no_credits", f"la cuenta de Nebius no tiene saldo · Nebius dijo: {r.text[:200]}")
         if r.status_code >= 400:
             raise NemotronError(f"http_{r.status_code}", r.text[:200])
         _FORMAT_SUPPORT[name] = mode

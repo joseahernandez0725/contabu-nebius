@@ -45,7 +45,9 @@ BOOK_SHORT = {"Rivera HVAC LLC": "Rivera", "Sparkle Cleaning Co.": "Sparkle", "C
 
 # ── Una corrida ──────────────────────────────────────────────────────────────────────────────────
 
-def run_once(config: dict, tag: str, blind: bool = False) -> dict:
+def run_once(config: dict, tag: str, blind: bool = False, web: str = "oracle", second_review: bool = False) -> dict:
+    """`web`: "oracle" (lo guardado del demo, 0 créditos) o "live" (Tavily de verdad). `second_review`: al final
+    de cada libro, una SEGUNDA "Revisar el libro" (con la memoria de la oficina) para contar sus créditos."""
     import agent_models
     import demo_data
     import demo_web_evidence
@@ -57,9 +59,11 @@ def run_once(config: dict, tag: str, blind: bool = False) -> dict:
     from sqlmodel import Session, select
     agent_models.OVERRIDES.clear()
     agent_models.OVERRIDES.update({a: (c["model"], c["reasoning"]) for a, c in config.items()})
-    merchant_verifier.ORACLE = {r["fingerprint"]: r for r in demo_web_evidence.load()}
+    merchant_verifier.ORACLE = {r["fingerprint"]: r for r in demo_web_evidence.load()} if web == "oracle" else None
+    merchant_verifier.SENT_QUERIES.clear()
     t0 = time.time()
-    out = {"tag": tag, "exam": "blind" if blind else "first", "config": config, "books": {}, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+    out = {"tag": tag, "exam": "blind" if blind else "first", "config": config, "web": web, "books": {},
+           "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
     with Session(engine) as s:
         try:
             s.commit = s.flush  # type: ignore[method-assign]
@@ -81,6 +85,7 @@ def run_once(config: dict, tag: str, blind: bool = False) -> dict:
                 nc = measure.note_case(formula.BookContext(s, b), pend["rows"]) or {}
                 rev = measure.measure_review(s, b, te, draft_rows=pend["rows"], hide=hide, other_exam=other,
                                              already_reviewed=True)
+                second = measure.web_flow(s, b) if second_review else None
                 calls = s.exec(select(AgentCall).where(AgentCall.company_id == b.id)).all()
                 agents = {}
                 for a, name in CALL_NAME.items():
@@ -109,10 +114,20 @@ def run_once(config: dict, tag: str, blind: bool = False) -> dict:
                             "personal": {**rev["personal"], "seen": rev["personal_seen"]},
                             "notes": rev["notes"], "drafter_categorized": rev["drafter"]},
                     "auditor_alone": rev["auditor"],
-                    "web": {"searched": web["searched"], "credits_oracle": web["credits"]},
+                    "web": {"searched": web["searched"], "credits": web["credits"], "deep": web.get("deep"),
+                            "second_searched": second["searched"] if second else None,
+                            "second_credits": second["credits"] if second else None},
                     "agents": agents,
                     "usd": round(sum(x["usd"] for x in agents.values()), 6),
                 }
+            # PRIVACIDAD de lo que se mandó a Tavily en esta corrida (medida, no supuesta).
+            all_txs = [t for b in books for t in s.exec(select(Transaction).where(Transaction.company_id == b.id)).all()]
+            persons = merchant_verifier.protected_names(all_txs)
+            full = {(t.description or "").strip().upper() for t in all_txs if t.description}
+            q = list(merchant_verifier.SENT_QUERIES)
+            out["privacy"] = {"queries": len(q),
+                              "with_person_name": sum(1 for x in q if any(pn.upper() in x.upper() for pn in persons)),
+                              "equal_full_description": sum(1 for x in q if x.strip().upper() in full)}
         finally:
             s.rollback()
     out["total"] = total(out["books"])

@@ -759,3 +759,75 @@ DEMO_TRUTH_ERRORS: list[dict] = _truth_errors(ERRORS)
 
 # DEMO_TRUTH_ERRORS_BLIND: el segundo juego, a ciegas (14-oct). Misma forma. La F11 lo mide sin abrirlo antes.
 DEMO_TRUTH_ERRORS_BLIND: list[dict] = _truth_errors(ERRORS_BLIND)
+
+
+# ── EL TIPO DE NEGOCIO DE CADA COMERCIO (16-oct, para el experimento del ② / Tavily) ─────────────────
+# La respuesta correcta para cada comercio de GASTO de los 3 libros: las salidas, sin personas, cheques,
+# transferencias ni cargos del banco. La escribió Movimientos ANTES de mirar lo que devolvió Tavily (no se leyó
+# `demo_web_evidence.json`). Formato del pedido de la F11 (Buzón, 16-oct): {libro: {comienzo de la descripción:
+# tipo}}, con la misma clase de llave que `DEMO_TRUTH_PENDING`.
+#   tipo = uno de `merchant_verifier.BUSINESS_TYPES` (la lista cerrada, sin cambiarla), o
+#   "no_type"   → un negocio claro, pero ningún tipo de la lista le corresponde;
+#   "ambiguous" → no hay una respuesta honesta (más de un tipo es verdad, o vende de todo).
+# Cada llave caza SOLO las líneas de su comercio en su libro (comprobado al escribirla). El porqué, en el comentario.
+DEMO_TRUTH_MERCHANT_TYPES: dict[str, dict[str, str]] = {
+    "Rivera HVAC LLC": {
+        "AMAZON": "ambiguous",                                 # Amazon.com y su Marketplace: venden de todo
+        "ACH DEBIT BAYSIDE PROPERTIES LLC RENT": "property_management",  # la empresa del arrendador (el tipo más cercano)
+        "CHEVRON": "gas_station",
+        "FERGUSON HVAC SUPPLY": "building_supplies",           # distribuidor de plomería y HVAC
+        "GRAINGER": "industrial_supplies",                     # W.W. Grainger: suministros industriales (MRO)
+        "THE HOME DEPOT": "hardware_store",
+        "IRS USATAXPYMT": "no_type",                           # un impuesto (EFTPS) al gobierno, no un negocio
+        "JOHNSTONE SUPPLY": "building_supplies",               # repuestos y equipos de HVAC/R
+        "LOWE'S": "hardware_store",
+        "NETFLIX": "streaming_entertainment",
+        "PGANDE WEB ONLINE": "utility",                        # Pacific Gas and Electric
+        "SEPHORA": "no_type",                                  # belleza y cosméticos: no hay ese tipo
+        "SHELL OIL": "gas_station",
+        "STARBUCKS": "coffee_shop",                            # las tiendas de aquí y las del viaje
+        "STATE FARM INSURANCE": "insurance",
+        "TARGET": "department_store",                          # mercancía general ("discount retailer")
+        "UNITED RENTALS": "no_type",                           # alquiler de equipos: no hay ese tipo
+        "VERIZON WIRELESS": "telecom",
+    },
+    "Sparkle Cleaning Co.": {
+        "24 HOUR FITNESS": "gym_fitness",
+        "SQ *BAYCITY UNIFORMS": "uniforms_apparel",
+        "SQ *BRIGHT MOPS CO": "cleaning_supplies",
+        "COSTCO WHSE": "warehouse_club",
+        "TST* EL FAROLITO": "restaurant",                      # taquería
+        "SQ *JANITEX SUPPLY": "cleaning_supplies",             # suministros de limpieza (por el nombre)
+        "NEXT INSURANCE": "insurance",
+        "NORDSTROM RACK": "department_store",                  # tienda por departamentos "off-price"
+        "PETCO": "no_type",                                    # mascotas: no hay ese tipo
+        "SAFEWAY": "grocery",
+        "SHELL OIL": "gas_station",
+        "SPOTIFY": "streaming_entertainment",                  # música por streaming
+        "T-MOBILE": "telecom",
+        "THUMBTACK": "no_type",                                # vende clientes potenciales (publicidad): no hay ese tipo
+        "PAYPAL *ULINE": "packaging_shipping",                 # empaque y envíos (también vende limpieza, pero ese es su negocio)
+        "GOOGLE *WORKSPACE": "software_saas",
+        "PAYPAL *ZOROTOOLS": "industrial_supplies",            # Zoro: herramientas y MRO en línea
+    },
+    "Casa Lupita Taqueria": {
+        "ADP PAYROLL": "payroll_hr",
+        "AMC": "streaming_entertainment",                      # cine (la lista pone ahí los cines)
+        "BEST BUY": "consumer_electronics",
+        "CINTAS": "linen_laundry",                             # renta de uniformes y mantelería (la línea dice LINEN SVC)
+        "COMCAST BUSINESS": "telecom",                         # internet y teléfono
+        "DISNEY PLUS": "streaming_entertainment",
+        "ECOLAB PEST": "pest_control",                         # la división de control de plagas de Ecolab
+        "HOBART SERVICE": "no_type",                           # reparación de equipo de cocina: no hay tipo de reparación
+        "ACH DEBIT MISSION ST PROPERTIES RENT": "property_management",  # la empresa del arrendador (el tipo más cercano)
+        "PGANDE WEB ONLINE": "utility",                        # Pacific Gas and Electric
+        "RESTAURANT DEPOT": "restaurant_supply",               # mayorista para restaurantes
+        "SAFEWAY": "grocery",
+        "SFPUC WATER": "utility",                              # el agua de San Francisco
+        "SMART & FINAL": "ambiguous",                          # supermercado tipo bodega: grocery y warehouse_club son verdad
+        "SYSCO": "restaurant_supply",                          # distribuidor de alimentos para restaurantes
+        "ULTA BEAUTY": "no_type",                              # belleza y cosméticos: no hay ese tipo
+        "WALMART SUPERCENTER": "ambiguous",                    # vende de todo: tienda por departamentos y supermercado
+        "WEBSTAURANTSTORE": "restaurant_supply",               # equipo y suministros para restaurantes, en línea
+    },
+}
