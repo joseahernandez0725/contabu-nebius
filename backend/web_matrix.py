@@ -190,7 +190,8 @@ def tables() -> int:
         by = defaultdict(dict)
         for r in acc:
             by[(r["fingerprint"], r["rep"])][r["level"]] = r
-        for name in ("solo básica", "básica + avanzada si no sale alta (hoy)", "solo avanzada"):
+        for name in ("solo básica", "básica + avanzada si no sale alta, se queda la MEJOR (hasta el 16-oct)",
+                     "básica + avanzada si no sale alta, se queda la AVANZADA (desde el 16-oct)", "solo avanzada"):
             c, credits, total = Counter(), 0, 0
             for (fp, rep), lv in by.items():
                 if "basic" not in lv or "advanced" not in lv:
@@ -200,6 +201,9 @@ def tables() -> int:
                     pick, cost = bsc, bsc["credits"]
                 elif name.startswith("solo avanzada"):
                     pick, cost = adv, adv["credits"]
+                elif "AVANZADA" in name:
+                    pick = bsc if bsc["confidence"] == "high" else adv
+                    cost = bsc["credits"] + (0 if bsc["confidence"] == "high" else adv["credits"])
                 else:
                     pick = bsc if bsc["confidence"] == "high" or RANK[bsc["confidence"]] >= RANK[adv["confidence"]] else adv
                     cost = bsc["credits"] + (0 if bsc["confidence"] == "high" else adv["credits"])

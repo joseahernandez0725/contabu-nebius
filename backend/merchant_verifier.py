@@ -30,7 +30,7 @@ diario de búsquedas de la oficina (`AGENT_DAILY_SEARCHES`).
   abiertos (lo que vio el código, una nota o "¿personal?", y lo que el ① llamó problema o inseguro; no lo
   que llamó legítimo, ni las observaciones). Ya no todos los comercios del libro.
 - **Primero "basic" (1 crédito); si la confianza no sale alta, "advanced" (2 créditos) UNA vez**, y se
-  queda la mejor de las dos. Se guarda cuál se usó (`MerchantLookup.search_depth`).
+  queda la de la avanzada (16-oct; hasta entonces, la mejor de las dos, y en un empate ganaba la básica). Se guarda cuál se usó (`MerchantLookup.search_depth`).
 - Las garantías de arriba no cambian: el filtro de personas corre igual antes de cada búsqueda.
 """
 
@@ -113,7 +113,7 @@ _P2P_WORDS = re.compile(r"\b(ZELLE|VENMO|CASH ?APP|PAYPAL TRANSFER|QUICKPAY|WIRE
 # El titular de una línea ACH ("… IND NAME:JUAN PEREZ TRN: …") puede ser una persona: se trata como
 # nombre protegido (✅ 8-oct, visto en un libro real). Y un pago de TARJETA no es un comercio.
 _ACH_NAME_RE = re.compile(r"IND NAME:\s*([A-Z][A-Z .'&-]{2,}?)(?:\s{2,}|\s+TRN\b|\s+[A-Z]{2,}\d|$)")
-_CARD_PAYMENT_RE = re.compile(r"\b(CARD ONLINE|CREDIT CARD|CARD PAYMENT|CARDMEMBER|CRD PMT|AUTOPAY|EPAY)\b")
+_CARD_PAYMENT_RE = re.compile(r"\b(CARD ONLINE|CREDIT CARD|CARD PAYMENT|CARDMEMBER|CRD PMT|AUTOPAY|EPAY|EPAYMENT)\b")
 _NOT_MERCHANT = {"TRANSFER", "DEPOSIT", "DEP", "FEE", "FEES", "MONTHLY", "SERVICE", "INTEREST", "WITHDRAWAL",
                  "ATM", "OVERDRAFT", "CHECK", "PAYROLL"}
 
@@ -351,8 +351,11 @@ def _lookup(session: Session, company: Company, c: Candidate, cache: dict, *, us
             if results:
                 status = "ok"
             n_results = max(n_results, len(results))
-            if _RANK[got[1]] > _RANK[best[1]]:
-                best = got
+            # La básica vale solo si salió ALTA; si no, se busca la avanzada y SE QUEDA LA AVANZADA, aunque empate
+            # o baje (✅ 16-oct, web_matrix.jsonl: una "media" de la básica acertó 2 de 8 y sobrevivía en los
+            # empates; quedándose con la avanzada, 56/68 correctos contra 52, y 8 evidencias equivocadas contra 12,
+            # al mismo costo). Decisión de Jose del 16-oct.
+            best = got
         except httpx.HTTPError as e:
             used, latency, status, outcome = 0, 0, "error", f"search_error:{type(e).__name__}"
         total += used

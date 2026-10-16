@@ -447,6 +447,10 @@ def measure_review(session: Session, company: Company, truth: list[dict], *, mod
         judged[k] = judged.get(k, 0) + 1
     # ④ — sus propuestas sobre filas YA categorizadas (del mismo `draft` que se midió en lo Pendiente).
     d_alerts = drafter_alerts(session, company, draft_rows or [], hide)
+    # Simetría (✅ 16-oct): una propuesta del ④ que NO toca este examen pero SÍ un error del OTRO examen no
+    # cuenta ni a favor ni en contra, igual que los hallazgos (`neutral`). Antes contaba como falsa: en el ciego
+    # del 15-oct, la fila de las vacaciones (errores del primer examen) bajaba la precisión.
+    d_alerts = [(a, fix) for a, fix in d_alerts if (a & all_planted) or not (a & other_exam)]
     d_found = [k for k, ids in planted.items() if ids and any(a & ids for a, _ in d_alerts)]
     # ¿Y con la corrección que el examen espera? (solo los errores que traen "expected")
     d_fixed = [k for i, (k, ids) in enumerate(planted.items()) if ids and truth[i].get("expected")

@@ -18,6 +18,8 @@ Pasos (pedido de Jose del 15-oct):
 Uso:
     .venv/bin/python team_matrix.py --plan              # los pasos 1-4 (se detiene antes de pasar de $5)
     .venv/bin/python team_matrix.py --blind-final       # el paso 5 (UNA vez, con la base final)
+    .venv/bin/python team_matrix.py --blind-repeat      # el ciego OTRA vez, con el código de hoy (16-oct):
+                                                        # "todo Nano" y "el equipo", 3 corridas cada una
     .venv/bin/python team_matrix.py --tables            # las tablas, desde el .jsonl
 Todo queda en `backend/private/team_matrix.jsonl` (una línea por corrida; qué es cada campo: FASE 11.A).
 Cada corrida siembra los 3 libros en una transacción y la DESHACE: no queda nada en la base.
@@ -281,6 +283,40 @@ def plan() -> int:
     return 0
 
 
+BLIND_REPEAT_USD = 0.50   # tope de Jose para la repetición del ciego (16-oct)
+NANO_ALL = {a: {"model": "nano", "reasoning": False} for a in AGENTS}
+
+
+def blind_repeat() -> int:
+    """El examen ciego OTRA VEZ (16-oct), con el MISMO código para las dos configuraciones: "todo Nano" y "el
+    equipo" (`agent_models` por defecto), 3 corridas de cada una, ② por oráculo. Tags propios
+    (`blind_repeat_nano`, `blind_repeat_team`); lo ya corrido no se repite. Para antes de pasar de $0.50."""
+    import agent_models
+    agent_models.OVERRIDES.clear()
+    team = agent_models.current()
+    plan = [(NANO_ALL, "blind_repeat_nano", 3), (team, "blind_repeat_team", 3)]
+    spent_here = lambda: sum(r["total"]["usd"] for r in _read() if r.get("tag", "").startswith("blind_repeat"))
+    for config, tag, n in plan:
+        for _ in range(n):
+            if spent_here() >= BLIND_REPEAT_USD:
+                print(f"⛔ TOPE: llevo ${spent_here():.4f} en la repetición del ciego; me detengo.", flush=True)
+                return 2
+            _launch(config, tag, n, blind=True)   # corre lo que falte de esa configuración (en paralelo)
+            break
+    rows = [r for r in _read() if r.get("tag", "").startswith("blind_repeat")]
+    for tag in ("blind_repeat_nano", "blind_repeat_team"):
+        rs = [r for r in rows if r["tag"] == tag]
+        for r in rs:
+            t = r["total"]
+            aud = [b["auditor_alone"] for b in r["books"].values()]
+            af, aa, at = sum(x["found"] for x in aud), sum(x["alerts"] for x in aud), sum(x["true_alerts"] for x in aud)
+            print(f"{tag} · {_key(r['config'])} · el equipo encuentra {t['errors_found']}/{t['errors_planted']} · precisión "
+                  f"{t['true_alerts']}/{t['alerts']} ({100 * t['precision']:.0f}%) · código solo {af}/{t['errors_planted']} "
+                  f"({at}/{aa}) · ${t['usd']:.4f} · {r['wall_s']}s")
+    print(f"GASTADO en la repetición: ${spent_here():.4f}")
+    return 0
+
+
 def blind_final() -> int:
     st = json.loads(STATE.read_text())
     if any(r.get("exam") == "blind" for r in _read()):
@@ -326,6 +362,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--blind-final", action="store_true")
+    ap.add_argument("--blind-repeat", action="store_true")
     ap.add_argument("--tables", action="store_true")
     ap.add_argument("--one", help=argparse.SUPPRESS)
     ap.add_argument("--tag", default="manual")
@@ -345,6 +382,8 @@ def main() -> int:
         return plan()
     if args.blind_final:
         return blind_final()
+    if args.blind_repeat:
+        return blind_repeat()
     return tables()
 
 
