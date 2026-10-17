@@ -2,16 +2,16 @@
 ContaBu — EL MEJOR MODELO PARA CADA AGENTE, EN EQUIPO (FASE 11, Auditoría / IA · 15-oct-2026).
 
 La matriz de la mañana (`model_matrix.py`) comparó cada agente contra un ContaBu "todo Nano". Esta lo compara
-contra LA MEJOR COMBINACIÓN: cada corrida es el flujo real de "Revisar el libro" (auditar = código + notas
+contra LA MEJOR COMBINACIÓN: cada corrida es el flujo real de "Revisar el libro" (auditar = código + ⑥ notas
 + ⑤ + ① → el ② busca solo lo marcado → el ① vuelve a juzgar → el ④ propone), sobre el PRIMER examen y lo
 Pendiente, con Tavily por el ORÁCULO (`demo_web_evidence.json`: 0 créditos; la memoria de la oficina empieza
 vacía). Las filas del examen ciego se esconden en código. La REGLA del "mejor" está en `FASE 11.A.md`
 (escrita antes de medir) y aquí, en `beats()`.
 
 Pasos (pedido de Jose del 15-oct):
-  1. El ④ con Lightning y con Ultra (sin razonar), traductor en Ultra, ① y ⑤ en Nano: 3 corridas cada uno.
+  1. El ④ con Lightning y con Ultra (sin razonar), ⑥ traductor en Ultra, ① y ⑤ en Nano: 3 corridas cada uno.
   2. La ganadora es la BASE (sus 3 corridas del paso 1 son las de la base: misma configuración).
-  3. Un agente a la vez (①, ④, ⑤, traductor): Nano/Lightning/Super/Ultra × razonar sí/no, 2 corridas.
+  3. Un agente a la vez (①, ④, ⑤, ⑥ traductor): Nano/Lightning/Super/Ultra × razonar sí/no, 2 corridas.
   4. Si una variación le gana a la base, pasa a ser la base y se corre 3 veces.
   5. Con lo final congelado, el examen ciego UNA vez (`--blind-final`).
 
@@ -40,6 +40,7 @@ STATE = Path(__file__).with_name("private") / "team_matrix_state.json"
 BUDGET_USD = 4.8          # el tope de Jose es $5: se para antes (hay corridas en vuelo)
 PARALLEL = 3
 AGENTS = ("reviewer", "drafter", "personal", "notes")
+LABEL = {"reviewer": "① revisor", "drafter": "④ redactor", "personal": "⑤ ¿personal?", "notes": "⑥ traductor"}  # solo para las tablas
 MODELS = ("nano", "lightning", "super", "ultra")
 CALL_NAME = {"reviewer": "reviewer", "drafter": "drafter", "personal": "personal_judge", "notes": "note_checker"}
 BOOK_SHORT = {"Rivera HVAC LLC": "Rivera", "Sparkle Cleaning Co.": "Sparkle", "Casa Lupita Taqueria": "Lupita"}
@@ -205,7 +206,7 @@ def _launch(config: dict, tag: str, n: int, blind: bool = False) -> None:
     _launch_many([(config, tag, n)], blind=blind)
 
 
-def _launch_many(items: list[tuple], blind: bool = False) -> None:
+def _launch_many(items: list[tuple], blind: bool = False, stop=None) -> None:
     """Corridas que faltan de varias configuraciones [(config, tag, n)], cada una en un proceso aparte, de a
     `PARALLEL` a la vez. Lo que ya está en el .jsonl no se repite (se puede retomar)."""
     done = _read()
@@ -216,7 +217,7 @@ def _launch_many(items: list[tuple], blind: bool = False) -> None:
 
     def one(job):
         config, tag = job
-        if _spent() >= BUDGET_USD:
+        if _spent() >= BUDGET_USD or (stop is not None and stop()):
             return "budget"
         p = subprocess.run([sys.executable, __file__, "--one", json.dumps(config), "--tag", tag]
                            + (["--blind"] if blind else []), capture_output=True, text=True)
@@ -317,6 +318,83 @@ def blind_repeat() -> int:
     return 0
 
 
+# ── Nemotron 3.5 Super VL en cada asiento (16-oct, solo texto) ──────────────────────────────────────
+VL_USD = 1.50
+VL_SEATS = [("drafter", True), ("drafter", False), ("notes", False), ("notes", True),
+            ("reviewer", False), ("reviewer", True), ("personal", False), ("personal", True)]
+
+
+def _vl_spent() -> float:
+    return sum(r["total"]["usd"] for r in _read() if r.get("tag", "").startswith("vl_"))
+
+
+def _vl_tag(agent: str, reasoning: bool) -> str:
+    return f"vl_{agent}_{'r' if reasoning else 'nr'}"
+
+
+def _drafter_latency(rs: list[dict]) -> str:
+    calls = sum(r["total"]["agents"].get("drafter", {}).get("calls", 0) for r in rs)
+    lat = sum(r["total"]["agents"].get("drafter", {}).get("latency_ms_sum", 0) for r in rs)
+    mx = max((r["total"]["agents"].get("drafter", {}).get("latency_ms_max", 0) for r in rs), default=0)
+    return f"{lat / calls / 1000:.0f} s (máx {mx / 1000:.0f} s)" if calls else "—"
+
+
+def vl_plan() -> int:
+    """El control (el equipo de hoy, 3 corridas) y VL en un asiento a la vez (2 corridas cada variante), en la
+    MISMA tanda, primer examen, ② por oráculo. Tope propio: $1.50. Después, la tabla y la regla."""
+    import agent_models
+    agent_models.OVERRIDES.clear()
+    control = agent_models.current()
+    items = [(control, "vl_control", 3)]
+    for agent, r in VL_SEATS:
+        c = json.loads(json.dumps(control)); c[agent] = {"model": "vl", "reasoning": r}
+        items.append((c, _vl_tag(agent, r), 2))
+    _launch_many(items, stop=lambda: _vl_spent() >= VL_USD)
+    return vl_table()
+
+
+def vl_table() -> int:
+    rows = [r for r in _read() if r.get("tag", "").startswith("vl_") and r.get("exam") == "first"]
+    ctrl = [r for r in rows if r["tag"] == "vl_control"]
+    if not ctrl:
+        print("todavía no hay control"); return 1
+    sc = stats(ctrl)
+    pct = lambda x: f"{100 * x:.0f}%"
+    line = lambda name, s, rs: (f"  {name:22} | E {s['E']:.1f} | P {pct(s['P'])} | C {s['C']:.0f}% / PP {pct(s['PP'])} | "
+                                f"K {s['K']:.1f} | ${s['USD']:.4f} | ④ {_drafter_latency(rs)} | n={s['n']} | "
+                                f"{'cumple' if eligible(s) else 'NO CUMPLE'}")
+    print("■ VL EN CADA ASIENTO (primer examen, ② por oráculo) · E errores/32 · P precisión del equipo · C/PP Pendiente · K corrección correcta")
+    print(line("CONTROL (equipo de hoy)", sc, ctrl))
+    winners = []
+    for agent, r in VL_SEATS:
+        rs = [x for x in rows if x["tag"] == _vl_tag(agent, r)]
+        if not rs:
+            continue
+        s = stats(rs)
+        ok, why = beats(s, sc)
+        print(line(f"VL en {LABEL[agent]}{' razonando' if r else ''}", s, rs) + f" | {'GANA' if ok else 'no gana'}: {why}")
+        if ok:
+            winners.append((agent, r, s))
+    print(f"\nGASTADO en VL: ${_vl_spent():.4f} (tope ${VL_USD})")
+    print("GANADORES:", [(a, r) for a, r, _ in winners] or "ninguno")
+    return 0
+
+
+def vl_confirm(agent: str, reasoning: bool) -> int:
+    """Paso 2 (solo si VL ganó un asiento): 3 corridas más del equipo nuevo en el primer examen y 3 en el ciego."""
+    import agent_models
+    agent_models.OVERRIDES.clear()
+    c = agent_models.current(); c[agent] = {"model": "vl", "reasoning": reasoning}
+    _launch_many([(c, "vl_confirm", 3)], stop=lambda: _vl_spent() >= VL_USD)
+    _launch_many([(c, "vl_blind", 3)], blind=True, stop=lambda: _vl_spent() >= VL_USD)
+    for tag in ("vl_confirm", "vl_blind"):
+        for r in [x for x in _read() if x.get("tag") == tag]:
+            tt = r["total"]
+            print(f"{tag} · {_key(r['config'])} · encuentra {tt['errors_found']}/{tt['errors_planted']} · precisión "
+                  f"{100 * tt['precision']:.0f}% · Pendiente {100 * tt['pending_coverage']:.0f}% · ${tt['usd']:.4f}")
+    return 0
+
+
 def blind_final() -> int:
     st = json.loads(STATE.read_text())
     if any(r.get("exam") == "blind" for r in _read()):
@@ -363,6 +441,9 @@ def main() -> int:
     ap.add_argument("--plan", action="store_true")
     ap.add_argument("--blind-final", action="store_true")
     ap.add_argument("--blind-repeat", action="store_true")
+    ap.add_argument("--vl", action="store_true", help="VL en cada asiento (16-oct)")
+    ap.add_argument("--vl-table", action="store_true")
+    ap.add_argument("--vl-confirm", nargs=2, metavar=("AGENTE", "RAZONA"), help="paso 2: p. ej. drafter 1")
     ap.add_argument("--tables", action="store_true")
     ap.add_argument("--one", help=argparse.SUPPRESS)
     ap.add_argument("--tag", default="manual")
@@ -384,6 +465,12 @@ def main() -> int:
         return blind_final()
     if args.blind_repeat:
         return blind_repeat()
+    if args.vl:
+        return vl_plan()
+    if args.vl_table:
+        return vl_table()
+    if args.vl_confirm:
+        return vl_confirm(args.vl_confirm[0], args.vl_confirm[1] in ("1", "true", "yes", "si", "sí"))
     return tables()
 
 

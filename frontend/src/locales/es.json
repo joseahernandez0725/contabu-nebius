@@ -732,7 +732,7 @@
     "running": "Revisando…",
     "moreActions": "Correr un solo paso",
     "only": {
-      "audit": "Solo auditar (código, notas, ⑤ y ①)",
+      "audit": "Solo auditar (código, ⑥ notas, ⑤ y ①)",
       "verify": "⑤ ¿Es personal? → ② verificar en internet",
       "review": "① Revisar hallazgos",
       "draft": "④ Proponer filas de la fórmula"
@@ -789,7 +789,7 @@
       "coverage_gap": "Faltan datos",
       "bank_disconnected": "Banco desconectado",
       "unusual_amount": "Monto inusual",
-      "note_check": "Lo que pide tu nota",
+      "note_check": "⑥ Lo que pide tu nota",
       "personal_use": "⑤ ¿Personal para este negocio?"
     },
     "say": {
@@ -849,7 +849,7 @@
     "costLine": "Este libro: {{cost}} · quedan {{left}} llamadas a los agentes hoy",
     "costTip": "Gastado en este libro: {{cost}} · llamadas a los agentes que quedan hoy: {{calls}} de {{cap}} · búsquedas web que quedan: {{searches}} de {{scap}}",
     "auditBtn": "Auditar",
-    "auditTip": "El auditor (código), tus notas, el ⑤ \"¿personal para este negocio?\" y el ① revisor. Sin redactar ni buscar en internet.",
+    "auditTip": "El auditor (código), tus notas (con el ⑥ traductor de notas), el ⑤ \"¿personal para este negocio?\" y el ① revisor. Sin redactar ni buscar en internet.",
     "est": {
       "calls_one": "~{{count}} llamada a la IA",
       "calls_other": "~{{count}} llamadas a la IA",

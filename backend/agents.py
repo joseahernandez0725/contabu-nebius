@@ -977,5 +977,6 @@ def _estimate(session: Session, company: Company, action: str, *, note_id: Optio
                 calls = 1   # si el comercio tiene hallazgos, el ① los vuelve a juzgar con la evidencia
     return {"action": action, "calls": int(calls), "searches": searches,
             "credits_min": searches, "credits_max": 3 * searches,
-            # Tope por llamada, medido (16-oct): Nano ~$0.0003; el ④ en Super razonando ~$0.004 (el más caro).
+            # Tope por llamada, medido (16-oct): Nano ~$0.0003; el ④ en Super VL sin razonar ~$0.0022 (el más caro;
+            # en Super razonando era ~$0.004).
             "cost_usd_max": round(0.005 * int(calls), 4)}

@@ -7,9 +7,9 @@ corren con los valores de hoy (`DEFAULTS`):
     AGENT_MODEL_REVIEWER  / AGENT_REASONING_REVIEWER    ① revisor
     AGENT_MODEL_DRAFTER   / AGENT_REASONING_DRAFTER     ④ redactor de la fórmula
     AGENT_MODEL_PERSONAL  / AGENT_REASONING_PERSONAL    ⑤ ¿personal para este negocio?
-    AGENT_MODEL_NOTES     / AGENT_REASONING_NOTES       traductor de notas (la nota → chequeo del auditor)
+    AGENT_MODEL_NOTES     / AGENT_REASONING_NOTES       ⑥ traductor de notas (la nota → chequeo del auditor)
 
-El modelo se escribe con su nombre corto (`nano`, `lightning`, `super`, `ultra`) o con el id completo de
+El modelo se escribe con su nombre corto (`nano`, `lightning`, `super`, `ultra`, `vl`) o con el id completo de
 Nebius; el razonamiento, `1`/`0` (`true`/`false`). El modelo de cada llamada queda en `agentcall.model`.
 `OVERRIDES` es para la medición (`team_matrix.py`), en el mismo proceso.
 """
@@ -22,6 +22,7 @@ MODEL_IDS = {
     "lightning": "nvidia/Nemotron-3_5-Lightning",
     "super": "nvidia/nemotron-3-super-120b-a12b",
     "ultra": "nvidia/Nemotron-3-Ultra-550b-a55b",
+    "vl": "nvidia/Nemotron-3.5-Super-VL",   # 16-oct: se mide solo con texto (sin imágenes)
 }
 # La mejor combinación EN EQUIPO (✅ 15/16-oct, `team_matrix.py`, con la regla escrita antes de medir en
 # FASE 11.A): ① y ⑤ en Nano sin razonar (ninguna variación les ganó); ④ en Super RAZONANDO (cobertura de lo
@@ -29,9 +30,12 @@ MODEL_IDS = {
 # notas en Super sin razonar (empata con Ultra y cuesta menos). Hasta el 15-oct: todo Nano (el traductor,
 # razonando). Para volver a eso sin tocar código: AGENT_MODEL_DRAFTER=nano y AGENT_MODEL_NOTES=nano +
 # AGENT_REASONING_NOTES=1 en backend/.env.
+# 16-oct (noche): el ④ pasa a Nemotron 3.5 Super VL SIN razonar (solo texto). Con la regla del 15-oct y la de
+# adopción escritas antes de medir: misma calidad que Super razonando (30–31 de 32, Pendiente 46 %), 39 % más
+# barato y 3 s por llamada en vez de 15–40 s; en el ciego, 14 · 15 · 13 (no pierde contra 14 · 15 · 14).
 DEFAULTS: dict[str, tuple[str, bool]] = {
     "reviewer": ("nano", False),
-    "drafter": ("super", True),
+    "drafter": ("vl", False),
     "personal": ("nano", False),
     "notes": ("super", False),
 }

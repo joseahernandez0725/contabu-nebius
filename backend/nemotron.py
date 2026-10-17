@@ -71,6 +71,8 @@ PRICES_PER_MTOK: dict[str, tuple[float, float]] = {
     "nvidia/Nemotron-3_5-Lightning": (0.06, 0.24),
     "nvidia/nemotron-3-super-120b-a12b": (0.30, 0.90),
     "nvidia/Nemotron-3-Ultra-550b-a55b": (1.00, 3.00),
+    # ✅ 16-oct (chat central: /v1/models y 2 pings): mismo precio que Super. Se usa SOLO con texto.
+    "nvidia/Nemotron-3.5-Super-VL": (0.30, 0.90),
 }
 
 SENT: deque = deque(maxlen=50)          # mensajes enviados (en memoria, para las pruebas de privacidad)

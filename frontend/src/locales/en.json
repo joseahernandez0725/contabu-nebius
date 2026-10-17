@@ -454,7 +454,7 @@
     "running": "Reviewing…",
     "moreActions": "Run one step",
     "only": {
-      "audit": "Audit only (code, notes, ⑤ and ①)",
+      "audit": "Audit only (code, ⑥ notes, ⑤ and ①)",
       "verify": "⑤ Personal? → ② verify on the web",
       "review": "① Review findings",
       "draft": "④ Propose formula rows"
@@ -511,7 +511,7 @@
       "coverage_gap": "Missing data",
       "bank_disconnected": "Bank disconnected",
       "unusual_amount": "Unusual amount",
-      "note_check": "What your note asks",
+      "note_check": "⑥ What your note asks",
       "personal_use": "⑤ Personal for this business?"
     },
     "say": {
@@ -571,7 +571,7 @@
     "costLine": "This book: {{cost}} · {{left}} agent calls left today",
     "costTip": "Spent on this book: {{cost}} · agent calls left today: {{calls}} of {{cap}} · web searches left: {{searches}} of {{scap}}",
     "auditBtn": "Audit",
-    "auditTip": "The auditor (code), your notes, ⑤ \"personal for this business?\" and the ① reviewer. No drafting, no web searches.",
+    "auditTip": "The auditor (code), your notes (via the ⑥ note translator), ⑤ \"personal for this business?\" and the ① reviewer. No drafting, no web searches.",
     "est": {
       "calls_one": "~{{count}} AI call",
       "calls_other": "~{{count}} AI calls",

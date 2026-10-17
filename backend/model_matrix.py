@@ -2,14 +2,14 @@
 ContaBu — LA MATRIZ DE MODELOS (FASE 11, Auditoría / IA · 15-oct-2026).
 
 ¿Qué modelo de Nemotron, y con o sin razonamiento, conviene a CADA agente? Se varía UN agente a la vez;
-los demás quedan como corren hoy (Nano sin razonar; el traductor de notas, razonando). Cada combinación
+los demás quedan como corren hoy (Nano sin razonar; el ⑥ traductor de notas, razonando). Cada combinación
 corre 2 veces sobre el PRIMER examen (`demo_data.DEMO_TRUTH_*`); las filas del examen ciego se esconden
 en código, como en `measure.py`. La evidencia web es la del oráculo (`demo_web_evidence.json`, cargada de
 antemano): 0 créditos de Tavily.
 
 Agentes y su calidad (contada por el código, nunca por el modelo):
 - ⑤ "¿personal para este negocio?" (`personal_use`): gastos personales plantados que toca + precisión.
-- traductor de notas (`note_checks`): errores que tocan sus chequeos + precisión.
+- ⑥ traductor de notas (`note_checks`): errores que tocan sus chequeos + precisión.
 - ① revisor: errores que quedan como alerta con el ① + precisión + errores VERDADEROS que llamó legítimos.
 - ④ redactor: precisión y cobertura sobre lo Pendiente + el caso de las vacaciones (9 filas, 0 de más).
 Y por llamada: tokens de entrada y salida, razonamiento estimado, USD (precio de catálogo), latencia y
@@ -39,6 +39,7 @@ MODELS = {
     "ultra": "nvidia/Nemotron-3-Ultra-550b-a55b",
 }
 AGENTS = ("personal", "notes", "reviewer", "drafter")
+LABEL = {"reviewer": "① revisor", "drafter": "④ redactor", "personal": "⑤ ¿personal?", "notes": "⑥ traductor"}  # solo para las tablas
 AGENT_CALL_NAME = {"personal": "personal_judge", "notes": "note_checker", "reviewer": "reviewer", "drafter": "drafter"}
 DEFAULT = {"personal": ("nano", False), "notes": ("nano", True), "reviewer": ("nano", False), "drafter": ("nano", False)}
 BUDGET_USD = 2.8   # el tope de Jose es $3: se para antes
@@ -151,7 +152,7 @@ def table(rows: list[dict]) -> None:
         keys = [k for k in by if k[0] == agent]
         if not keys:
             continue
-        print(f"\n■ {agent}")
+        print(f"\n■ {LABEL[agent]} ({agent})")
         print("  modelo · razona | calidad (corrida 1 | corrida 2) | tokens ent/sal (razon.) por corrida | USD por corrida | latencia máx | sin tokens")
         for k in sorted(keys, key=lambda k: (list(MODELS).index(k[1]), k[2])):
             rs = by[k]

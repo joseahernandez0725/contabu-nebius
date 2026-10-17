@@ -323,7 +323,7 @@ class Looked:
 def _lookup(session: Session, company: Company, c: Candidate, cache: dict, *, user_id: Optional[int] = None,
             record: bool = True) -> Optional[Looked]:
     """UN comercio: la memoria de la oficina primero; si no está, "basic" y, si la confianza no sale alta,
-    "advanced" una sola vez (se queda la mejor). None = se acabó el tope de búsquedas del día."""
+    "advanced" una sola vez (se queda la avanzada). None = se acabó el tope de búsquedas del día."""
     hit = cache.get(c.fingerprint)
     if hit is not None:
         return Looked(hit=hit)
