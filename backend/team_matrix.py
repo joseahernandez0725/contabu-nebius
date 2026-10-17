@@ -20,6 +20,9 @@ Uso:
     .venv/bin/python team_matrix.py --blind-final       # el paso 5 (UNA vez, con la base final)
     .venv/bin/python team_matrix.py --blind-repeat      # el ciego OTRA vez, con el código de hoy (16-oct):
                                                         # "todo Nano" y "el equipo", 3 corridas cada una
+    .venv/bin/python team_matrix.py --blind-seats       # el ciego con el ⑤ y el ① en Lightning/Super/Ultra/VL
+                                                        # (17-oct; 9 configuraciones × 3, tope $1.50)
+    .venv/bin/python team_matrix.py --blind-seats-table # su tabla
     .venv/bin/python team_matrix.py --tables            # las tablas, desde el .jsonl
 Todo queda en `backend/private/team_matrix.jsonl` (una línea por corrida; qué es cada campo: FASE 11.A).
 Cada corrida siembra los 3 libros en una transacción y la DESHACE: no queda nada en la base.
@@ -395,6 +398,113 @@ def vl_confirm(agent: str, reasoning: bool) -> int:
     return 0
 
 
+# ── El ciego por asiento: ¿un modelo más grande en el ⑤ o en el ① encuentra más errores nunca vistos? (17-oct) ──
+SEATS_USD = 1.50
+SEATS_MODELS = ("lightning", "super", "ultra", "vl")
+SEATS_AGENTS = ("personal", "reviewer")   # el ⑤ suma errores; el ① filtra
+CODE_ALONE = 8                            # lo que encuentra el código solo en el ciego: si sale otra cosa, se para
+
+
+def _seats_spent() -> float:
+    return sum(r["total"]["usd"] for r in _read() if r.get("tag", "").startswith("blind_seats_"))
+
+
+def _seats_items() -> list[tuple]:
+    """El control (`agent_models.DEFAULTS`, sin mirar el .env) y el ⑤ / el ① con cada modelo, todo sin razonar."""
+    import agent_models
+    control = {a: {"model": m, "reasoning": r} for a, (m, r) in agent_models.DEFAULTS.items()}
+    items = [(control, "blind_seats_control")]
+    for agent in SEATS_AGENTS:
+        for m in SEATS_MODELS:
+            c = json.loads(json.dumps(control)); c[agent] = {"model": m, "reasoning": False}
+            items.append((c, f"blind_seats_{agent}_{m}"))
+    return items
+
+
+def _seats_estimate(items: list[tuple]) -> float:
+    """USD de una corrida de cada configuración, con lo ya medido: el control, del ciego de hoy (`vl_blind`, misma
+    configuración); cada variante, el control − lo que cuesta su asiento en Nano + lo que costó ese asiento con
+    ese modelo (primer examen, sin razonar)."""
+    rows = _read()
+    ctrl = [r["total"]["usd"] for r in rows if r.get("tag") == "vl_blind"]
+    base = sum(ctrl) / len(ctrl)
+
+    def seat(agent, model, exam):
+        xs = [r["total"]["agents"][agent]["usd"] for r in rows if r.get("exam") == exam
+              and r["config"][agent] == {"model": model, "reasoning": False} and r["total"]["agents"].get(agent, {}).get("calls")]
+        return sum(xs) / len(xs) if xs else None
+    est = 0.0
+    for c, tag in items:
+        if tag == "blind_seats_control":
+            est += base
+            continue
+        agent = next(a for a in SEATS_AGENTS if tag.startswith(f"blind_seats_{a}_"))
+        est += base - seat(agent, "nano", "blind") + seat(agent, c[agent]["model"], "first")
+    return est
+
+
+def _code_alone_ok() -> bool:
+    return all(sum(b["auditor_alone"]["found"] for b in r["books"].values()) == CODE_ALONE
+               for r in _read() if r.get("tag", "").startswith("blind_seats_"))
+
+
+def blind_seats(n: int = 3) -> int:
+    """9 configuraciones × 3 corridas en el ciego, ② por oráculo, en UNA tanda: de a una ronda (cada configuración una
+    vez, después la segunda…) para que el control y las variantes corran a la par. Para si se pasa de $1.50 o si el
+    código solo no da 8."""
+    items = _seats_items()
+    one = _seats_estimate(items)
+    print(f"ESTIMADO: ${one:.4f} por ronda de {len(items)} configuraciones · ${n * one:.4f} las {n * len(items)} corridas "
+          f"(tope ${SEATS_USD}; ya gastado aquí ${_seats_spent():.4f})", flush=True)
+    if _seats_spent() + n * one > SEATS_USD:
+        print("⛔ El estimado pasa el tope: no arranco."); return 2
+    stop = lambda: _seats_spent() >= SEATS_USD or not _code_alone_ok()
+    for k in range(1, n + 1):
+        _launch_many([(c, tag, k) for c, tag in items], blind=True, stop=stop)
+        if not _code_alone_ok():
+            print(f"⛔ El código solo no dio {CODE_ALONE} en alguna corrida: me detengo."); break
+        if _seats_spent() >= SEATS_USD:
+            print(f"⛔ TOPE: ${_seats_spent():.4f}; me detengo."); break
+    return blind_seats_table()
+
+
+def blind_seats_table() -> int:
+    rows = [r for r in _read() if r.get("tag", "").startswith("blind_seats_")]
+    items = _seats_items()
+    ctrl = [r for r in rows if r["tag"] == "blind_seats_control"]
+
+    def e(r): return r["total"]["errors_found"]
+    print(f"■ CIEGO POR ASIENTO (sin razonar, ② por oráculo) · errores de {rows[0]['total']['errors_planted'] if rows else '?'} "
+          f"· P precisión · ⑤ lo que aporta el ⑤ · ① desc. = errores verdaderos que el ① descartó · código solo")
+    for c, tag in items:
+        rs = [r for r in rows if r["tag"] == tag]
+        if not rs:
+            continue
+        seat = next((a for a in SEATS_AGENTS if tag.startswith(f"blind_seats_{a}_")), None)
+        name = "CONTROL (equipo de hoy)" if seat is None else f"{LABEL[seat]} en {c[seat]['model']}"
+        es = [e(r) for r in rs]
+        prec = [round(100 * r["total"]["precision"]) for r in rs]
+        own5 = [sum(b["own"]["personal"]["found"] for b in r["books"].values()) for r in rs]
+        dism = [sum(b["own"]["reviewer"]["dismissed_true"] for b in r["books"].values()) for r in rs]
+        code = [sum(b["auditor_alone"]["found"] for b in r["books"].values()) for r in rs]
+        usd = sum(r["total"]["usd"] for r in rs) / len(rs)
+        lat = ""
+        if seat:
+            calls = sum(r["total"]["agents"][seat]["calls"] for r in rs)
+            ms = sum(r["total"]["agents"][seat]["latency_ms_sum"] for r in rs)
+            lat = f" | {LABEL[seat][0]} {ms / calls / 1000:.1f} s/llamada" if calls else ""
+        verdict = ""
+        if seat and ctrl and len(rs) == len(ctrl):
+            ce = [e(r) for r in ctrl]
+            verdict = (" | DETECTA MÁS" if min(es) > max(ce) else " | DETECTA MENOS" if max(es) < min(ce)
+                       else " | empate dentro de la variación")
+        print(f"  {name:24} | {' · '.join(map(str, es))} (rango {min(es)}–{max(es)}) | P {min(prec)}–{max(prec)} % | "
+              f"⑤ {' · '.join(map(str, own5))} | ① desc. {' · '.join(map(str, dism))} | código {' · '.join(map(str, code))} | "
+              f"${usd:.4f}/corrida{lat}{verdict}")
+    print(f"\nGASTADO en el ciego por asiento: ${_seats_spent():.4f} (tope ${SEATS_USD})")
+    return 0
+
+
 def blind_final() -> int:
     st = json.loads(STATE.read_text())
     if any(r.get("exam") == "blind" for r in _read()):
@@ -444,6 +554,8 @@ def main() -> int:
     ap.add_argument("--vl", action="store_true", help="VL en cada asiento (16-oct)")
     ap.add_argument("--vl-table", action="store_true")
     ap.add_argument("--vl-confirm", nargs=2, metavar=("AGENTE", "RAZONA"), help="paso 2: p. ej. drafter 1")
+    ap.add_argument("--blind-seats", action="store_true", help="el ciego con el ⑤ y el ① en cada modelo (17-oct)")
+    ap.add_argument("--blind-seats-table", action="store_true")
     ap.add_argument("--tables", action="store_true")
     ap.add_argument("--one", help=argparse.SUPPRESS)
     ap.add_argument("--tag", default="manual")
@@ -471,6 +583,10 @@ def main() -> int:
         return vl_table()
     if args.vl_confirm:
         return vl_confirm(args.vl_confirm[0], args.vl_confirm[1] in ("1", "true", "yes", "si", "sí"))
+    if args.blind_seats:
+        return blind_seats()
+    if args.blind_seats_table:
+        return blind_seats_table()
     return tables()
 
 
