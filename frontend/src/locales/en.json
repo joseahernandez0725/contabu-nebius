@@ -129,46 +129,6 @@
     "saveProject": "Save as project",
     "allTime": "All time"
   },
-  "tx": {
-    "title": "Transactions",
-    "total": "{{count}} total",
-    "search": "Search",
-    "allAccounts": "All accounts",
-    "empty": "No transactions yet.",
-    "emptyHint": "Link a bank or upload a statement in the \"Bank feeds\" tab.",
-    "source": {
-      "rule": "Rule",
-      "ai": "AI",
-      "manual": "You"
-    },
-    "confidence": "Confidence",
-    "cols": {
-      "date": "Date",
-      "movement": "Movement",
-      "account": "Account",
-      "category": "Category",
-      "subcategory": "Subcategory",
-      "amount": "Amount"
-    },
-    "edit": {
-      "title": "Edit category",
-      "category": "Category",
-      "subcategory": "Subcategory (merchant)",
-      "save": "Save",
-      "saving": "Saving…",
-      "cancel": "Cancel",
-      "learn": "We'll remember this merchant next time."
-    },
-    "ruleApplied": "Rule created · {{n}} more transactions updated",
-    "ruleUpdated": "Rule updated · {{n}} more transactions aligned",
-    "quick": {
-      "covered": "A rule of yours covers this merchant: “{{keyword}}”. What do you want to change?",
-      "changeRule": "Change the rule (affects {{n}} transactions)",
-      "onlyThis": "Only this transaction"
-    },
-    "addCategory": "Add a category",
-    "ruleSkippedGeneric": "Fixed this transaction only — the merchant text is too generic for a safe rule. You can create one by hand in Rules."
-  },
   "upload": {
     "title": "Upload your bank statement",
     "subtitle": "Upload a CSV or Excel file from your bank. Your rules categorize each transaction; anything no rule covers stays Pending.",
@@ -224,17 +184,6 @@
     "modified_other": "The bank changed {{count}} transactions (date, amount or description) · {{recat}} re-categorized by your rules",
     "removed_one": "The bank withdrew {{count}} transaction already in the book. It's marked in Bookkeeping: you decide whether to keep it.",
     "removed_other": "The bank withdrew {{count}} transactions already in the book. They're marked in Bookkeeping: you decide whether to keep them."
-  },
-  "prov": {
-    "label": "Who decided",
-    "rule": "Your rule: “{{keyword}}” → {{category}}",
-    "ruleDeleted": "One of your rules (since deleted)",
-    "engine": "ContaBu's deterministic engine (rule)",
-    "band": "Amount band (retired)",
-    "transfer": "Detected transfer between your accounts",
-    "ai": "AI · {{pct}}% confidence",
-    "manual": "Set by you",
-    "none": "Not categorized yet"
   },
   "onboarding": {
     "title": "Set up your business",
@@ -923,8 +872,6 @@
     "pending": "Pending",
     "onlyPending": "Pending ({{n}})",
     "pendingHint": "No rule covers this yet — pick a category or create a rule",
-    "useClassic": "Use the previous view",
-    "useSheet": "Use the sheet",
     "undo": "Undo",
     "undoWhat": "Undo: {{what}}",
     "undoCell": "{{col}} of {{what}}",
@@ -1193,12 +1140,6 @@
       "toReview_other": "{{count}} findings to review",
       "stale_one": "{{count}} bank not updated recently",
       "stale_other": "{{count}} banks not updated recently"
-    },
-    "sheet": {
-      "transactions_one": "transaction",
-      "transactions_other": "transactions",
-      "problems_one": "with a problem",
-      "problems_other": "with a problem"
     },
     "settings": {
       "sector": "sector",

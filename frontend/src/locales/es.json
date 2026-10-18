@@ -145,46 +145,6 @@
     "NON_PL": "Fuera del P&L",
     "unclassified": "Sin clasificar"
   },
-  "tx": {
-    "title": "Movimientos",
-    "total": "{{count}} en total",
-    "search": "Buscar",
-    "allAccounts": "Todas las cuentas",
-    "empty": "Aún no hay movimientos.",
-    "emptyHint": "Vincula un banco o sube un extracto en la pestaña \"Bancos\".",
-    "source": {
-      "rule": "Regla",
-      "ai": "IA",
-      "manual": "Tú"
-    },
-    "confidence": "Confianza",
-    "cols": {
-      "date": "Fecha",
-      "movement": "Movimiento",
-      "account": "Cuenta",
-      "category": "Categoría",
-      "subcategory": "Subcategoría",
-      "amount": "Monto"
-    },
-    "edit": {
-      "title": "Editar categoría",
-      "category": "Categoría",
-      "subcategory": "Subcategoría (comercio)",
-      "save": "Guardar",
-      "saving": "Guardando…",
-      "cancel": "Cancelar",
-      "learn": "Recordaremos este comercio la próxima vez."
-    },
-    "ruleApplied": "Regla creada · {{n}} transacciones más actualizadas",
-    "ruleUpdated": "Regla actualizada · {{n}} movimientos más alineados",
-    "quick": {
-      "covered": "Este comercio lo cubre una regla tuya: “{{keyword}}”. ¿Qué quieres cambiar?",
-      "changeRule": "Cambiar la regla (afecta {{n}} movimientos)",
-      "onlyThis": "Solo esta transacción"
-    },
-    "addCategory": "Agregar una categoría",
-    "ruleSkippedGeneric": "Se corrigió solo esta transacción — el texto del comercio es demasiado genérico para una regla segura. Puedes crearla a mano en Reglas."
-  },
   "upload": {
     "title": "Sube tu extracto bancario",
     "subtitle": "Sube un CSV o Excel de tu banco. Tus reglas categorizan cada movimiento; lo que ninguna cubre queda Pendiente.",
@@ -240,17 +200,6 @@
     "modified_other": "El banco cambió {{count}} movimientos (fecha, monto o descripción) · {{recat}} re-categorizados por tus reglas",
     "removed_one": "El banco retiró {{count}} movimiento que ya estaba en el libro. Está marcado en Bookkeeping: tú decides si se queda.",
     "removed_other": "El banco retiró {{count}} movimientos que ya estaban en el libro. Están marcados en Bookkeeping: tú decides si se quedan."
-  },
-  "prov": {
-    "label": "Quién decidió",
-    "rule": "Tu regla: “{{keyword}}” → {{category}}",
-    "ruleDeleted": "Una regla tuya (ya eliminada)",
-    "engine": "Motor determinista de ContaBu (regla)",
-    "band": "Banda de monto (retirada)",
-    "transfer": "Transferencia entre tus cuentas detectada",
-    "ai": "IA · {{pct}}% de confianza",
-    "manual": "La pusiste tú",
-    "none": "Aún sin categorizar"
   },
   "settings": {
     "title": "Ajustes",
@@ -1004,8 +953,6 @@
     "pending": "Pendiente",
     "onlyPending": "Pendientes ({{n}})",
     "pendingHint": "Ninguna regla la cubre todavía — elige categoría o crea una regla",
-    "useClassic": "Usar la vista anterior",
-    "useSheet": "Usar la hoja",
     "undo": "Deshacer",
     "undoWhat": "Deshacer: {{what}}",
     "undoCell": "{{col}} de {{what}}",
@@ -1257,12 +1204,6 @@
       "toReview_other": "{{count}} hallazgos por revisar",
       "stale_one": "{{count}} banco sin actualizar hace días",
       "stale_other": "{{count}} bancos sin actualizar hace días"
-    },
-    "sheet": {
-      "transactions_one": "movimiento",
-      "transactions_other": "movimientos",
-      "problems_one": "con problema",
-      "problems_other": "con problema"
     },
     "settings": {
       "sector": "sector",

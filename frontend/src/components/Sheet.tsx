@@ -19,7 +19,7 @@ import {
 import type { View } from "./Sidebar";
 import { SyncSummary, sumSyncs } from "./BankConnections";
 import TransactionPanel from "./TransactionPanel";
-import { BTN_PRIMARY, PageHeader, Stat, TONE } from "./PageKit";
+import { BTN_PRIMARY, PageHeader } from "./PageKit";
 
 /** "hace 5 minutos" / "5 minutes ago" — `iso` es UTC sin zona (como lo guarda el backend). */
 function timeAgo(iso: string, lang: string): string {
@@ -57,6 +57,22 @@ const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}
   // BUSCAR: lo encontrado se resalta en ámbar; la coincidencia activa, con borde (como Excel).
   + ".rgCell.cb-hit{background:rgba(251,191,36,.28)!important}"
   + ".rgCell.cb-hit-cur{background:rgba(251,191,36,.55)!important;box-shadow:inset 0 0 0 2px #d97706}";
+
+// LAS COLUMNAS LLENAN EL ANCHO (18-oct, ronda de diseño): desde que la Observación salió el 13-oct,
+// ese espacio quedaba en blanco a la derecha de las 6 columnas. Anchos base (iguales a los de antes)
+// de las 4 columnas que NO crecen; el sobrante del contenedor se reparte entre Descripción y Nota.
+const FIXED_COLS_WIDTH = 116 + 120 + 190 + 165; // date + amount + category + subcategory
+const BASE_DESC_SIZE = 360;
+const BASE_NOTE_SIZE = 220;
+// Tope de lo que crece Descripción antes de que el resto empiece a ir a Nota — de sobra para que la
+// descripción del banco + el texto agregado + las etiquetas no se corten en una pantalla ancha normal;
+// solo en una ventana MUY ancha (o con el panel lateral cerrado) el sobrante sigue a Nota.
+const DESC_MAX_EXTRA = 400;
+// Ancho aproximado de lo que RevoGrid dibuja fuera de las columnas (números de fila + la barra de
+// scroll): no hay una API para leerlo exacto, así que es una estimación — de sobrar unos px, quedan
+// en blanco como antes (nunca un scroll horizontal nuevo); verificado contra
+// `calculateRowHeaderSize()` de RevoGrid 4.28 (mínimo 50 px hasta los 9,999 filas) + ~17 px de scroll.
+const ROW_HEADER_AND_SCROLLBAR = 67;
 
 /** Preferencia de vista recordada en este navegador (si no hay almacenamiento, solo esta sesión). */
 function usePref(key: string, initial: boolean): [boolean, (v: boolean) => void] {
@@ -106,9 +122,8 @@ function searchText(r: SheetRow, prop: string): string {
  *  abre con el filtro "Pendientes" y en la primera fila Pendiente. */
 export type SheetFocus = { id: number | null; onlyPending?: boolean; n: number };
 
-export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }: {
+export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   onNavigate?: (v: View) => void;
-  menuRight?: React.ReactNode;   // lo que va a la derecha de la barra de menús (p. ej. "vista anterior")
   focusTx?: SheetFocus | null;   // la fila a la que hay que llevar al bookkeeper al abrir
   onFocusTxDone?: () => void;
 } = {}) {
@@ -326,7 +341,6 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
   useEffect(() => { setHit(0); }, [search]);
 
   const flagged = (rows ?? []).filter((r) => flags[r.id]).length;
-  const problems = (rows ?? []).filter((r) => flags[r.id] === "problem").length;
   const pending = (rows ?? []).filter((r) => !r.category).length;
 
   /** Una edición: se manda a la base y se recarga. Si falla, se revierte recargando. */
@@ -434,11 +448,28 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
       prev.removeEventListener("afterfocus", prev.__contabuFocus);
       delete prev.__contabuFocus;
     }
+    if (prev?.__contabuColResize) {
+      prev.removeEventListener("aftercolumnresize", prev.__contabuColResize);
+      delete prev.__contabuColResize;
+    }
     gridRef.current = el;
     if (!el) return;
     const handler = (e: Event) => void onEditRef.current(e as CustomEvent);
     (el as any).__contabuHandler = handler;
     el.addEventListener("afteredit", handler);
+
+    // El bookkeeper sigue pudiendo arrastrar el borde de Descripción o Nota: ese ancho a mano gana
+    // sobre el reparto automático del sobrante (18-oct).
+    const onColResize = (e: Event) => {
+      const cols = Object.values((e as CustomEvent).detail ?? {}) as { prop?: string; size?: number }[];
+      const changed: Partial<Record<"description_extra" | "note", number>> = {};
+      for (const c of cols) {
+        if ((c.prop === "description_extra" || c.prop === "note") && c.size) changed[c.prop] = c.size;
+      }
+      if (Object.keys(changed).length) setManualFlexSize((prev) => ({ ...prev, ...changed }));
+    };
+    (el as any).__contabuColResize = onColResize;
+    el.addEventListener("aftercolumnresize", onColResize);
 
     // Selección: el rango que el bookkeeper marcó arrastrando (o la celda enfocada).
     const onRange = (e: Event) => {
@@ -542,6 +573,16 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
   // categoría y subcategoría. Un resaltado de fila que ponga el bookkeeper gana sobre este tinte.
   const manualCell = (p: any) => (p?.model?.source === "manual" ? { class: { "cb-manual": true } } : {});
 
+  // El sobrante de ancho sobre las 6 columnas fijas (lo mide un ResizeObserver más abajo, sobre
+  // `hostRef`) y lo que el bookkeeper fijó A MANO arrastrando el borde de Descripción o Nota — eso
+  // gana sobre el reparto automático. RevoGrid 4.28 trae un plugin de `stretch`, pero verificado en
+  // su código (`column.stretch.plugin`) que solo estira la ÚLTIMA columna; aquí hace falta repartir
+  // en dos (primero Descripción, luego Nota), así que no alcanza.
+  const [flexExtra, setFlexExtra] = useState(0);
+  const [manualFlexSize, setManualFlexSize] = useState<Partial<Record<"description_extra" | "note", number>>>({});
+  const descSize = manualFlexSize.description_extra ?? (BASE_DESC_SIZE + Math.min(flexExtra, DESC_MAX_EXTRA));
+  const noteSize = manualFlexSize.note ?? (BASE_NOTE_SIZE + Math.max(flexExtra - DESC_MAX_EXTRA, 0));
+
   const columns = useMemo(() => ([
     { prop: "date", name: t("sheet.date", { defaultValue: "Date" }), size: 116, sortable: true, readonly: true,
       // Fecha SIEMPRE en formato de EE.UU. (mes-día-año), sin importar el idioma de la UI: es dato
@@ -566,7 +607,7 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
     // ACH críptica — y que ENTRA AL MATCHEO DE REGLAS. Se pinta distinto para que nunca haya duda
     // de qué dijo el banco y qué escribiste tú.
     { prop: "description_extra", name: t("sheet.description", { defaultValue: "Description" }),
-      size: 360, sortable: true, editor: TEXT_EDITOR,
+      size: descSize, sortable: true, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => {
         const kids: any[] = [
           h("span", { style: styleOf(p.model, "description") }, p.model.description ?? ""),
@@ -647,14 +688,14 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
       cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "subcategory") }, applyCase(p.model.subcategory, caseStyle)) },
     // NOTA: texto libre del bookkeeper sobre ESA línea. Lo del agente ya no es columna: vive en el
     // panel lateral (13-oct).
-    { prop: "note", name: t("sheet.note", { defaultValue: "Note" }), size: 220, editor: TEXT_EDITOR,
+    { prop: "note", name: t("sheet.note", { defaultValue: "Note" }), size: noteSize, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => h("span", {
         title: p.model.note || "",
         style: { ...styleOf(p.model, "note"), whiteSpace: "normal", lineHeight: 1.35,
                  display: "block", color: p.model.note ? "#0f172a" : "#b9b2a2",
                  fontStyle: p.model.note ? "normal" : "italic", fontSize: "12.5px" },
       }, p.model.note || t("sheet.notePlaceholder", { defaultValue: "add a note…" })) },
-  ]), [t, caseStyle]);
+  ]), [t, caseStyle, descSize, noteSize]);
 
   // BARRA DE FÓRMULAS: referencia (columna + fila) y el contenido COMPLETO de la celda enfocada.
   // Solo muestra; editar sigue siendo en la celda. En Descripción: "banco - texto agregado".
@@ -708,6 +749,19 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
   // crear una regla desde la fila y cómo se ve el texto.
   const hostRef = useRef<HTMLDivElement | null>(null);
   useUndoShortcut(hostRef, () => void undo());
+
+  // Se recalcula cuando cambia el ancho DISPONIBLE: la ventana o el panel lateral de la transacción
+  // que abre/cierra a su lado (los dos cambian el ancho de `hostRef`, no el de la ventana).
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0;
+      setFlexExtra(Math.max(0, Math.round(w - FIXED_COLS_WIDTH - ROW_HEADER_AND_SCROLLBAR - BASE_DESC_SIZE - BASE_NOTE_SIZE)));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; model: any; prop: string; row: number } | null>(null);
   const [viewer, setViewer] = useState<{ title: string; text: string } | null>(null);
   const onContextMenu = useCallback(async (e: React.MouseEvent) => {
@@ -988,25 +1042,24 @@ export default function Sheet({ onNavigate, menuRight, focusTx, onFocusTxDone }:
     <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 104px)", minHeight: 420 }}>
       <style>{MANUAL_CSS}</style>
       {rowCss && <style>{rowCss}</style>}
-      {/* LA LÍNEA DE ESTADO (13-oct, Firm: diseño de página compartido — `PageKit.tsx`). La hoja no lleva
-          lista + detalle: es una hoja. El "actualizado hace X" y "↻ Actualizar banco" vivían a la derecha de
-          la barra de menús; ahora son el estado y la acción principal de la página. */}
-      <div style={{ marginBottom: 8 }}>
-        <PageHeader
-          meta={bankConns.length > 0 ? (!oldestSync ? t("sheet.bank.never")
-            : Date.now() - Date.parse(oldestSync + "Z") < 60_000 ? t("sheet.bank.justNow")
-            : t("sheet.bank.updatedAgo", { when: timeAgo(oldestSync, lang2) })) : undefined}
-          primary={bankConns.length > 0 && (
-            <button onClick={() => void syncAllBanks()} disabled={bankBusy} className={BTN_PRIMARY}>
-              {bankBusy ? t("sheet.bank.updating") : t("sheet.bank.update")}
-            </button>
-          )}>
-          <Stat value={rows?.length} label={t("page.sheet.transactions", { count: rows?.length ?? 0 })} />
-          <Stat value={rows ? pending : undefined} label={t("page.pnl.pending")} tone={TONE.pending} />
-          <Stat value={rows ? problems : undefined} label={t("page.sheet.problems", { count: problems })} tone={TONE.problem} />
-        </PageHeader>
-      </div>
-      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} right={menuRight} />
+      {/* LA LÍNEA DE ESTADO (13-oct, Firm: diseño de página compartido — `PageKit.tsx`): el "actualizado
+          hace X" y "↻ Actualizar banco". 18-oct, ronda de diseño: fuera las cifras que llevaba al lado
+          (transacciones, Pendientes, problemas) — el inicio ya las dice; todo el bloque se esconde si
+          el libro no tiene banco vinculado. */}
+      {bankConns.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <PageHeader
+            meta={!oldestSync ? t("sheet.bank.never")
+              : Date.now() - Date.parse(oldestSync + "Z") < 60_000 ? t("sheet.bank.justNow")
+              : t("sheet.bank.updatedAgo", { when: timeAgo(oldestSync, lang2) })}
+            primary={
+              <button onClick={() => void syncAllBanks()} disabled={bankBusy} className={BTN_PRIMARY}>
+                {bankBusy ? t("sheet.bank.updating") : t("sheet.bank.update")}
+              </button>
+            } />
+        </div>
+      )}
+      <MenuBar menus={menus} ariaLabel={t("sheet.mb.label")} />
       {/* Un aviso con la hoja ya cargada (antes `error` solo se veía si la hoja no cargaba). */}
       {error && rows && (
         <div className="alert text-sm bg-amber-50 text-amber-800 border-amber-200 mb-2" style={{ display: "flex" }}>

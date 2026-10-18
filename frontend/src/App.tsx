@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
 import Dashboard from "./components/Dashboard";
-import Transactions from "./components/Transactions";
 import Sheet, { type SheetFocus } from "./components/Sheet";
 import Upload from "./components/Upload";
 import AuditWorkspace from "./components/AuditWorkspace";
@@ -31,21 +30,12 @@ function App() {
   const [problemCount, setProblemCount] = useState(0);
   const [auditCount, setAuditCount] = useState(0); // hallazgos del AUDITOR (badge ámbar — FASE 9)
   const [billingNote, setBillingNote] = useState<string | null>(null);
-  const [focusTxId, setFocusTxId] = useState<number | null>(null); // tx a abrir (desde el auditor)
   // La misma fila, para la Hoja (14-oct): Auditoría y el Resumen llevan a la transacción EXACTA.
   const [sheetFocus, setSheetFocus] = useState<SheetFocus | null>(null);
   const openInSheet = (f: Omit<SheetFocus, "n">) => {
     setSheetFocus({ ...f, n: Date.now() });
-    if (f.id != null) setFocusTxId(f.id);   // la vista anterior entiende el mismo pedido
     setView("transactions");
   };
-  // LA HOJA (FASE 10): la consola del bookkeeper reemplaza la lista móvil simplificada.
-  // Se deja un interruptor a la vista anterior mientras se termina de construir, para poder comparar.
-  // Va aquí con los demás hooks a propósito: declararlo después de los `return` tempranos rompe
-  // las Reglas de Hooks — en cuanto `fbUser` pasa de undefined a usuario, React lanza "Rendered
-  // more hooks than during the previous render". Con VITE_DEV_UID no se ve, porque ese camino
-  // arranca con sesión y nunca pasa por el return de `undefined`.
-  const [useSheet, setUseSheet] = useState(true);
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
   // Costura de DESARROLLO (espejo de VITE_DEV_UID en api.ts y de AUTH_DEV_MODE en el backend):
   // permite trabajar en la UI sin login de Firebase. Doble candado: la variable tiene que estar
@@ -210,35 +200,7 @@ function App() {
               <Dashboard onNavigate={setView} onOpenPending={() => openInSheet({ id: null, onlyPending: true })} />
             )}
             {view === "transactions" && (
-              <>
-                {/* En la Hoja, el enlace va a la derecha de la barra de menús (sin fila propia). */}
-                {!useSheet && (
-                  <div className="flex justify-end mb-2">
-                    <button
-                      onClick={() => setUseSheet(true)}
-                      className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
-                    >
-                      {t("sheet.useSheet", { defaultValue: "Use the sheet" })}
-                    </button>
-                  </div>
-                )}
-                {useSheet ? (
-                  <Sheet onNavigate={setView} focusTx={sheetFocus} onFocusTxDone={() => setSheetFocus(null)} menuRight={
-                    <button
-                      onClick={() => setUseSheet(false)}
-                      className="text-[11.5px] text-slate-400 hover:text-brand-green underline underline-offset-2"
-                    >
-                      {t("sheet.useClassic", { defaultValue: "Use the previous view" })}
-                    </button>
-                  } />
-                ) : (
-                  <Transactions
-                    onAddCategory={() => setView("settings")}
-                    focusTxId={focusTxId}
-                    onFocusHandled={() => setFocusTxId(null)}
-                  />
-                )}
-              </>
+              <Sheet onNavigate={setView} focusTx={sheetFocus} onFocusTxDone={() => setSheetFocus(null)} />
             )}
             {view === "audit" && (
               // FASE 11 (8-oct): UNA herramienta — estado, flujo, notas, cola y detalle (`AuditWorkspace`).
