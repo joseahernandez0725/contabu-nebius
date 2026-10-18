@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "contabu-prod"
-  }
+  },
+  "targets": {
+    "contabu-prod": {
+      "hosting": {
+        "landing": [
+          "contabu-prod"
+        ],
+        "demo": [
+          "contabu-demo"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
