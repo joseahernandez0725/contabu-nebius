@@ -69,7 +69,6 @@
     "profitNegative": "Your business had a loss this period",
     "revenue": "Revenue",
     "totalExpenses": "Total expenses",
-    "whereMoneyGoes": "Where does the money go?",
     "recentActivity": "Recent activity",
     "seeAll": "See all",
     "uploadNew": "+ Upload a new bank statement",
@@ -1047,7 +1046,7 @@
         },
         "s2": {
           "t": "Open Rivera HVAC's Summary",
-          "d": "At the top, what needs attention. Net income is shown before Pending: what has no category is declared, never hidden."
+          "d": "Up top, the P&L for the year to date — the same one the client gets. Net income is shown before Pending: what has no category is declared, never hidden. On the right, what needs attention."
         },
         "s3": {
           "t": "Audit → Review the book",
@@ -1161,7 +1160,6 @@
       "accountsTitle": "Accounts"
     },
     "summary": {
-      "allTime": "All time",
       "openBook": "Open Bookkeeping",
       "attention": "Needs your attention",
       "allClear": "Nothing needs your attention right now.",
@@ -1175,7 +1173,23 @@
       "toReview_one": "{{count}} finding to review",
       "toReview_other": "{{count}} findings to review",
       "stale_one": "{{count}} bank not updated recently",
-      "stale_other": "{{count}} banks not updated recently"
+      "stale_other": "{{count}} banks not updated recently",
+      "ytd": "{{year}} · year to date",
+      "noneThisYear": "No transactions in {{year}} yet.",
+      "noneThisYearSub": "This book's transactions are from other years. In the full P&L you can pick the period.",
+      "pendingOutside": "{{count}} of them outside this period",
+      "demo": {
+        "title": "ContaBu — AI-native bookkeeping for the bookkeeper",
+        "lead": "Agents on NVIDIA Nemotron (Nebius Token Factory) audit the book, check merchants on the web and propose rules. They never touch a number or set a category: the bookkeeper approves, a deterministic engine applies the rules, and every total comes from SQL. The architecture large companies use, for the small bookkeeper.",
+        "viewing": "You're looking at",
+        "bookNote": "one of 3 sample client books (synthetic data, Jul–Sep 2026).",
+        "tryLabel": "Try",
+        "try1": "{{audit}} → {{review}}: the agents work in visible steps",
+        "try2": "{{transactions}}: select a row to see why it has its category",
+        "try3": "{{banks}}: link a test bank (Plaid sandbox)",
+        "tour": "Guided tour",
+        "hide": "Hide"
+      }
     },
     "settings": {
       "sector": "sector",

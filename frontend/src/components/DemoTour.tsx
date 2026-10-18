@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { OPEN_TOUR_EVENT } from "../demo";
 
 // EL RECORRIDO GUIADO del demo (FASE 13, 3-oct; rehecho el 14-oct con lo que existe hoy). Los 8 pasos de
 // docs/DEMO Y ENTREGA.md → "🧭 El recorrido guiado": lo que hace el jurado en ~3 minutos, y la base del
@@ -29,6 +30,12 @@ export default function DemoTour() {
   const [minimized, setMinimized] = useState<boolean>(() => readJSON<boolean>(KEY_MIN, false));
   useEffect(() => writeJSON(KEY_DONE, done), [done]);
   useEffect(() => writeJSON(KEY_MIN, minimized), [minimized]);
+  // "Abrir el recorrido" desde el resumen del inicio (18-oct): lo despliega si estaba minimizado.
+  useEffect(() => {
+    const open = () => setMinimized(false);
+    window.addEventListener(OPEN_TOUR_EVENT, open);
+    return () => window.removeEventListener(OPEN_TOUR_EVENT, open);
+  }, []);
 
   const toggle = (s: string) => setDone((d) => (d.includes(s) ? d.filter((x) => x !== s) : [...d, s]));
   const count = STEPS.filter((s) => done.includes(s)).length;

@@ -85,7 +85,6 @@
     "profitNegative": "Tu negocio está en pérdida este periodo",
     "revenue": "Ingresos",
     "totalExpenses": "Gastos totales",
-    "whereMoneyGoes": "¿En qué se va el dinero?",
     "recentActivity": "Movimientos recientes",
     "seeAll": "Ver todos",
     "uploadNew": "+ Subir un nuevo extracto bancario",
@@ -1111,7 +1110,7 @@
         },
         "s2": {
           "t": "Abre el Resumen de Rivera HVAC",
-          "d": "Arriba, lo que necesita atención. El resultado sale antes de lo Pendiente: lo que no tiene categoría se declara, nunca se esconde."
+          "d": "Arriba, el P&L de lo que va del año: el mismo que recibe el cliente. La utilidad se muestra antes de lo Pendiente: lo que no tiene categoría se declara, nunca se esconde. A la derecha, lo que necesita tu atención."
         },
         "s3": {
           "t": "Auditoría → Revisar el libro",
@@ -1225,7 +1224,6 @@
       "accountsTitle": "Cuentas"
     },
     "summary": {
-      "allTime": "Todo el período",
       "openBook": "Abrir Bookkeeping",
       "attention": "Lo que necesita tu atención",
       "allClear": "Nada necesita tu atención ahora.",
@@ -1239,7 +1237,23 @@
       "toReview_one": "{{count}} hallazgo por revisar",
       "toReview_other": "{{count}} hallazgos por revisar",
       "stale_one": "{{count}} banco sin actualizar hace días",
-      "stale_other": "{{count}} bancos sin actualizar hace días"
+      "stale_other": "{{count}} bancos sin actualizar hace días",
+      "ytd": "{{year}} · en lo que va del año",
+      "noneThisYear": "Todavía no hay movimientos en {{year}}.",
+      "noneThisYearSub": "Los movimientos de este libro son de otros años. En el P&L completo puedes elegir el período.",
+      "pendingOutside": "{{count}} de ellos fuera de este período",
+      "demo": {
+        "title": "ContaBu — bookkeeping nativo de IA para el bookkeeper",
+        "lead": "Agentes sobre NVIDIA Nemotron (Nebius Token Factory) auditan el libro, verifican comercios en internet y proponen reglas. Nunca tocan un número ni ponen una categoría: el bookkeeper aprueba, un motor determinista aplica las reglas y cada total sale de SQL. La arquitectura de los grandes, para el bookkeeper pequeño.",
+        "viewing": "Estás viendo",
+        "bookNote": "uno de los 3 libros de clientes de ejemplo (datos sintéticos, jul–sep 2026).",
+        "tryLabel": "Prueba",
+        "try1": "{{audit}} → {{review}}: los agentes trabajan en pasos a la vista",
+        "try2": "{{transactions}}: elige una fila y mira por qué tiene su categoría",
+        "try3": "{{banks}}: vincula un banco de prueba (Plaid sandbox)",
+        "tour": "Recorrido guiado",
+        "hide": "Ocultar"
+      }
     },
     "settings": {
       "sector": "sector",
