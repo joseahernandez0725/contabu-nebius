@@ -828,6 +828,17 @@ class ReviewResult:
     personal_usage: Optional[nemotron.Usage] = None   # "¿personal para este negocio?" (si hubo, 14-oct)
 
 
+def _commit_keeping_view(session: Session) -> None:
+    """Commit SIN expirar lo cargado: la vista del libro (cientos de `Transaction`) sigue en uso después, y
+    expirarla obligaría a recargar fila por fila."""
+    keep = session.expire_on_commit
+    session.expire_on_commit = False
+    try:
+        session.commit()
+    finally:
+        session.expire_on_commit = keep
+
+
 def review(session: Session, company: Company, *, lang: str = "es", reasoning: Optional[bool] = None,
            user_id: Optional[int] = None, model: Optional[str] = None, force: bool = False,
            finding_ids: Optional[list[int]] = None) -> ReviewResult:
@@ -847,9 +858,15 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: O
     # solo si hay alguna), para que `sync` ya los aplique.
     import note_checks
     note_usage = note_checks.refresh(session, company, view, user_id=user_id)
+    # Un commit por agente (18-oct): la pantalla sondea `agentcall` desde OTRA sesión mientras esto corre;
+    # sin él, el ⑥ y el ⑤ aparecían juntos con el ① al final, no cada uno al terminar.
+    if note_usage is not None:
+        _commit_keeping_view(session)
     # Y los comercios del libro que todavía no tienen opinión "¿personal para ESTE negocio?" (14-oct).
     import personal_use
     personal_usage = personal_use.refresh(session, company, view, user_id=user_id)
+    if personal_usage is not None:
+        _commit_keeping_view(session)
     open_findings = book_review.sync(session, company)
     # Sin veredicto, o con un veredicto guardado en OTRO idioma (se rehace en el de la pantalla, 13-oct).
     if finding_ids is not None:
