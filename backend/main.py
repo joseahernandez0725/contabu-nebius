@@ -1817,11 +1817,13 @@ def agent_usage(company_id: int, user: User = Depends(current_user), session: Se
 
 # "El equipo trabajando" (18-oct, ronda de diseño): qué hizo cada agente en la última corrida del libro, con
 # su modelo. Solo lee `AgentCall` (lógica en `agent_calls.team`). Consola, como `/agents/usage`.
+# `since_id`: solo las llamadas de ESTA acción (la pantalla la sondea mientras corre; no gasta IA).
 @app.get("/api/companies/{company_id}/agents/team")
-def agent_team(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+def agent_team(company_id: int, since_id: Optional[int] = None, user: User = Depends(current_user),
+               session: Session = Depends(get_session)):
     import agent_calls
     company = console_company(company_id, user, session)
-    return agent_calls.team(session, company)
+    return agent_calls.team(session, company, since_id)
 
 
 # El viejo PROPONEDOR (`POST /rule-proposals` y `/rule-proposals/validate`, con `ai.propose_rules` sobre

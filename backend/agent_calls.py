@@ -137,23 +137,32 @@ def spent(session: Session, company: Company, since_id: int) -> dict:
 # entre una y la siguiente ("Revisar el libro" hace auditar → verificar → redactar sin pausas). Un
 # agente que no aparece en esa corrida "no corrió" (p. ej. el ⑥ sin notas nuevas): se dice, con cuándo
 # trabajó por última vez. Fuera del equipo: el mapeo de columnas al importar (`column_mapper`…).
+# Con `since_id` (18-oct, la pantalla mientras corre): la corrida es EXACTA = las llamadas después de ese id
+# (el `max_id` que la pantalla leyó al empezar la acción, como `mark()`/`spent()`); sin agrupar por pausas.
 
 TEAM = ("note_checker", "personal_judge", "reviewer", "verifier", "drafter")
 _MODEL_KEY = {"note_checker": "notes", "personal_judge": "personal", "reviewer": "reviewer", "drafter": "drafter"}
 RUN_GAP_S = 180
 
 
-def team(session: Session, company: Company) -> dict:
+def team(session: Session, company: Company, since_id: Optional[int] = None) -> dict:
     import agent_models
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    from sqlalchemy import text
+    # "Hace cuánto" con el reloj DE LA BASE: `created_at` (sin zona) queda guardado en la hora de la sesión de
+    # Postgres, no en UTC (✅ 18-oct: "hace 7 horas" justo después de correr; el mismo error que se arregló el
+    # 8-oct en `book_review.seconds_since_review`). Restar dos `created_at` entre sí sí está bien.
+    now = session.connection().execute(text("SELECT LOCALTIMESTAMP")).scalar()
     ago = lambda t: max(0, int((now - t).total_seconds()))   # noqa: E731
-    rows = session.exec(select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.agent.in_(TEAM))
-                        .order_by(AgentCall.id.desc()).limit(500)).all()
+    q = select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.agent.in_(TEAM))
+    if since_id is not None:
+        q = q.where(AgentCall.id > since_id)
+    rows = session.exec(q.order_by(AgentCall.id.desc()).limit(500)).all()
     # La corrida: de la llamada más nueva hacia atrás, mientras la pausa entre dos llamadas seguidas no pase
     # de RUN_GAP_S. `created_at` se escribe al TERMINAR la llamada: la pausa descuenta lo que tardó.
     run: list[AgentCall] = []
     for r in rows:
-        if run and (run[-1].created_at - r.created_at).total_seconds() - run[-1].latency_ms / 1000 > RUN_GAP_S:
+        if since_id is None and run and \
+                (run[-1].created_at - r.created_at).total_seconds() - run[-1].latency_ms / 1000 > RUN_GAP_S:
             break
         run.append(r)
     last = dict(session.exec(select(AgentCall.agent, func.max(AgentCall.created_at))
@@ -180,6 +189,7 @@ def team(session: Session, company: Company) -> dict:
             } if mine else None,
         })
     return {
+        "max_id": mark(session, company),
         "run": {"seconds_ago": ago(run[0].created_at), "calls": len(run),
                 "cost_usd": round(sum(r.cost_usd or 0.0 for r in run), 6),
                 "credits": sum(r.credits or 0 for r in run)} if run else None,

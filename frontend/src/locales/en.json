@@ -578,8 +578,8 @@
         "reviewer_other": "{{count}} findings judged",
         "verifier_one": "{{count}} web search",
         "verifier_other": "{{count}} web searches",
-        "drafter_one": "{{count}} rule drafted",
-        "drafter_other": "{{count}} rules drafted"
+        "drafter_one": "{{count}} proposed",
+        "drafter_other": "{{count}} proposed"
       },
       "calls_one": "{{count}} call",
       "calls_other": "{{count}} calls",
@@ -587,7 +587,12 @@
       "failed_other": "{{count}} failed",
       "credits_one": "{{count}} credit",
       "credits_other": "{{count}} credits",
-      "seconds": "{{s}} s"
+      "seconds": "{{s}} s",
+      "passed_one": "{{count}} passed the validator",
+      "passed_other": "{{count}} passed the validator",
+      "working": "Working…",
+      "queued": "Waiting for its turn.",
+      "nothingThisRun": "No agent needed to call the AI in this run."
     }
   },
   "audit": {

@@ -987,10 +987,13 @@ export interface TeamAgent {
          cost_usd: number; credits: number } | null;
 }
 export interface AgentTeam {
+  max_id: number;   // la última llamada del libro: pásala como `sinceId` para ver solo lo de la acción que empieza
   run: { seconds_ago: number; calls: number; cost_usd: number; credits: number } | null;
   agents: TeamAgent[];
 }
-export const getAgentTeam = () => agentsFetch<AgentTeam>("/team");
+/** `sinceId` (18-oct): solo las llamadas de ESTA acción; la pantalla la sondea mientras corre (no gasta IA). */
+export const getAgentTeam = (sinceId?: number | null) =>
+  agentsFetch<AgentTeam>(sinceId != null ? `/team?since_id=${sinceId}` : "/team");
 
 
 // --- LA REVISIÓN DEL LIBRO (FASE 11, Auditoría / IA · 8-oct-2026): la lista ÚNICA de hallazgos ---

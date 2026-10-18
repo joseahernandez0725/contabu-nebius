@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentTeam, getAgentUsage, getAuditBoard, getCategories, money,
@@ -30,7 +30,7 @@ type Sel = { kind: "finding"; id: number } | { kind: "pending"; merchant: string
 // en internet SOLO los comercios marcados y el ① vuelve a juzgar esos (ida y vuelta); "draft" es el ④.
 type Step = "audit" | "verify" | "draft";
 const STEPS: Step[] = ["audit", "verify", "draft"];
-type StepState = "idle" | "running" | "done" | "error" | "skipped";
+type StepState = "idle" | "queued" | "running" | "done" | "error" | "skipped";   // queued: "Revisar el libro" lo correrá
 // 18-oct (ronda de diseño, "la IA al frente"): cada paso con su botón y sus integrantes a la vista. En pantalla
 // los agentes se nombran por lo que hacen (`auditView.agent.*`), nunca ①…⑥; los números quedan para el código:
 // note_checker = ⑥ · personal_judge = ⑤ · reviewer = ① · verifier = ② · drafter = ④.
@@ -40,7 +40,9 @@ const STEP_MEMBERS: Record<Step, Member[]> = {
   verify: ["verifier"],
   draft: ["drafter"],
 };
-const STEP_MARK: Record<StepState, string> = { idle: "", running: "● ", done: "✓ ", error: "✗ ", skipped: "– " };
+const STEP_MARK: Record<StepState, string> = { idle: "", queued: "", running: "● ", done: "✓ ", error: "✗ ", skipped: "– " };
+// Cada cuánto se pregunta al backend, MIENTRAS corre, qué agentes ya reportaron (solo lee `agentcall`; no gasta IA).
+const POLL_MS = 2500;
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 const SEV_DOT: Record<string, string> = {
@@ -100,11 +102,32 @@ export default function AuditWorkspace({
     return b;
   }, [onStats, lang]);
 
+  /** La acción en curso (o la última de esta pantalla) empezó DESPUÉS de esta llamada: el panel del equipo muestra
+   *  solo lo suyo, exacto (18-oct). `null` = no se sabe (al abrir la página, o tras "Buscar este comercio"): el
+   *  backend agrupa la última corrida por pausas. */
+  const sinceRef = useRef<number | null>(null);
+  const beginAction = useCallback(async () => {
+    sinceRef.current = (await getAgentTeam().catch(() => null))?.max_id ?? null;
+  }, []);
+
   /** El costo del libro y lo que hizo el equipo: después de cada acción de los agentes. */
   const refreshUsage = useCallback(() => {
     getAgentUsage().then(setUsage).catch(() => {});
-    getAgentTeam().then(setTeam).catch(() => {});
+    getAgentTeam(sinceRef.current).then(setTeam).catch(() => {});
   }, []);
+
+  // 18-oct: MIENTRAS corre un paso, el panel se llena agente por agente (cada uno escribe su fila en `agentcall`
+  // al terminar su llamada). Se detiene al terminar, o si el backend no contesta. Una respuesta que llega después
+  // de detenerse se ignora (no pisa la final).
+  useEffect(() => {
+    if (running === null) return;
+    let alive = true;
+    const id = window.setInterval(() => {
+      getAgentTeam(sinceRef.current).then((x) => { if (alive) setTeam(x); })
+        .catch(() => { alive = false; window.clearInterval(id); });
+    }, POLL_MS);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [running]);
 
   useEffect(() => {
     getCategories().then(setChart).catch(() => {});
@@ -158,7 +181,7 @@ export default function AuditWorkspace({
         setDecided({});
       }
       setSteps((s) => ({ ...s, [step]: "done" }));
-      getAgentTeam().then(setTeam).catch(() => {});
+      getAgentTeam(sinceRef.current).then(setTeam).catch(() => {});
     } catch (e) {
       // Un paso que falla (p. ej. sin clave de búsqueda) no detiene el flujo: se marca y se sigue.
       setSteps((s) => ({ ...s, [step]: e instanceof AgentError && /unavailable/.test(e.code) ? "skipped" : "error" }));
@@ -170,7 +193,8 @@ export default function AuditWorkspace({
   async function reviewBook() {
     setError(null);
     setLastSpent(null);
-    setSteps({ audit: "idle", verify: "idle", draft: "idle" });
+    setSteps({ audit: "queued", verify: "queued", draft: "queued" });
+    await beginAction();
     let b: AuditBoard | null = board;
     for (const step of STEPS) b = await runStep(step, b);
     setRunning(null);
@@ -182,6 +206,8 @@ export default function AuditWorkspace({
   async function runOne(step: Step) {
     setError(null);
     setLastSpent(null);
+    setSteps({ audit: "idle", verify: "idle", draft: "idle" });
+    await beginAction();
     await runStep(step, board);
     setRunning(null);
     setStepNote("");
@@ -211,6 +237,7 @@ export default function AuditWorkspace({
   async function askRule(g: PendingGroup) {
     setBusy(true); setError(null);
     try {
+      await beginAction();
       const r = await runFormulaDrafter(lang, g.transactions.map((x) => x.id));
       setLastSpent(r.spent ?? null);
       if (r.proposals.length) {
@@ -228,6 +255,7 @@ export default function AuditWorkspace({
   /** "Proponer las filas para esta nota" (14-oct): el ④ corre SOLO para esa nota. */
   async function proposeForNote(noteId: number): Promise<number> {
     setError(null);
+    await beginAction();
     const r = await runFormulaDrafter(lang, undefined, noteId);
     setLastSpent(r.spent ?? null);
     if (r.proposals.length) {
@@ -243,6 +271,7 @@ export default function AuditWorkspace({
   /** Después de "Buscar este comercio": la evidencia y el veredicto nuevos se ven en el tablero. */
   async function afterSearch(s?: AgentSpent) {
     setLastSpent(s ?? null);
+    sinceRef.current = null;   // la búsqueda la lanzó `MerchantSearch`: no se sabe desde qué llamada empezó
     await loadBoard().catch(() => {});
     refreshUsage();
   }
@@ -313,7 +342,7 @@ export default function AuditWorkspace({
       />
 
       {/* 2. LA IA AL FRENTE (18-oct): los pasos a la vista, cada agente con su nombre, su modelo y lo que hizo. */}
-      <TeamPanel team={team} steps={steps} running={running} stepNote={stepNote} est={est} disabled={running !== null || busy}
+      <TeamPanel team={team} exact={sinceRef.current !== null} steps={steps} running={running} stepNote={stepNote} est={est} disabled={running !== null || busy}
                  onRun={(s) => void runOne(s)} ago={ago} estimateText={estimateText} />
 
       {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{error}</p>}
@@ -487,8 +516,8 @@ type T = ReturnType<typeof useTranslation>["t"];
 
 /** "El equipo de IA" (18-oct): los tres pasos con su botón; en cada uno, sus integrantes con el modelo que usan y
  *  lo que hicieron en la ÚLTIMA corrida (datos de `agentcall`, nunca inventados). Mientras corre, el paso se marca. */
-function TeamPanel({ team, steps, running, stepNote, est, disabled, onRun, ago, estimateText }: {
-  team: AgentTeam | null; steps: Record<Step, StepState>; running: Step | null; stepNote: string;
+function TeamPanel({ team, exact, steps, running, stepNote, est, disabled, onRun, ago, estimateText }: {
+  team: AgentTeam | null; exact: boolean; steps: Record<Step, StepState>; running: Step | null; stepNote: string;
   est: Partial<Record<Step | "review_book", AgentEstimate>>; disabled: boolean; onRun: (s: Step) => void;
   ago: (secs: number) => string; estimateText: (e: AgentEstimate | null | undefined) => string;
 }) {
@@ -503,7 +532,7 @@ function TeamPanel({ team, steps, running, stepNote, est, disabled, onRun, ago, 
           <span className="text-xs text-slate-500">
             {r ? [t("auditView.team.lastRun", { when: ago(r.seconds_ago) }), t("auditView.team.calls", { count: r.calls }),
                   `$${r.cost_usd.toFixed(5)}`, ...(r.credits ? [t("auditView.team.credits", { count: r.credits })] : [])].join(" · ")
-               : t("auditView.team.neverRun")}
+               : running ? "" : exact ? t("auditView.team.nothingThisRun") : t("auditView.team.neverRun")}
           </span>
         )}
         {running && <span className="text-xs text-emerald-800">{stepNote}</span>}
@@ -524,7 +553,8 @@ function TeamPanel({ team, steps, running, stepNote, est, disabled, onRun, ago, 
             </div>
             {est[s] && <p className="text-[11px] text-slate-400">{estimateText(est[s])}</p>}
             <ul className="space-y-1.5 border-t border-slate-100 pt-1.5">
-              {STEP_MEMBERS[s].map((m) => <TeamMember key={m} m={m} a={m === "auditor" ? undefined : byKey[m]} loaded={team !== null} ago={ago} />)}
+              {STEP_MEMBERS[s].map((m) => <TeamMember key={m} m={m} a={m === "auditor" ? undefined : byKey[m]} loaded={team !== null}
+                                                       state={steps[s]} ago={ago} />)}
             </ul>
           </div>
         ))}
@@ -534,7 +564,9 @@ function TeamPanel({ team, steps, running, stepNote, est, disabled, onRun, ago, 
 }
 
 /** Un integrante: su nombre por lo que hace, su modelo y lo que hizo (o que no corrió, y por qué puede pasar). */
-function TeamMember({ m, a, loaded, ago }: { m: Member; a?: TeamAgent; loaded: boolean; ago: (secs: number) => string }) {
+function TeamMember({ m, a, loaded, state, ago }: {
+  m: Member; a?: TeamAgent; loaded: boolean; state: StepState; ago: (secs: number) => string;
+}) {
   const { t } = useTranslation();
   const model = m === "auditor" ? t("auditView.team.code")
     : a ? `${a.model.label}${a.model.reasoning ? ` · ${t("auditView.team.reasoning")}` : ""}` : "";
@@ -544,14 +576,20 @@ function TeamMember({ m, a, loaded, ago }: { m: Member; a?: TeamAgent; loaded: b
   else if (a?.run) {
     const x = a.run;
     // Lo que produjo, según lo que guarda cada agente en `items_out` / `items_valid` (ver `agent_calls.record`).
+    // El ④: lo que escribió el modelo y lo que pasó TODOS los controles del código (lo que llega a Propuestas).
     const did = m === "verifier" ? x.calls : m === "drafter" ? x.items_out : x.items_valid;
     line = [
       t(`auditView.team.did.${m}`, { count: did }),
+      ...(m === "drafter" ? [t("auditView.team.passed", { count: x.items_valid })] : []),
       ...(m === "verifier" ? [] : [t("auditView.team.calls", { count: x.calls })]),
       ...(x.ok < x.calls ? [t("auditView.team.failed", { count: x.calls - x.ok })] : []),
       t("auditView.team.seconds", { s: (x.latency_ms / 1000).toFixed(1) }),
       m === "verifier" ? t("auditView.team.credits", { count: x.credits }) : `$${x.cost_usd.toFixed(5)}`,
     ].join(" · ");
+  } else if (state === "running") {
+    line = t("auditView.team.working");   // su paso corre de verdad y todavía no reportó
+  } else if (state === "queued") {
+    line = t("auditView.team.queued");
   } else if (a && a.last_seconds_ago != null) {
     line = `${t("auditView.team.didNotRun")} ${t("auditView.team.lastWorked", { when: ago(a.last_seconds_ago) })}`;
     why = t(`auditView.team.why.${m}`);
@@ -565,7 +603,7 @@ function TeamMember({ m, a, loaded, ago }: { m: Member; a?: TeamAgent; loaded: b
         <span className="font-medium text-slate-800">{t(`auditView.agent.${m}`)}</span>
         {model && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] text-slate-600">{model}</span>}
       </div>
-      {line && <div className={`text-[11px] ${a?.run ? "text-slate-700" : "text-slate-500"}`}>{line}</div>}
+      {line && <div className={`text-[11px] ${a?.run ? "text-slate-700" : state === "running" ? "text-emerald-700 animate-pulse" : "text-slate-500"}`}>{line}</div>}
       {why && <div className="text-[11px] text-slate-400">{why}</div>}
     </li>
   );

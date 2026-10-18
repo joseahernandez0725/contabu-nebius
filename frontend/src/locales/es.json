@@ -856,8 +856,8 @@
         "reviewer_other": "{{count}} hallazgos juzgados",
         "verifier_one": "{{count}} búsqueda en internet",
         "verifier_other": "{{count}} búsquedas en internet",
-        "drafter_one": "{{count}} regla redactada",
-        "drafter_other": "{{count}} reglas redactadas"
+        "drafter_one": "{{count}} propuesta",
+        "drafter_other": "{{count}} propuestas"
       },
       "calls_one": "{{count}} llamada",
       "calls_other": "{{count}} llamadas",
@@ -865,7 +865,12 @@
       "failed_other": "fallaron {{count}}",
       "credits_one": "{{count}} crédito",
       "credits_other": "{{count}} créditos",
-      "seconds": "{{s}} s"
+      "seconds": "{{s}} s",
+      "passed_one": "{{count}} pasó el validador",
+      "passed_other": "{{count}} pasaron el validador",
+      "working": "Trabajando…",
+      "queued": "Esperando su turno.",
+      "nothingThisRun": "Ningún agente necesitó llamar a la IA en esta corrida."
     }
   },
   "audit": {

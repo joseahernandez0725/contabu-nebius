@@ -39,7 +39,7 @@ import merchant_verifier
 import nemotron
 from audit import audit_categorization
 from company_profile import p2p_counterparty
-from models import CategorizationChange, CategoryRule, Company, Transaction
+from models import AgentCall, CategorizationChange, CategoryRule, Company, Transaction
 from rules import is_check, merchant_signature, rule_overlaps, suggest_keyword
 
 LANG_NAMES = {"es": "Spanish", "en": "English"}
@@ -497,6 +497,9 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
 
     note_text = {n.id: n.text for n in book_notes.list_notes(session, company.id)}
     raw_rows, usages, outcome = [], [], "ok"
+    # 18-oct: de qué llamada salió cada fila, para guardar en su `agentcall.items_valid` cuántas pasaron TODOS
+    # los controles de abajo (antes quedaba en 0 y la pantalla no podía decir "9 propuestas · 4 pasaron").
+    row_call: list[Optional[AgentCall]] = []
     for system, user in calls:
         if record and len(usages) > 0:
             agent_calls.check_cap(session, company)
@@ -513,12 +516,13 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
         rows = rows if isinstance(rows, list) else [rows]
         raw_rows.extend(rows)
         usages.append(reply.usage)
-        if record:
-            agent_calls.record(session, company, "drafter", reply.usage, user_id=user_id, items_out=len(rows))
+        call_row = (agent_calls.record(session, company, "drafter", reply.usage, user_id=user_id, items_out=len(rows))
+                    if record else None)
+        row_call.extend([call_row] * len(rows))
 
     proposals, rejected = [], []
     seen: set = set()
-    for raw in raw_rows[:MAX_ROWS * 3]:
+    for i, raw in enumerate(raw_rows[:MAX_ROWS * 3]):
         candidate, errors = _from_model(raw, view)
         if errors:
             rejected.append({"raw": raw, "errors": errors})
@@ -588,6 +592,8 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
             rejected.append({"raw": raw, "errors": ["contradicts_corrections"]})
             continue
         seen.add(key)
+        if row_call[i] is not None:
+            row_call[i].items_valid += 1
         proposals.append(Proposal(row=checked.row, matches=checked.matches, test=test,
                                   web=web_evidence(view, checked.row),
                                   notes=[{"id": i, "text": note_text.get(i, "")} for i in checked.row.from_notes]))
