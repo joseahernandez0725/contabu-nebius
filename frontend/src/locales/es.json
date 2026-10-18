@@ -1119,7 +1119,7 @@
         },
         "s3": {
           "t": "Auditoría → Revisar el libro",
-          "d": "El equipo de agentes sobre Nemotron trabaja en pasos visibles: auditar, verificar en la web, juzgar, redactar. Mientras tanto abre «Nómina: el banco solo ve lo neto»: es conocimiento contable, no solo texto."
+          "d": "El equipo de agentes sobre Nemotron trabaja en 3 pasos a la vista: 1. Auditar · 2. Verificar en internet · 3. Redactar reglas. Cada hallazgo se juzga dentro de Auditar y otra vez después de verificar. Mientras tanto abre «Nómina: el banco solo ve lo neto»: es conocimiento contable, no solo texto."
         },
         "s4": {
           "t": "La nota se vuelve una fila",

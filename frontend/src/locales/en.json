@@ -1055,7 +1055,7 @@
         },
         "s3": {
           "t": "Audit → Review the book",
-          "d": "The agent team on Nemotron works in visible steps: audit, verify on the web, judge, draft. Meanwhile open “Payroll: the bank only sees the net”: that's accounting knowledge, not just text."
+          "d": "The agent team on Nemotron works in 3 visible steps: 1. Audit · 2. Check on the web · 3. Draft rules. Each finding is judged inside Audit and again after the web check. Meanwhile open “Payroll: the bank only sees the net”: that's accounting knowledge, not just text."
         },
         "s4": {
           "t": "A note becomes one row",

@@ -13,7 +13,10 @@ import { OPEN_TOUR_EVENT } from "../demo";
 const STEPS = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"] as const;
 // v2 (14-oct): los pasos cambiaron de sentido; con la clave vieja, lo marcado en v1 caería en otros pasos.
 const KEY_DONE = "contabu.demoTour.done.v2";
-const KEY_MIN = "contabu.demoTour.minimized.v1";
+// v2 (18-oct): arranca MINIMIZADO (la pastilla); el resumen del inicio lo ofrece con "Recorrido guiado".
+// Hace falta clave nueva: el efecto de abajo guarda el valor en cada visita, así que todo visitante de antes
+// ya tiene "desplegado" guardado en v1 y un cambio solo del valor por defecto no le llegaría.
+const KEY_MIN = "contabu.demoTour.minimized.v2";
 
 function readJSON<T>(key: string, fallback: T): T {
   try { const raw = localStorage.getItem(key); return raw ? (JSON.parse(raw) as T) : fallback; }
@@ -27,7 +30,7 @@ export default function DemoTour() {
   const { t } = useTranslation();
   // El paso 1 ("Probar el demo") ya está hecho por estar aquí: arranca marcado.
   const [done, setDone] = useState<string[]>(() => readJSON<string[]>(KEY_DONE, ["s1"]));
-  const [minimized, setMinimized] = useState<boolean>(() => readJSON<boolean>(KEY_MIN, false));
+  const [minimized, setMinimized] = useState<boolean>(() => readJSON<boolean>(KEY_MIN, true));
   useEffect(() => writeJSON(KEY_DONE, done), [done]);
   useEffect(() => writeJSON(KEY_MIN, minimized), [minimized]);
   // "Abrir el recorrido" desde el resumen del inicio (18-oct): lo despliega si estaba minimizado.
