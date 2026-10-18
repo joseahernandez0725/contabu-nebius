@@ -39,6 +39,7 @@ export const PNL = {
   operatingIncome: "Operating income",
   otherIncome: "+ Other income",
   otherExpense: "− Other expenses",
+  other: "Other", // FASE 12 (18-oct): cabecera plegada del `compact`, agrupa Other income + Other expense
   netIncome: "Net income",
 };
 
