@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "Summary",
     "transactions": "Transactions",
+    "notes": "Notes",
     "upload": "Bank feeds",
     "audit": "Audit",
     "pnl": "P&L",
@@ -233,22 +234,18 @@
   },
   "notes": {
     "title": "Book notes",
-    "subtitle": "What the agent must know about this client. Notes never categorize: the agent reads them to propose changes to this book's formula, and you approve.",
     "add": "+ New note",
     "loading": "Loading notes…",
     "empty": "No notes yet. Write what you'd tell a new assistant about this client: exceptions, dates, what to watch for.",
     "emptyShort": "What the agent must know about this client. None yet.",
-    "kindLabel": "Type",
     "kind": {
       "keep_in_mind": "Keep in mind",
       "dont_report": "Don't report"
     },
-    "priorityLabel": "Priority",
     "priority": {
       "high": "High",
       "normal": "Normal"
     },
-    "textLabel": "Note",
     "textPlaceholder": "e.g. The owner was on vacation in Europe from Aug 3 to Aug 17: purchases there are personal.",
     "merchantLabel": "Merchant (optional)",
     "merchantPlaceholder": "e.g. STARBUCKS",
@@ -257,7 +254,6 @@
     "save": "Save note",
     "saving": "Saving…",
     "cancel": "Cancel",
-    "edit": "Edit",
     "delete": "Delete",
     "confirmDelete": "Delete this note? The agent will stop taking it into account.",
     "error": {
@@ -272,6 +268,124 @@
       "merchant_too_long": "The merchant is too long (80 characters max).",
       "too_many_notes": "This book already has 100 notes. Delete the ones that no longer apply."
     }
+  },
+  "notesPage": {
+    "lead": "What the AI must know about this client: your prompt to the agents. A note never categorizes: 📌 helps the audit find more, 🚫 stops it from reporting what's fine.",
+    "count_one": "{{count}} active note",
+    "count_other": "{{count}} active notes",
+    "pausedCount_one": "{{count}} paused",
+    "pausedCount_other": "{{count}} paused",
+    "newTitle": "New note",
+    "notSaved": "Not saved yet",
+    "paused": "Paused",
+    "pickOne": "Pick a note, or write a new one.",
+    "kindHelp": {
+      "keep_in_mind": "so the audit finds more: what is personal, what to watch for, dates.",
+      "dont_report": "so it stops reporting what's fine: e.g. large Costco purchases are inventory."
+    },
+    "never": "A note never changes a category: rules and you do.",
+    "active": "Active",
+    "pausedSince": "Paused {{when}}",
+    "newHint": "Write it as you'd tell a new assistant",
+    "sec": {
+      "note": "The note",
+      "understood": "What the AI understood",
+      "touched": "What it touched",
+      "wouldTouch": "What it would touch today"
+    },
+    "highPriority": "High priority",
+    "placeholder": {
+      "dont_report": "e.g. Large Costco purchases are inventory: don't flag them."
+    },
+    "needsMerchant": "Add a merchant so the code can hide its findings; without one, only the agents read the note.",
+    "test": "Test",
+    "testing": "Testing…",
+    "free": "free",
+    "discard": "Discard changes",
+    "testBadge": "Test · not saved",
+    "testFree": "This test cost nothing (the AI had already read this text).",
+    "testFreeCode": "This test was free: the code applies it, without AI.",
+    "testCost_one": "This test cost {{cost}} ({{count}} AI call). Save it as is and the next review won't pay for it again.",
+    "testCost_other": "This test cost {{cost}} ({{count}} AI calls). Save it as is and the next review won't pay for it again.",
+    "touchedNew": "Test the note to see what it would touch.",
+    "proposeRules": "Draft rules for this note",
+    "resume": "Resume",
+    "pause": "Pause",
+    "dont": {
+      "silences": "Hides the findings for {{merchant}} from Audit. The code does this, without AI.",
+      "noMerchant": "Without a merchant, the code hides nothing: only the agents read it (the reviewer takes it into account when judging).",
+      "agentsRead": "The agents also read it on every review."
+    },
+    "changedTest": "You changed the note. Test it to see what the AI would understand.",
+    "notYet": "The AI hasn't turned this note into a check yet. That happens on the next review, or right now with Test.",
+    "staleLong": "The note changed after the AI read it: this is what it understood before. It reads it again on the next review, or with Test.",
+    "u": {
+      "where": "Where",
+      "when": "When",
+      "byCode": "The code applies this check on every review, for free. It never changes a category.",
+      "personal": "Flags {{what}}{{amount}} as possibly personal.",
+      "review": "Flags {{what}}{{amount}} for you to review.",
+      "what": {
+        "out": "payments",
+        "in": "money received",
+        "any": "transactions"
+      },
+      "over": " over {{amount}}",
+      "from": "from {{day}}",
+      "until": "until {{day}}"
+    },
+    "dropped": {
+      "not_checkable": "The AI found no set of transactions in this note that the code can check. The agents still read it on every review.",
+      "invented_amount": "The AI used an amount the note doesn't say, so the check was dropped.",
+      "unbounded": "The note doesn't say which merchants or kinds of merchant it means.",
+      "no_answer": "The AI didn't answer for this note.",
+      "tail": "Rewrite it and test it again."
+    },
+    "status": {
+      "open": "To review",
+      "ok": "Marked OK",
+      "gone": "No longer appears"
+    },
+    "touch": {
+      "flagged_one": "Flagged {{count}} transaction for you to look at:",
+      "flagged_other": "Flagged {{count}} transactions for you to look at:",
+      "wouldFlag_one": "Would flag {{count}} transaction today:",
+      "wouldFlag_other": "Would flag {{count}} transactions today:",
+      "silences_one": "Hides {{count}} finding from Audit today:",
+      "silences_other": "Hides {{count}} findings from Audit today:",
+      "wouldSilence_one": "Would hide {{count}} finding today:",
+      "wouldSilence_other": "Would hide {{count}} findings today:",
+      "flaggedNone": "It hasn't flagged anything yet. The code applies it on every review.",
+      "wouldFlagNone": "Today it wouldn't flag any transaction.",
+      "silencesNone": "Today there's nothing to hide for this merchant.",
+      "wouldSilenceNone": "Today it wouldn't hide any finding.",
+      "pausedNothing": "Paused: it isn't flagging or hiding anything.",
+      "more": "and {{count}} more"
+    },
+    "openInSheet": "View in Bookkeeping →",
+    "short": {
+      "silences": "Hides findings for {{merchant}}",
+      "readOnly": "Read by the agents",
+      "notYet": "The AI hasn't read it yet",
+      "stale": "Changed: the AI will read it again",
+      "dropped": "The AI couldn't turn it into a check",
+      "personal": "Possibly personal",
+      "review": "To review",
+      "over": "over {{amount}}"
+    },
+    "auditLine": {
+      "none": "No notes yet: write what the AI must know about this client",
+      "active_one": "{{count}} active note",
+      "active_other": "{{count}} active notes",
+      "paused_one": "{{count}} paused",
+      "paused_other": "{{count}} paused",
+      "open": "Open notes →"
+    },
+    "card": {
+      "open": "Open notes →",
+      "more": "and {{count}} more"
+    },
+    "noRulesForNote": "The drafter proposed no rules for this note."
   },
   "agents": {
     "title": "Agent team · Nemotron",
@@ -529,15 +643,6 @@
       "rejudged_one": "{{count}} finding judged again with it.",
       "rejudged_other": "{{count}} findings judged again with it."
     },
-    "noteOffer": {
-      "ask": "Propose formula rows for this note?",
-      "propose": "Propose",
-      "later": "Not now",
-      "running": "Drafting rows for this note…",
-      "none": "The drafter proposed no rows for this note.",
-      "done_one": "{{count}} row proposed for this note.",
-      "done_other": "{{count}} rows proposed for this note."
-    },
     "agent": {
       "auditor": "The auditor (code)",
       "note_checker": "Reads your notes",
@@ -592,7 +697,11 @@
       "passed_other": "{{count}} passed the validator",
       "working": "Working…",
       "queued": "Waiting for its turn.",
-      "nothingThisRun": "No agent needed to call the AI in this run."
+      "nothingThisRun": "No agent needed to call the AI in this run.",
+      "stepFailed": "This step failed.",
+      "codeOnly": "No AI call in the last run.",
+      "showDetail": "See detail",
+      "hideDetail": "Hide detail"
     }
   },
   "audit": {

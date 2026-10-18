@@ -119,13 +119,31 @@ def seed_notes(session: Session, company_id: int, notes: list[dict]) -> list[Boo
 
 
 def active_notes(session: Session, company_id: int, on: Optional[date] = None) -> list[BookNote]:
-    """Las notas que el agente debe leer: todas, salvo las que ya VENCIERON antes de `on` (por
-    defecto, nunca vence ninguna: el agente revisa la historia completa del libro, y una nota de
-    agosto sigue siendo verdad sobre agosto). Prioridad alta primero."""
-    notes = list_notes(session, company_id)
+    """Las notas que el agente debe leer: todas, salvo las PAUSADAS (18-oct) y las que ya VENCIERON
+    antes de `on` (por defecto, nunca vence ninguna: el agente revisa la historia completa del libro, y
+    una nota de agosto sigue siendo verdad sobre agosto). Prioridad alta primero."""
+    notes = [n for n in list_notes(session, company_id) if n.paused_at is None]
     if on is None:
         return notes
     return [n for n in notes if n.valid_to is None or n.valid_to >= on]
+
+
+def silencing_merchants(session: Session, company_id: int) -> list[str]:
+    """Los comercios que callan las notas 🚫 "no me reportes" ACTIVAS (en código, no en un prompt). Una
+    sola regla para la pestaña Auditoría, el panel de la transacción y la página de Notas."""
+    return [n.merchant.upper() for n in active_notes(session, company_id)
+            if n.kind == "dont_report" and n.merchant]
+
+
+def set_paused(session: Session, note: BookNote, paused: bool) -> BookNote:
+    """Pausar / activar (18-oct). Pausada, ningún agente la lee y el código no la aplica; el texto y su
+    chequeo se quedan como estaban: al activarla, si nada cambió, no se vuelve a pagar la traducción."""
+    if paused and note.paused_at is None:
+        note.paused_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    elif not paused:
+        note.paused_at = None
+    session.add(note)
+    return note
 
 
 def to_dict(note: BookNote) -> dict:
@@ -139,4 +157,5 @@ def to_dict(note: BookNote) -> dict:
         "valid_to": note.valid_to.isoformat() if note.valid_to else None,
         "created_at": note.created_at.isoformat() if note.created_at else None,
         "updated_at": note.updated_at.isoformat() if note.updated_at else None,
+        "paused_at": note.paused_at.isoformat() if note.paused_at else None,
     }

@@ -30,8 +30,7 @@ LEVEL_ORDER = {"problem": 3, "review": 2, "info": 1}
 def _silencers(session: Session, company: Company) -> list[str]:
     """Las notas 🚫 "no me reportes" con comercio. MISMA regla que `book_review.board()`: lo que la
     pestaña Auditoría esconde, el panel y los puntitos también lo esconden."""
-    return [n.merchant.upper() for n in book_notes.list_notes(session, company.id)
-            if n.kind == "dont_report" and n.merchant]
+    return book_notes.silencing_merchants(session, company.id)
 
 
 def _shown(findings: list[Finding], silencers: list[str]) -> list[Finding]:
@@ -119,7 +118,7 @@ def _notes(session: Session, company: Company, tx: Transaction, merchant: str) -
     todo el libro: mostrarla en cada movimiento sería ruido (vive en la pestaña Auditoría)."""
     text = f"{tx.description or ''} {tx.description_extra or ''} {merchant}".upper()
     out = []
-    for n in book_notes.list_notes(session, company.id):
+    for n in book_notes.active_notes(session, company.id):
         if (n.valid_from and tx.date < n.valid_from) or (n.valid_to and tx.date > n.valid_to):
             continue
         if n.merchant:

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentTeam, getAgentUsage, getAuditBoard, getCategories, money,
+  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentTeam, getAgentUsage, getAuditBoard, getBookNotes, getCategories, money,
   resolveFinding, runAudit, runFormulaDrafter, runMerchantVerifier, updateTransaction,
   type AgentEstimate, type AgentSpent, type AgentTeam, type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts,
   type DismissReason, type FormulaProposal, type PendingGroup, type TeamAgent, type TeamAgentKey, type TxSummary,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
-import BookNotes from "./BookNotes";
+import { DEMO_MODE } from "../demo";
 import MerchantSearch from "./MerchantSearch";
 import {
-  BTN_PRIMARY, BTN_SECONDARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, PageHeader, Tabs,
+  BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, Tabs,
   agoText, DetailEmpty,
 } from "./PageKit";
 
@@ -55,12 +55,24 @@ export const VERDICT_STYLE: Record<string, string> = {
 };
 const REASONS: DismissReason[] = ["wrong_category", "too_broad", "one_off", "not_now", "other"];
 
+// 18-oct (ronda de diseño 2): el detalle de cada agente (modelo, llamadas, segundos, costo) se ve completo en el DEMO
+// (los jueces lo quieren ver); en el producto, el bookkeeper ve los 3 pasos y su resultado en una línea, y "Ver
+// detalle" despliega lo demás. La preferencia se recuerda en este navegador.
+const DETAIL_KEY = "contabu.audit.teamDetail.v1";
+
 export default function AuditWorkspace({
   onOpenSheet,
   onStats,
+  onOpenNotes,
+  proposeNote,
+  onProposeNoteDone,
 }: {
   onOpenSheet?: (txId?: number) => void;                      // a Bookkeeping (la Hoja), a ESA fila
   onStats?: (s: AuditBoard["stats"]) => void;                 // contadores de la barra lateral
+  onOpenNotes?: () => void;                                   // a la página de Notas (18-oct)
+  // Desde Notas, "Proponer reglas para esta nota": el ④ corre AQUÍ, donde viven las propuestas. `n` cambia cada vez.
+  proposeNote?: { id: number; n: number } | null;
+  onProposeNoteDone?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const lang = (i18n.language || "en").split("-")[0];
@@ -84,6 +96,15 @@ export default function AuditWorkspace({
   // "El equipo trabajando" (18-oct): qué hizo cada agente en la última corrida, leído de `agentcall`.
   const [team, setTeam] = useState<AgentTeam | null>(null);
   const [lastSpent, setLastSpent] = useState<AgentSpent | null>(null);
+  // Las Notas viven en su página (18-oct): aquí, solo cuántas hay activas y un enlace.
+  const [noteCount, setNoteCount] = useState<{ active: number; paused: number } | null>(null);
+  const [teamOpen, setTeamOpen] = useState<boolean>(() => {
+    try { return window.localStorage.getItem(DETAIL_KEY) === "1"; } catch { return false; }
+  });
+  const toggleTeam = () => setTeamOpen((v) => {
+    try { window.localStorage.setItem(DETAIL_KEY, v ? "0" : "1"); } catch { /* sin almacenamiento: solo esta vez */ }
+    return !v;
+  });
   // La decisión se guarda como DATO y se traduce al mostrarla (si se cambia de idioma, sigue bien).
   type Decision = { kind: "approved"; count: number } | { kind: "dismissed" } | { kind: "failed" };
   const [decided, setDecided] = useState<Record<number, Decision>>({});
@@ -131,6 +152,8 @@ export default function AuditWorkspace({
 
   useEffect(() => {
     getCategories().then(setChart).catch(() => {});
+    getBookNotes().then((ns) => setNoteCount({ active: ns.filter((n) => !n.paused_at).length, paused: ns.filter((n) => n.paused_at).length }))
+      .catch(() => setNoteCount(null));
     refreshUsage();
   }, [refreshUsage]);
   // Se recarga al cambiar de idioma: un veredicto del ① en otro idioma pasa a "pendiente de rehacer".
@@ -268,6 +291,21 @@ export default function AuditWorkspace({
     return r.proposals.length;
   }
 
+  // Llegó desde Notas con "Proponer reglas para esta nota": corre una vez por pedido (`n`).
+  const handledNote = useRef<number | null>(null);
+  useEffect(() => {
+    if (!proposeNote || handledNote.current === proposeNote.n) return;
+    handledNote.current = proposeNote.n;
+    setBusy(true);
+    setRunning("draft");
+    setSteps({ audit: "idle", verify: "idle", draft: "running" });
+    setStepNote(t("auditView.step.drafting"));
+    proposeForNote(proposeNote.id)
+      .then((count) => { setSteps((x) => ({ ...x, draft: "done" })); if (!count) setError(t("notesPage.noRulesForNote")); })
+      .catch((e) => { setSteps((x) => ({ ...x, draft: "error" })); setError(errText(e)); })
+      .finally(() => { setBusy(false); setRunning(null); setStepNote(""); onProposeNoteDone?.(); });
+  }, [proposeNote]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** Después de "Buscar este comercio": la evidencia y el veredicto nuevos se ven en el tablero. */
   async function afterSearch(s?: AgentSpent) {
     setLastSpent(s ?? null);
@@ -311,7 +349,6 @@ export default function AuditWorkspace({
   const selGroup = sel?.kind === "pending" ? groups.find((g) => g.merchant === sel.merchant) : undefined;
   const selProposal = sel?.kind === "proposal" ? proposals[sel.idx] : undefined;
 
-  const stats = board?.stats;
   const modelName = "Nemotron · Nebius Token Factory";
   const costTip = usage
     ? t("auditView.costTip", {
@@ -322,35 +359,29 @@ export default function AuditWorkspace({
 
   return (
     <div className="space-y-3">
-      {/* 1. LA LÍNEA DE ESTADO + la acción principal (estructura común: `PageHeader`). 18-oct: fuera las tres
-          cifras de arriba (por revisar · Pendientes · problemas): las pestañas de la cola ya dicen esos números. */}
-      <PageHeader
-        meta={stats?.reviewed_seconds_ago != null ? t("auditView.reviewed", { when: ago(stats.reviewed_seconds_ago) }) : t("auditView.neverReviewed")}
-        primary={
-          <button onClick={reviewBook} disabled={running !== null || busy} className={BTN_PRIMARY}
-                  title={estimateText(est.review_book)}>
-            {running ? t("auditView.running") : t("auditView.reviewBook")}
-          </button>
-        }
-        below={
-          // ANTES: lo que costaría. DESPUÉS: lo que costó la última acción.
-          <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3">
-            {lastSpent && !running && <span className="text-emerald-800">{spentText(lastSpent)}</span>}
-            {est.review_book && <span>{t("auditView.est.line", { action: t("auditView.reviewBook"), what: estimateText(est.review_book) })}</span>}
-          </div>
-        }
-      />
-
-      {/* 2. LA IA AL FRENTE (18-oct): los pasos a la vista, cada agente con su nombre, su modelo y lo que hizo. */}
+      {/* 1. LA IA AL FRENTE (18-oct): los pasos a la vista, cada agente con su nombre y lo que hizo. Ronda 2: "Revisar el
+          libro" vive AQUÍ (es el botón que corre los 3 pasos) y la línea de estado de arriba se fue: el "hace cuánto" y el
+          costo ya los dice el equipo. */}
       <TeamPanel team={team} exact={sinceRef.current !== null} steps={steps} running={running} stepNote={stepNote} est={est} disabled={running !== null || busy}
-                 onRun={(s) => void runOne(s)} ago={ago} estimateText={estimateText} />
+                 onRun={(s) => void runOne(s)} onReviewBook={() => void reviewBook()} lastSpent={lastSpent} spentText={spentText}
+                 detailed={DEMO_MODE || teamOpen} canCollapse={!DEMO_MODE} onToggle={toggleTeam} ago={ago} estimateText={estimateText} />
 
       {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{error}</p>}
 
-      {/* 3. LAS NOTAS (compactas si están vacías) */}
-      <BookNotes compact onProposeForNote={proposeForNote} />
+      {/* 2. LAS NOTAS, en su página (ronda 2): aquí una línea con el enlace. */}
+      {noteCount && (
+        <button onClick={onOpenNotes}
+                className="w-full bg-white rounded-xl border border-slate-200 px-3 py-2 flex items-center gap-2 text-sm text-start hover:bg-slate-50">
+          <span className="text-slate-700">
+            {noteCount.active + noteCount.paused === 0 ? t("notesPage.auditLine.none")
+              : [t("notesPage.auditLine.active", { count: noteCount.active }),
+                 ...(noteCount.paused ? [t("notesPage.auditLine.paused", { count: noteCount.paused })] : [])].join(" · ")}
+          </span>
+          <span className="ms-auto shrink-0 text-xs font-semibold text-emerald-800">{t("notesPage.auditLine.open")}</span>
+        </button>
+      )}
 
-      {/* 4. LA COLA + EL DETALLE (estructura común: `ListDetail`) */}
+      {/* 3. LA COLA + EL DETALLE (estructura común: `ListDetail`) */}
       <ListDetail
         selKey={sel ? JSON.stringify(sel) : undefined}
         list={
@@ -415,7 +446,7 @@ export default function AuditWorkspace({
         }
       />
 
-      {/* 5. PIE: quién hace el trabajo (para los jueces) y el costo, discreto */}
+      {/* 4. PIE: quién hace el trabajo (para los jueces) y el costo, discreto */}
       <p className="text-[11px] text-slate-400 flex flex-wrap gap-x-3" title={costTip}>
         <span>{t("auditView.poweredBy", { model: modelName })}</span>
         {usage && <span>{t("auditView.costLine", { cost: `$${(usage.total_cost_usd ?? 0).toFixed(5)}`, left: usage.left_today })}</span>}
@@ -515,18 +546,38 @@ export function useAuditText() {
 type T = ReturnType<typeof useTranslation>["t"];
 
 /** "El equipo de IA" (18-oct): los tres pasos con su botón; en cada uno, sus integrantes con el modelo que usan y
- *  lo que hicieron en la ÚLTIMA corrida (datos de `agentcall`, nunca inventados). Mientras corre, el paso se marca. */
-function TeamPanel({ team, exact, steps, running, stepNote, est, disabled, onRun, ago, estimateText }: {
+ *  lo que hicieron en la ÚLTIMA corrida (datos de `agentcall`, nunca inventados). Mientras corre, el paso se marca.
+ *  Ronda 2: "Revisar el libro" (los 3 pasos en orden) va en su encabezado. `detailed` = cada integrante a la vista
+ *  (siempre en el demo); si no, cada paso dice su resultado en UNA línea y "Ver detalle" despliega lo demás. */
+function TeamPanel({ team, exact, steps, running, stepNote, est, disabled, onRun, onReviewBook, lastSpent, spentText,
+                     detailed, canCollapse, onToggle, ago, estimateText }: {
   team: AgentTeam | null; exact: boolean; steps: Record<Step, StepState>; running: Step | null; stepNote: string;
   est: Partial<Record<Step | "review_book", AgentEstimate>>; disabled: boolean; onRun: (s: Step) => void;
+  onReviewBook: () => void; lastSpent: AgentSpent | null; spentText: (s: AgentSpent | null | undefined) => string;
+  detailed: boolean; canCollapse: boolean; onToggle: () => void;
   ago: (secs: number) => string; estimateText: (e: AgentEstimate | null | undefined) => string;
 }) {
   const { t } = useTranslation();
   const byKey = Object.fromEntries((team?.agents ?? []).map((a) => [a.agent, a])) as Partial<Record<TeamAgentKey, TeamAgent>>;
   const r = team?.run;
+  /** El resultado del paso en una línea (vista compacta): lo que hizo cada integrante que corrió, sin modelos ni costos. */
+  const summary = (s: Step): { text: string; tone: string } => {
+    if (steps[s] === "running") return { text: running === s && stepNote ? stepNote : t("auditView.team.working"), tone: "text-emerald-700 animate-pulse" };
+    if (steps[s] === "queued") return { text: t("auditView.team.queued"), tone: "text-slate-500" };
+    if (steps[s] === "error") return { text: t("auditView.team.stepFailed"), tone: "text-rose-700" };
+    const did = STEP_MEMBERS[s].flatMap((m) => {
+      const x = m === "auditor" ? undefined : byKey[m]?.run;
+      if (!x) return [];
+      const count = m === "verifier" ? x.calls : m === "drafter" ? x.items_out : x.items_valid;
+      return [t(`auditView.team.did.${m}`, { count }) + (m === "drafter" ? ` · ${t("auditView.team.passed", { count: x.items_valid })}` : "")];
+    });
+    if (did.length) return { text: did.join(" · "), tone: "text-slate-700" };
+    if (!team) return { text: "", tone: "" };
+    return { text: r ? (s === "audit" ? t("auditView.team.codeOnly") : t("auditView.team.didNotRun")) : t("auditView.team.never"), tone: "text-slate-500" };
+  };
   return (
     <section className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h2 className="text-sm font-semibold text-slate-900">{t("auditView.team.title")}</h2>
         {team && (
           <span className="text-xs text-slate-500">
@@ -536,28 +587,48 @@ function TeamPanel({ team, exact, steps, running, stepNote, est, disabled, onRun
           </span>
         )}
         {running && <span className="text-xs text-emerald-800">{stepNote}</span>}
+        <div className="ms-auto flex items-center gap-1.5">
+          {canCollapse && (
+            <button onClick={onToggle} className={BTN_GHOST} aria-expanded={detailed}>
+              {detailed ? t("auditView.team.hideDetail") : t("auditView.team.showDetail")}
+            </button>
+          )}
+          {/* La acción principal de la página: corre Auditar → Verificar → Redactar, en orden. */}
+          <button onClick={onReviewBook} disabled={disabled} className={BTN_PRIMARY} title={estimateText(est.review_book)}>
+            {running ? t("auditView.running") : t("auditView.reviewBook")}
+          </button>
+        </div>
       </div>
+      {/* ANTES: lo que costaría "Revisar el libro". DESPUÉS: lo que costó la última acción. */}
+      {(lastSpent && !running) ? <p className="text-[11px] text-emerald-800">{spentText(lastSpent)}</p>
+        : est.review_book && <p className="text-[11px] text-slate-400">{t("auditView.est.line", { action: t("auditView.reviewBook"), what: estimateText(est.review_book) })}</p>}
       <div className="grid gap-2 md:grid-cols-3">
-        {STEPS.map((s, i) => (
-          <div key={s} className={`rounded-lg border p-2.5 space-y-2 ${steps[s] === "running" ? "border-emerald-400 bg-emerald-50/50" : "border-slate-200"}`}>
-            <div className="flex items-start gap-2">
-              <div className="min-w-0 flex-1">
-                <div className={`text-xs font-semibold ${steps[s] === "error" ? "text-rose-700" : "text-slate-900"}`}>
-                  {STEP_MARK[steps[s]]}{i + 1}. {t(`auditView.stepName.${s}`)}
+        {STEPS.map((s, i) => {
+          const sum = detailed ? null : summary(s);
+          return (
+            <div key={s} className={`rounded-lg border ${detailed ? "p-2.5 space-y-2" : "px-2.5 py-2"} ${steps[s] === "running" ? "border-emerald-400 bg-emerald-50/50" : "border-slate-200"}`}>
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className={`text-xs font-semibold ${steps[s] === "error" ? "text-rose-700" : "text-slate-900"}`}>
+                    {STEP_MARK[steps[s]]}{i + 1}. {t(`auditView.stepName.${s}`)}
+                  </div>
+                  {detailed && <p className="text-[11px] text-slate-500">{t(`auditView.team.step.${s}`)}</p>}
+                  {sum?.text && <p className={`text-[11px] truncate ${sum.tone}`} title={sum.text}>{sum.text}</p>}
                 </div>
-                <p className="text-[11px] text-slate-500">{t(`auditView.team.step.${s}`)}</p>
+                <button onClick={() => onRun(s)} disabled={disabled} className={BTN_SECONDARY} title={estimateText(est[s])}>
+                  {t("auditView.team.run")}
+                </button>
               </div>
-              <button onClick={() => onRun(s)} disabled={disabled} className={BTN_SECONDARY} title={estimateText(est[s])}>
-                {t("auditView.team.run")}
-              </button>
+              {detailed && est[s] && <p className="text-[11px] text-slate-400">{estimateText(est[s])}</p>}
+              {detailed && (
+                <ul className="space-y-1.5 border-t border-slate-100 pt-1.5">
+                  {STEP_MEMBERS[s].map((m) => <TeamMember key={m} m={m} a={m === "auditor" ? undefined : byKey[m]} loaded={team !== null}
+                                                           state={steps[s]} ago={ago} />)}
+                </ul>
+              )}
             </div>
-            {est[s] && <p className="text-[11px] text-slate-400">{estimateText(est[s])}</p>}
-            <ul className="space-y-1.5 border-t border-slate-100 pt-1.5">
-              {STEP_MEMBERS[s].map((m) => <TeamMember key={m} m={m} a={m === "auditor" ? undefined : byKey[m]} loaded={team !== null}
-                                                       state={steps[s]} ago={ago} />)}
-            </ul>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );

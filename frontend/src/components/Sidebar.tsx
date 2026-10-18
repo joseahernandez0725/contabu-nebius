@@ -8,7 +8,7 @@ import type { Company } from "../types";
 
 // Las vistas de UN libro (la empresa abierta). Es la fuente del tipo `View` que usa App.tsx.
 // Las reglas NO tienen pestaña propia: viven dentro de Movimientos / Transactions (Bookkeeping · Reglas · Pivote). Jose, 30-sep.
-export type View = "dashboard" | "transactions" | "audit" | "upload" | "pnl" | "settings";
+export type View = "dashboard" | "transactions" | "notes" | "audit" | "upload" | "pnl" | "settings";
 
 // BARRA LATERAL (FASE 13). Dos niveles, que es como trabaja un bookkeeper — y como está el modelo:
 //   · ESTE LIBRO → la empresa que está abierta ahora (la capa `Company`)
@@ -27,6 +27,8 @@ const ic = (d: ReactNode) => (
 const BOOK_ICONS: Record<View, ReactNode> = {
   dashboard: ic(<><rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" /></>),
   transactions: ic(<><line x1="8" y1="7" x2="20" y2="7" /><line x1="8" y1="12" x2="20" y2="12" /><line x1="8" y1="17" x2="20" y2="17" /><circle cx="4" cy="7" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="17" r="1" /></>),
+  // Notas (18-oct, Auditoría/IA): una hoja con la punta doblada y renglones — lo que escribe el bookkeeper.
+  notes: ic(<><path d="M6 3h9l4 4v14H6z" /><path d="M15 3v4h4" /><path d="M9 12h7M9 16h5" /></>),
   audit: ic(<><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9z" /><path d="M9 13l2 2 4-4" /></>),
   pnl: ic(<><path d="M4 19V5M4 19h16" /><path d="M8 16v-5M12 16V8M16 16v-3" /></>),
   upload: ic(<><path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 21h18" /></>), // "Bancos" (la clave sigue siendo upload)
@@ -38,7 +40,8 @@ const BOOK_ICONS: Record<View, ReactNode> = {
 // No se construyen antes del 30-oct. Cuando exista la primera, vuelve aquí con su sección.
 
 // Orden (Jose, 4-oct): Resumen → Bancos → Movimientos → Auditoría → P&L → Ajustes.
-const BOOK_ORDER: View[] = ["dashboard", "upload", "transactions", "audit", "pnl", "settings"];
+// 18-oct (ronda de diseño 2): Notas entre Movimientos y Auditoría — los datos → lo que sabe el bookkeeper → lo que hace la IA.
+const BOOK_ORDER: View[] = ["dashboard", "upload", "transactions", "notes", "audit", "pnl", "settings"];
 
 // Retardos del hover: abrir con una pausa corta evita que la barra salte cuando el mouse solo CRUZA
 // el borde camino a otra cosa; cerrar con otra pausa evita que se cierre por un temblor del mouse.

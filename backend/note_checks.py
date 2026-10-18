@@ -196,3 +196,175 @@ def refresh(session: Session, company: Company, view, *, model: Optional[str] = 
     agent_calls.record(session, company, "note_checker", reply.usage, user_id=user_id, items_out=len(got),
                        items_valid=valid)
     return reply.usage
+
+
+# ── La página de Notas (18-oct, ronda de diseño 2): qué entendió la IA · probar antes de guardar · qué tocó ──
+
+def understood(n: BookNote) -> Optional[dict]:
+    """Lo que la IA entendió de una nota 📌, para la pantalla (los campos del chequeo, sin el sello). `None`
+    si es 🚫 (esa la aplica el código, sin IA) o si todavía no se tradujo. `current`: salió de ESTE texto."""
+    if n.kind != "keep_in_mind" or not n.audit_check:
+        return None
+    c = n.audit_check
+    keys = ("applies", "meaning", "direction", "business_types", "merchants", "amount_over", "dropped")
+    return {**{k: c.get(k) for k in keys}, "current": is_current(n)}
+
+
+# Lo que dio "Probar", por libro y versión de la nota: si el bookkeeper la guarda tal cual dentro de la hora,
+# el chequeo se adopta y la siguiente revisión no vuelve a pagar la traducción. En memoria del proceso, a
+# propósito: con varios procesos, el que no lo tenga traduce como siempre (nada se rompe, cuesta 1 llamada).
+_PREVIEWED: dict[tuple, tuple[float, dict]] = {}
+PREVIEW_TTL_S = 3600
+
+
+def _preview_key(company_id: int, text: str, valid_from, valid_to) -> tuple:
+    return (company_id, text, valid_from.isoformat() if valid_from else None,
+            valid_to.isoformat() if valid_to else None)
+
+
+def adopt_preview(n: BookNote) -> bool:
+    """Al guardar: si esta versión de la nota se probó hace poco, su chequeo queda guardado. No hace commit."""
+    import time
+    hit = _PREVIEWED.get(_preview_key(n.company_id, n.text, n.valid_from, n.valid_to))
+    if n.kind != "keep_in_mind" or hit is None or time.time() - hit[0] > PREVIEW_TTL_S or is_current(n):
+        return False
+    n.audit_check = {**hit[1], **_stamp(n)}
+    return True
+
+
+def _brief(f, by_id: dict) -> dict:
+    import book_review
+    return {"finding_id": f.id, "type": f.type, "status": f.status, "merchant": f.merchant,
+            "rows": len(f.transaction_ids or []),
+            "transactions": [book_review.tx_summary(by_id[i]) for i in (f.transaction_ids or []) if i in by_id][:30]}
+
+
+def _silenced_by(open_findings: list, merchant: Optional[str], by_id: dict) -> list[dict]:
+    m = (merchant or "").upper()
+    return [_brief(f, by_id) for f in open_findings if m and m in (f.merchant or "").upper()]
+
+
+def preview(session: Session, company: Company, fields: dict, *, note_id: Optional[int] = None,
+            user_id: Optional[int] = None) -> dict:
+    """PROBAR una nota antes de guardarla (o un cambio a una guardada): qué entendería la IA y qué filas
+    marcaría (📌) o qué hallazgos callaría (🚫). No guarda la nota ni ningún hallazgo; lo único que queda
+    escrito es la llamada a Nemotron en `agentcall` (su costo, como toda llamada).
+
+    Cuesta 1 llamada solo si es 📌 y esa versión del texto no tiene ya un chequeo (guardado o probado en la
+    última hora); 🚫 nunca llama: el silencio lo aplica el código. Lanza `book_notes.NoteError` si la nota
+    no es válida, `LookupError` si `note_id` no es de este libro y `agent_calls.CapReached` sin cupo."""
+    import time
+    import agents
+    import book_review
+    from sqlmodel import select
+    from models import Transaction
+
+    current = None
+    if note_id is not None:
+        current = session.get(BookNote, note_id)
+        if current is None or current.company_id != company.id:
+            raise LookupError("note not found")
+    base = ({k: getattr(current, k) for k in ("kind", "priority", "text", "merchant", "valid_from", "valid_to")}
+            if current else {"kind": "keep_in_mind", "priority": "normal", "merchant": None,
+                             "valid_from": None, "valid_to": None})
+    note = {**base, **book_notes.clean(fields, current=current)}
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    by_id = {t.id: t for t in txs}
+    out = {"kind": note["kind"], "understood": None, "flagged": [], "silenced": [], "cached": True}
+
+    if note["kind"] == "dont_report":
+        nested = session.begin_nested()   # `sync` escribe hallazgos: probar no deja nada
+        try:
+            out["silenced"] = _silenced_by(book_review.sync(session, company), note["merchant"], by_id)
+        finally:
+            nested.rollback()
+        out["needs_merchant"] = not note["merchant"]
+        return out
+
+    shadow = BookNote(id=current.id if current else None, company_id=company.id, kind="keep_in_mind",
+                      text=note["text"], valid_from=note["valid_from"], valid_to=note["valid_to"])
+    key = _preview_key(company.id, shadow.text, shadow.valid_from, shadow.valid_to)
+    hit = _PREVIEWED.get(key)
+    if current is not None and current.kind == "keep_in_mind" and current.text == shadow.text \
+            and current.valid_from == shadow.valid_from and current.valid_to == shadow.valid_to and is_current(current):
+        check = current.audit_check
+    elif hit is not None and time.time() - hit[0] <= PREVIEW_TTL_S:
+        check = hit[1]
+    else:
+        # El prompt se arma con la nota DENTRO del libro (así cuenta qué comercios caen en su periodo) y se
+        # deshace antes de llamar: lo único que viaja es lo mismo que en una revisión (nota enmascarada y
+        # huellas de comercio).
+        nested = session.begin_nested()
+        try:
+            if current is not None:
+                for k in ("kind", "text", "valid_from", "valid_to"):
+                    setattr(current, k, note[k])
+                current.paused_at = None
+                session.add(current)
+                tmp = current
+            else:
+                tmp = BookNote(company_id=company.id, **{k: note[k] for k in ("kind", "priority", "text", "merchant",
+                                                                             "valid_from", "valid_to")})
+                session.add(tmp)
+            session.flush()
+            view = agents.build_view(session, company)
+            user, allowed = _user(view, [tmp])
+            period = _period_only(view, tmp.id)
+            shadow.id = tmp.id
+        finally:
+            nested.rollback()
+        agent_calls.check_cap(session, company)
+        model, reasoning = agent_models.resolve("notes", None, None)
+        try:
+            reply = nemotron.chat_json(_SYSTEM, user, ChecksOut, model=model, max_tokens=1500, reasoning=reasoning)
+        except nemotron.NemotronError as e:
+            agent_calls.record(session, company, "note_checker", e.usage, outcome=e.code, user_id=user_id,
+                               model=model or nemotron.model_name())
+            session.commit()
+            raise
+        raw = None
+        for c in (reply.data.get("checks") if isinstance(reply.data, dict) else []) or []:
+            try:
+                ok = NoteCheck.model_validate(c)
+            except Exception:
+                continue
+            if ok.note_id == shadow.id:
+                raw = ok
+        check = clean(raw, shadow, allowed, period) if raw else {**_stamp(shadow), "applies": False, "dropped": "no_answer"}
+        agent_calls.record(session, company, "note_checker", reply.usage, user_id=user_id,
+                           items_out=1 if raw else 0, items_valid=int(bool(check.get("applies"))))
+        session.commit()
+        _PREVIEWED[key] = (time.time(), check)
+        out["cached"] = False
+
+    keys = ("applies", "meaning", "direction", "business_types", "merchants", "amount_over", "dropped")
+    out["understood"] = {**{k: check.get(k) for k in keys}, "current": True}
+    if check.get("applies"):
+        web = merchant_verifier.web_by_tx(session, company, txs)
+        groups = book_review.note_check_groups(check, shadow.valid_from, shadow.valid_to, txs, web)
+        out["flagged"] = [{"merchant": m, "rows": len(g),
+                           "transactions": [book_review.tx_summary(t) for t in sorted(g, key=lambda t: t.date)][:30]}
+                          for m, g in sorted(groups.items(), key=lambda kv: -len(kv[1]))]
+    return out
+
+
+def effects(session: Session, company: Company, n: BookNote) -> dict:
+    """QUÉ TOCÓ una nota guardada: los hallazgos que marcó (📌, en cualquier estado: abierto, "está bien" o
+    que ya no se ve) y los que calla hoy (🚫 con comercio, si está activa). Pone los hallazgos al día como
+    lo hace la pestaña Auditoría (`book_review.board`)."""
+    import book_review
+    from sqlmodel import select
+    from models import Finding, Transaction
+    open_findings = book_review.sync(session, company)
+    session.commit()
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    by_id = {t.id: t for t in txs}
+    flagged = []
+    if n.kind == "keep_in_mind":
+        rows = session.exec(select(Finding).where(Finding.company_id == company.id, Finding.type == "note_check")).all()
+        order = {"open": 0, "ok": 1, "gone": 2}
+        flagged = [_brief(f, by_id) for f in sorted((f for f in rows if (f.payload or {}).get("note_id") == n.id),
+                                                    key=lambda f: (order.get(f.status, 3), f.merchant or ""))]
+    silenced = (_silenced_by(open_findings, n.merchant, by_id)
+                if n.kind == "dont_report" and n.paused_at is None else [])
+    return {"flagged": flagged, "silenced": silenced}

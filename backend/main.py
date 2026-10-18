@@ -1546,6 +1546,18 @@ class BookNoteIn(BaseModel):
     merchant: Optional[str] = None      # alcance opcional
     valid_from: Optional[date] = None
     valid_to: Optional[date] = None
+    paused: Optional[bool] = None       # 18-oct: pausar / activar (solo en el PATCH)
+
+
+class NotePreviewIn(BookNoteIn):
+    note_id: Optional[int] = None       # probar un CAMBIO a una nota guardada (sin él, una nota nueva)
+    lang: Optional[str] = "es"
+
+
+def _note_out(n: "book_notes.BookNote") -> dict:
+    """La nota + lo que entendió la IA de ella (18-oct, página de Notas)."""
+    import note_checks
+    return {**book_notes.to_dict(n), "understood": note_checks.understood(n)}
 
 
 def _owned_note(session: Session, company_id: int, note_id: int) -> "book_notes.BookNote":
@@ -1563,7 +1575,7 @@ def _note_error(e: "book_notes.NoteError") -> HTTPException:
 def list_book_notes(company_id: int, user: User = Depends(current_user),
                     session: Session = Depends(get_session)):
     console_company(company_id, user, session)
-    return [book_notes.to_dict(n) for n in book_notes.list_notes(session, company_id)]
+    return [_note_out(n) for n in book_notes.list_notes(session, company_id)]
 
 
 @app.post("/api/companies/{company_id}/notes")
@@ -1571,13 +1583,16 @@ def create_book_note(company_id: int, payload: BookNoteIn, user: User = Depends(
                      session: Session = Depends(get_session)):
     owned_company(company_id, user, session, write=True)
     try:
-        note = book_notes.create_note(session, company_id, payload.model_dump(exclude_unset=True),
+        note = book_notes.create_note(session, company_id, payload.model_dump(exclude_unset=True, exclude={"paused"}),
                                       user_id=user.id)
     except book_notes.NoteError as e:
         raise _note_error(e)
+    import note_checks
+    session.flush()
+    note_checks.adopt_preview(note)   # si se probó tal cual, su chequeo queda (no se vuelve a pagar)
     session.commit()
     session.refresh(note)
-    return book_notes.to_dict(note)
+    return _note_out(note)
 
 
 @app.patch("/api/companies/{company_id}/notes/{note_id}")
@@ -1585,13 +1600,53 @@ def update_book_note(company_id: int, note_id: int, payload: BookNoteIn,
                      user: User = Depends(current_user), session: Session = Depends(get_session)):
     owned_company(company_id, user, session, write=True)
     note = _owned_note(session, company_id, note_id)
+    fields = payload.model_dump(exclude_unset=True, exclude={"paused"})
     try:
-        book_notes.update_note(session, note, payload.model_dump(exclude_unset=True))
+        if fields:
+            book_notes.update_note(session, note, fields)
     except book_notes.NoteError as e:
         raise _note_error(e)
+    if payload.paused is not None:
+        book_notes.set_paused(session, note, payload.paused)
+    import note_checks
+    note_checks.adopt_preview(note)
     session.commit()
     session.refresh(note)
-    return book_notes.to_dict(note)
+    return _note_out(note)
+
+
+# La página de Notas (18-oct): PROBAR una nota antes de guardarla y QUÉ TOCÓ una guardada.
+@app.post("/api/companies/{company_id}/notes/preview")
+def preview_book_note(company_id: int, payload: NotePreviewIn, user: User = Depends(current_user),
+                      session: Session = Depends(get_session)):
+    """Qué entendería la IA y qué marcaría o callaría la nota, SIN guardarla. Gasta 1 llamada a Nemotron
+    solo si es 📌 y ese texto no tiene ya un chequeo; 🚫 es gratis (lo aplica el código)."""
+    import agent_calls
+    import note_checks
+    company = owned_company(company_id, user, session, write=True)
+    since = agent_calls.mark(session, company)
+    try:
+        out = note_checks.preview(session, company, payload.model_dump(exclude_unset=True, exclude={"paused", "note_id", "lang"}),
+                                  note_id=payload.note_id, user_id=user.id)
+    except book_notes.NoteError as e:
+        raise _note_error(e)
+    except LookupError:
+        raise HTTPException(status_code=404, detail={"code": "note_not_found"})
+    except Exception as e:
+        import nemotron
+        if isinstance(e, nemotron.NemotronError):   # la llamada falló (quedó registrada): nada que mostrar
+            raise HTTPException(status_code=502, detail={"code": "agent_error"})
+        raise _agent_error(e)
+    return {**out, "spent": agent_calls.spent(session, company, since)}
+
+
+@app.get("/api/companies/{company_id}/notes/{note_id}/effects")
+def book_note_effects(company_id: int, note_id: int, user: User = Depends(current_user),
+                      session: Session = Depends(get_session)):
+    """Lo que marcó la nota (📌) y lo que calla hoy (🚫), con sus movimientos."""
+    import note_checks
+    company = console_company(company_id, user, session)
+    return note_checks.effects(session, company, _owned_note(session, company_id, note_id))
 
 
 @app.delete("/api/companies/{company_id}/notes/{note_id}")

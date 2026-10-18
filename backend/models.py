@@ -504,6 +504,8 @@ class BookNote(SQLModel, table=True):
     # 13-oct: la nota traducida por Nemotron a un CHEQUEO del auditor (`note_checks.py`), con el texto y
     # la ventana de los que salió: si la nota cambia, el chequeo queda viejo y se rehace.
     audit_check: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    # 18-oct: pausada desde esta fecha (nula = activa). Pausada, ningún agente la lee ni el código la aplica.
+    paused_at: Optional[datetime] = Field(default=None)
 
 
 class AgentCall(SQLModel, table=True):

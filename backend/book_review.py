@@ -228,23 +228,8 @@ def _note_checks(session: Session, company: Company, txs: list[Transaction], web
         c = n.audit_check or {}
         if n.kind != "keep_in_mind" or not c.get("applies") or not note_checks.is_current(n):
             continue
-        kws, types, over = c.get("merchants") or [], set(c.get("business_types") or []), c.get("amount_over")
-        groups: dict[str, list[Transaction]] = defaultdict(list)
-        for t in txs:
-            if (c.get("direction") == "out" and t.is_inflow) or (c.get("direction") == "in" and not t.is_inflow):
-                continue
-            if (n.valid_from and t.date < n.valid_from) or (n.valid_to and t.date > n.valid_to):
-                continue
-            if over is not None and abs(Decimal(t.amount)) <= Decimal(str(over)):
-                continue
-            # "Es personal": solo lo que está como gasto o ingreso DEL NEGOCIO (lo Pendiente va aparte).
-            if c.get("meaning") == "personal" and (t.account_type is None or t.account_type.value == "NON_PL"):
-                continue
-            hit = web.get(t.id)
-            by_type = bool(hit and hit.business_type in types and hit.confidence in ("high", "medium"))
-            text = matchable_text(t.description, t.description_extra).upper()
-            if by_type or any(k in text for k in kws):
-                groups[merchant_name(t)].append(t)
+        over = c.get("amount_over")
+        groups = note_check_groups(c, n.valid_from, n.valid_to, txs, web)
         for merchant, group in groups.items():
             out.append({"key": f"note:{n.id}:{merchant}", "type": "note_check", "severity": "medium",
                         "merchant": merchant, "transaction_ids": [t.id for t in group][:50], "payload": {
@@ -253,6 +238,29 @@ def _note_checks(session: Session, company: Company, txs: list[Transaction], web
                             "categories": sorted({f"{t.account_type.value}/{t.category}" for t in group
                                                   if t.account_type})}})
     return out
+
+
+def note_check_groups(c: dict, valid_from, valid_to, txs: list[Transaction], web: dict) -> dict[str, list[Transaction]]:
+    """Las filas que marca UN chequeo de nota, por comercio. Lo usa el auditor y, sin guardar nada, la
+    prueba de una nota antes de guardarla (`note_checks.preview`, 18-oct): las dos marcan lo mismo."""
+    kws, types, over = c.get("merchants") or [], set(c.get("business_types") or []), c.get("amount_over")
+    groups: dict[str, list[Transaction]] = defaultdict(list)
+    for t in txs:
+        if (c.get("direction") == "out" and t.is_inflow) or (c.get("direction") == "in" and not t.is_inflow):
+            continue
+        if (valid_from and t.date < valid_from) or (valid_to and t.date > valid_to):
+            continue
+        if over is not None and abs(Decimal(t.amount)) <= Decimal(str(over)):
+            continue
+        # "Es personal": solo lo que está como gasto o ingreso DEL NEGOCIO (lo Pendiente va aparte).
+        if c.get("meaning") == "personal" and (t.account_type is None or t.account_type.value == "NON_PL"):
+            continue
+        hit = web.get(t.id)
+        by_type = bool(hit and hit.business_type in types and hit.confidence in ("high", "medium"))
+        text = matchable_text(t.description, t.description_extra).upper()
+        if by_type or any(k in text for k in kws):
+            groups[merchant_name(t)].append(t)
+    return groups
 
 
 def _unusual_amounts(txs: list[Transaction]) -> list[dict]:
@@ -412,8 +420,7 @@ def board(session: Session, company: Company, lang: Optional[str] = None) -> dic
     web = merchant_verifier.web_by_tx(session, company, txs)
     groups = pending_groups(txs, web)
     # Una nota 🚫 "no me reportes" con comercio esconde sus hallazgos (en código, no en un prompt).
-    silencers = [n.merchant.upper() for n in book_notes.list_notes(session, company.id)
-                 if n.kind == "dont_report" and n.merchant]
+    silencers = book_notes.silencing_merchants(session, company.id)
     shown = [f for f in open_findings if not any(x in (f.merchant or "").upper() for x in silencers)]
     findings = [finding_dict(f, by_id, web, lang) for f in shown]
     reviewed = last_review_at(session, company)

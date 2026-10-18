@@ -2,6 +2,7 @@
   "nav": {
     "dashboard": "Resumen",
     "transactions": "Movimientos",
+    "notes": "Notas",
     "upload": "Bancos",
     "audit": "Auditoría",
     "pnl": "P&L",
@@ -511,22 +512,18 @@
   },
   "notes": {
     "title": "Notas del libro",
-    "subtitle": "Lo que el agente debe saber de este cliente. Las notas nunca categorizan: el agente las lee para proponer cambios a la fórmula de este libro, y tú apruebas.",
     "add": "+ Nueva nota",
     "loading": "Cargando notas…",
     "empty": "Todavía no hay notas. Escribe lo que le dirías a un asistente nuevo sobre este cliente: excepciones, fechas, qué vigilar.",
     "emptyShort": "Lo que el agente debe saber de este cliente. Todavía no hay.",
-    "kindLabel": "Tipo",
     "kind": {
       "keep_in_mind": "Tenlo en cuenta",
       "dont_report": "No me reportes"
     },
-    "priorityLabel": "Prioridad",
     "priority": {
       "high": "Alta",
       "normal": "Normal"
     },
-    "textLabel": "Nota",
     "textPlaceholder": "Ej.: el dueño estuvo de vacaciones en Europa del 3 al 17 de agosto: lo que compró allá es personal.",
     "merchantLabel": "Comercio (opcional)",
     "merchantPlaceholder": "Ej.: STARBUCKS",
@@ -535,7 +532,6 @@
     "save": "Guardar nota",
     "saving": "Guardando…",
     "cancel": "Cancelar",
-    "edit": "Editar",
     "delete": "Borrar",
     "confirmDelete": "¿Borrar esta nota? El agente dejará de tenerla en cuenta.",
     "error": {
@@ -550,6 +546,124 @@
       "merchant_too_long": "El comercio es demasiado largo (máximo 80 caracteres).",
       "too_many_notes": "Este libro ya tiene 100 notas. Borra las que ya no apliquen."
     }
+  },
+  "notesPage": {
+    "lead": "Lo que la IA debe saber de este cliente: tu prompt para los agentes. Una nota nunca categoriza: 📌 ayuda a la auditoría a encontrar más, 🚫 evita que reporte lo que está bien.",
+    "count_one": "{{count}} nota activa",
+    "count_other": "{{count}} notas activas",
+    "pausedCount_one": "{{count}} en pausa",
+    "pausedCount_other": "{{count}} en pausa",
+    "newTitle": "Nota nueva",
+    "notSaved": "Sin guardar",
+    "paused": "En pausa",
+    "pickOne": "Elige una nota o escribe una nueva.",
+    "kindHelp": {
+      "keep_in_mind": "para que la auditoría encuentre más: qué es personal, qué vigilar, fechas.",
+      "dont_report": "para que deje de reportar lo que está bien: p. ej. las compras grandes en Costco son inventario."
+    },
+    "never": "Una nota nunca cambia una categoría: eso lo hacen las reglas y tú.",
+    "active": "Activa",
+    "pausedSince": "En pausa {{when}}",
+    "newHint": "Escríbela como se lo dirías a un asistente nuevo",
+    "sec": {
+      "note": "La nota",
+      "understood": "Lo que entendió la IA",
+      "touched": "Lo que tocó",
+      "wouldTouch": "Lo que tocaría hoy"
+    },
+    "highPriority": "Prioridad alta",
+    "placeholder": {
+      "dont_report": "p. ej. Las compras grandes en Costco son inventario: no las marques."
+    },
+    "needsMerchant": "Ponle un comercio para que el código pueda callar sus hallazgos; sin él, solo la leen los agentes.",
+    "test": "Probar",
+    "testing": "Probando…",
+    "free": "gratis",
+    "discard": "Descartar cambios",
+    "testBadge": "Prueba · sin guardar",
+    "testFree": "Esta prueba no costó nada (la IA ya había leído este texto).",
+    "testFreeCode": "Esta prueba fue gratis: la aplica el código, sin IA.",
+    "testCost_one": "Esta prueba costó {{cost}} ({{count}} llamada a la IA). Si la guardas tal cual, la próxima revisión no la vuelve a pagar.",
+    "testCost_other": "Esta prueba costó {{cost}} ({{count}} llamadas a la IA). Si la guardas tal cual, la próxima revisión no la vuelve a pagar.",
+    "touchedNew": "Prueba la nota para ver qué tocaría.",
+    "proposeRules": "Redactar reglas para esta nota",
+    "resume": "Activar",
+    "pause": "Pausar",
+    "dont": {
+      "silences": "Esconde de Auditoría los hallazgos de {{merchant}}. Lo hace el código, sin IA.",
+      "noMerchant": "Sin comercio, el código no esconde nada: solo la leen los agentes (el revisor la tiene en cuenta al juzgar).",
+      "agentsRead": "Los agentes también la leen en cada revisión."
+    },
+    "changedTest": "Cambiaste la nota. Pruébala para ver qué entendería la IA.",
+    "notYet": "La IA todavía no convirtió esta nota en un chequeo. Pasa en la próxima revisión, o ahora mismo con Probar.",
+    "staleLong": "La nota cambió después de que la IA la leyera: esto es lo que entendió antes. La vuelve a leer en la próxima revisión, o con Probar.",
+    "u": {
+      "where": "Dónde",
+      "when": "Cuándo",
+      "byCode": "El código aplica este chequeo en cada revisión, gratis. Nunca cambia una categoría.",
+      "personal": "Marca {{what}}{{amount}} como posible gasto personal.",
+      "review": "Te marca para revisar {{what}}{{amount}}.",
+      "what": {
+        "out": "las salidas",
+        "in": "las entradas",
+        "any": "los movimientos"
+      },
+      "over": " de más de {{amount}}",
+      "from": "desde el {{day}}",
+      "until": "hasta el {{day}}"
+    },
+    "dropped": {
+      "not_checkable": "La IA no encontró en esta nota un grupo de movimientos que el código pueda revisar. Igual la leen los agentes en cada revisión.",
+      "invented_amount": "La IA puso un monto que la nota no dice, y el chequeo se descartó.",
+      "unbounded": "La nota no dice a qué comercios o tipos de comercio se refiere.",
+      "no_answer": "La IA no respondió por esta nota.",
+      "tail": "Reescríbela y pruébala otra vez."
+    },
+    "status": {
+      "open": "Por revisar",
+      "ok": "Está bien",
+      "gone": "Ya no aparece"
+    },
+    "touch": {
+      "flagged_one": "Marcó {{count}} movimiento para que lo mires:",
+      "flagged_other": "Marcó {{count}} movimientos para que los mires:",
+      "wouldFlag_one": "Hoy marcaría {{count}} movimiento:",
+      "wouldFlag_other": "Hoy marcaría {{count}} movimientos:",
+      "silences_one": "Hoy calla {{count}} hallazgo de Auditoría:",
+      "silences_other": "Hoy calla {{count}} hallazgos de Auditoría:",
+      "wouldSilence_one": "Hoy callaría {{count}} hallazgo:",
+      "wouldSilence_other": "Hoy callaría {{count}} hallazgos:",
+      "flaggedNone": "Todavía no marcó nada. El código la aplica en cada revisión.",
+      "wouldFlagNone": "Hoy no marcaría ningún movimiento.",
+      "silencesNone": "Hoy no hay nada que callar de este comercio.",
+      "wouldSilenceNone": "Hoy no callaría ningún hallazgo.",
+      "pausedNothing": "En pausa: no marca ni calla nada.",
+      "more": "y {{count}} más"
+    },
+    "openInSheet": "Ver en Bookkeeping →",
+    "short": {
+      "silences": "Calla los hallazgos de {{merchant}}",
+      "readOnly": "La leen los agentes",
+      "notYet": "La IA todavía no la leyó",
+      "stale": "Cambió: la IA la vuelve a leer",
+      "dropped": "La IA no pudo convertirla en un chequeo",
+      "personal": "Posible gasto personal",
+      "review": "Para revisar",
+      "over": "más de {{amount}}"
+    },
+    "auditLine": {
+      "none": "Sin notas: escribe lo que la IA debe saber de este cliente",
+      "active_one": "{{count}} nota activa",
+      "active_other": "{{count}} notas activas",
+      "paused_one": "{{count}} en pausa",
+      "paused_other": "{{count}} en pausa",
+      "open": "Abrir notas →"
+    },
+    "card": {
+      "open": "Abrir notas →",
+      "more": "y {{count}} más"
+    },
+    "noRulesForNote": "El redactor no propuso reglas para esta nota."
   },
   "agents": {
     "title": "Equipo de agentes · Nemotron",
@@ -807,15 +921,6 @@
       "rejudged_one": "Con esto se volvió a juzgar {{count}} hallazgo.",
       "rejudged_other": "Con esto se volvieron a juzgar {{count}} hallazgos."
     },
-    "noteOffer": {
-      "ask": "¿Proponer filas de la fórmula para esta nota?",
-      "propose": "Proponer",
-      "later": "Ahora no",
-      "running": "Redactando filas para esta nota…",
-      "none": "El redactor no propuso filas para esta nota.",
-      "done_one": "{{count}} fila propuesta para esta nota.",
-      "done_other": "{{count}} filas propuestas para esta nota."
-    },
     "agent": {
       "auditor": "El auditor (código)",
       "note_checker": "Lee tus notas",
@@ -870,7 +975,11 @@
       "passed_other": "{{count}} pasaron el validador",
       "working": "Trabajando…",
       "queued": "Esperando su turno.",
-      "nothingThisRun": "Ningún agente necesitó llamar a la IA en esta corrida."
+      "nothingThisRun": "Ningún agente necesitó llamar a la IA en esta corrida.",
+      "stepFailed": "Este paso falló.",
+      "codeOnly": "Sin llamadas a la IA en la última corrida.",
+      "showDetail": "Ver detalle",
+      "hideDetail": "Ocultar detalle"
     }
   },
   "audit": {

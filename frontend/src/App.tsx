@@ -5,6 +5,7 @@ import Dashboard from "./components/Dashboard";
 import Sheet, { type SheetFocus } from "./components/Sheet";
 import Upload from "./components/Upload";
 import AuditWorkspace from "./components/AuditWorkspace";
+import NotesPage from "./components/NotesPage";
 import Pnl from "./components/Pnl";
 import Settings from "./components/Settings";
 import Onboarding from "./components/Onboarding";
@@ -36,6 +37,9 @@ function App() {
     setSheetFocus({ ...f, n: Date.now() });
     setView("transactions");
   };
+  // Notas → Auditoría (18-oct, ronda de diseño 2): "Proponer reglas para esta nota" corre el ④ en Auditoría (ahí
+  // viven las propuestas). `n` cambia cada vez.
+  const [auditProposeNote, setAuditProposeNote] = useState<{ id: number; n: number } | null>(null);
   // undefined = aún verificando la sesión de Firebase; null = no autenticado; User = autenticado.
   // Costura de DESARROLLO (espejo de VITE_DEV_UID en api.ts y de AUTH_DEV_MODE en el backend):
   // permite trabajar en la UI sin login de Firebase. Doble candado: la variable tiene que estar
@@ -202,11 +206,21 @@ function App() {
             {view === "transactions" && (
               <Sheet onNavigate={setView} focusTx={sheetFocus} onFocusTxDone={() => setSheetFocus(null)} />
             )}
+            {view === "notes" && (
+              // FASE 11 (18-oct): las notas del libro, con página propia (`NotesPage`).
+              <NotesPage
+                onOpenSheet={(txId) => openInSheet({ id: txId })}
+                onProposeRules={(id) => { setAuditProposeNote({ id, n: Date.now() }); setView("audit"); }}
+              />
+            )}
             {view === "audit" && (
-              // FASE 11 (8-oct): UNA herramienta — estado, flujo, notas, cola y detalle (`AuditWorkspace`).
+              // FASE 11 (8-oct): UNA herramienta — el equipo de IA, la cola y el detalle (`AuditWorkspace`).
               <AuditWorkspace
                 onOpenSheet={(txId) => (txId != null ? openInSheet({ id: txId }) : setView("transactions"))}
                 onStats={(s: AuditBoard["stats"]) => { setAuditCount(s.to_review); setProblemCount(s.problems); }}
+                onOpenNotes={() => setView("notes")}
+                proposeNote={auditProposeNote}
+                onProposeNoteDone={() => setAuditProposeNote(null)}
               />
             )}
             {view === "pnl" && <Pnl companyName={company.name} />}

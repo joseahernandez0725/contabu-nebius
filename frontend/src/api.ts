@@ -814,9 +814,30 @@ export interface BookNote {
   valid_to: string | null;
   created_at: string | null;
   updated_at: string | null;
+  paused_at: string | null;        // 18-oct: pausada desde (null = activa)
+  understood: NoteUnderstood | null;   // lo que entendió la IA (solo 📌 ya traducida)
 }
 
 export type BookNoteInput = Partial<Pick<BookNote, "kind" | "priority" | "text" | "merchant" | "valid_from" | "valid_to">>;
+
+/** Lo que la IA (el traductor de notas) entendió de una nota 📌: el chequeo que el código aplica. */
+export interface NoteUnderstood {
+  applies: boolean; meaning: "personal" | "review"; direction: "out" | "in" | "any";
+  business_types: string[]; merchants: string[]; amount_over: number | null;
+  dropped: "not_checkable" | "invented_amount" | "unbounded" | "no_answer" | null;
+  current: boolean;                // salió de ESTE texto (si no, se rehace en la próxima revisión)
+}
+
+/** Un hallazgo que la nota marcó o calla, con sus movimientos (página de Notas, 18-oct). */
+export interface NoteTouched {
+  finding_id?: number; type?: string; status?: "open" | "ok" | "gone"; merchant: string | null;
+  rows: number; transactions: TxSummary[];
+}
+
+export interface NotePreview {
+  kind: BookNoteKind; understood: NoteUnderstood | null; cached: boolean; needs_merchant?: boolean;
+  flagged: NoteTouched[]; silenced: NoteTouched[]; spent: AgentSpent;
+}
 
 /** Error de validación del backend: `code` es estable (en inglés) y se traduce con `notes.error.<code>`. */
 export class BookNoteError extends Error {
@@ -846,6 +867,17 @@ export const updateBookNote = (id: number, note: BookNoteInput) =>
 
 export const deleteBookNote = (id: number) =>
   notesFetch<{ deleted: number }>(`/${id}`, { method: "DELETE" });
+
+export const setBookNotePaused = (id: number, paused: boolean) =>
+  notesFetch<BookNote>(`/${id}`, { method: "PATCH", body: JSON.stringify({ paused }) });
+
+/** PROBAR una nota sin guardarla (con `noteId`, un cambio a una guardada). 📌 sin chequeo = 1 llamada; 🚫 gratis. */
+export const previewBookNote = (note: BookNoteInput, noteId?: number) =>
+  notesFetch<NotePreview>("/preview", { method: "POST", body: JSON.stringify({ ...note, note_id: noteId ?? null }) });
+
+/** QUÉ TOCÓ una nota guardada: lo que marcó (📌) y lo que calla hoy (🚫). */
+export const getBookNoteEffects = (id: number) =>
+  notesFetch<{ flagged: NoteTouched[]; silenced: NoteTouched[] }>(`/${id}/effects`);
 
 // --- LOS AGENTES DE LA FÓRMULA (FASE 11, Auditoría / IA · 7-oct-2026) — Nemotron sobre Nebius ----
 // ④ propone filas de la fórmula (se aprueban con `createRule`), ① revisa los hallazgos del auditor.

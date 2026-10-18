@@ -132,6 +132,8 @@ BODIES: dict[tuple[str, str], dict] = {
     # Notas del libro (F11). El PATCH apunta a la nota 999999: un 404 también prueba el rechazo.
     ("POST", "/api/companies/{company_id}/notes"): {"text": "permcheck note"},
     ("PATCH", "/api/companies/{company_id}/notes/{note_id}"): {"text": "permcheck note"},
+    # Probar una nota (18-oct): 🚫, que nunca llama a Nebius aunque el permiso fallara.
+    ("POST", "/api/companies/{company_id}/notes/preview"): {"text": "permcheck note", "kind": "dont_report", "merchant": "PERMCHECK"},
     # Agentes (F11). La prueba NO sale a internet: si el permiso dejara pasar, la llamada a Nebius
     # fallaría en local; lo que se mide aquí es solo el 403.
     ("POST", "/api/companies/{company_id}/agents/draft"): {"lang": "es"},
