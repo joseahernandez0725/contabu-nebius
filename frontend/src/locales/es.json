@@ -1224,7 +1224,7 @@
         },
         "s2": {
           "t": "Abre el Resumen de Rivera HVAC",
-          "d": "Arriba, el P&L de lo que va del año: el mismo que recibe el cliente. La utilidad se muestra antes de lo Pendiente: lo que no tiene categoría se declara, nunca se esconde. A la derecha, lo que necesita tu atención."
+          "d": "Arriba, lo que va del año en cuatro cifras. Debajo, el P&L: el mismo que recibe el cliente. La utilidad se muestra antes de lo Pendiente: lo que no tiene categoría se declara, nunca se esconde. A la derecha, lo que necesita tu atención."
         },
         "s3": {
           "t": "Auditoría → Revisar el libro",
@@ -1352,7 +1352,14 @@
       "toReview_other": "{{count}} hallazgos por revisar",
       "stale_one": "{{count}} banco sin actualizar hace días",
       "stale_other": "{{count}} bancos sin actualizar hace días",
-      "ytd": "{{year}} · en lo que va del año",
+      "ytd": "{{year}}, en lo que va del año",
+      "kpi": {
+        "revenue": "Ingresos",
+        "expenses": "Gastos",
+        "netIncome": "Utilidad neta",
+        "pending": "Pendientes",
+        "pendingSub": "sin regla · abrir →"
+      },
       "noneThisYear": "Todavía no hay movimientos en {{year}}.",
       "noneThisYearSub": "Los movimientos de este libro son de otros años. En el P&L completo puedes elegir el período.",
       "pendingOutside": "{{count}} de ellos fuera de este período",

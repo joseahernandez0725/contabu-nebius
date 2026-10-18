@@ -1160,7 +1160,7 @@
         },
         "s2": {
           "t": "Open Rivera HVAC's Summary",
-          "d": "Up top, the P&L for the year to date — the same one the client gets. Net income is shown before Pending: what has no category is declared, never hidden. On the right, what needs attention."
+          "d": "Up top, the year to date in four figures. Below, the P&L — the same one the client gets. Net income is shown before Pending: what has no category is declared, never hidden. On the right, what needs your attention."
         },
         "s3": {
           "t": "Audit → Review the book",
@@ -1288,7 +1288,14 @@
       "toReview_other": "{{count}} findings to review",
       "stale_one": "{{count}} bank not updated recently",
       "stale_other": "{{count}} banks not updated recently",
-      "ytd": "{{year}} · year to date",
+      "ytd": "{{year}}, year to date",
+      "kpi": {
+        "revenue": "Revenue",
+        "expenses": "Expenses",
+        "netIncome": "Net income",
+        "pending": "Pending",
+        "pendingSub": "with no rule · open →"
+      },
       "noneThisYear": "No transactions in {{year}} yet.",
       "noneThisYearSub": "This book's transactions are from other years. In the full P&L you can pick the period.",
       "pendingOutside": "{{count}} of them outside this period",

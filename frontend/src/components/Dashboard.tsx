@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { getAuditSummary, getBankConnections, getCompany, getIncomeStatement, getTransactions, type AuditBoard, type BankConnection } from "../api";
+import { getAuditSummary, getBankConnections, getCompany, getIncomeStatement, getTransactions, money, type AuditBoard, type BankConnection } from "../api";
 import { DEMO_MODE, openDemoTour } from "../demo";
 import type { IncomeStatement as IS, Transaction } from "../types";
 import IncomeStatement from "./IncomeStatement";
-import { BTN_PRIMARY, BTN_SECONDARY, DOT, EmptyRow, ListCard, ListRow, PageHeader, agoText, secsSince } from "./PageKit";
+import NotesCard from "./NotesCard";
+import { BTN_PRIMARY, BTN_SECONDARY, DOT, PageHeader, TONE, agoText, secsSince } from "./PageKit";
 
-type View = "transactions" | "audit" | "upload" | "pnl" | "settings";
+type View = "transactions" | "notes" | "audit" | "upload" | "pnl" | "settings";
 
 // Un banco que no se actualiza hace más de esto sale en "lo que necesita atención".
 const STALE_DAYS = 3;
@@ -22,13 +23,11 @@ function isoDay(d: Date): string {
 // guardar, vuelve a salir — no pasa nada).
 const KEY_INTRO_HIDDEN = "contabu.demoIntro.hidden.v1";
 
-function DemoIntro({ onNavigate }: { onNavigate: (v: View) => void }) {
+function DemoIntro({ onNavigate, book }: { onNavigate: (v: View) => void; book: string | null }) {
   const { t } = useTranslation();
   const [hidden, setHidden] = useState<boolean>(() => {
     try { return localStorage.getItem(KEY_INTRO_HIDDEN) === "1"; } catch { return false; }
   });
-  const [book, setBook] = useState<string | null>(null);
-  useEffect(() => { if (!hidden) getCompany().then((c) => setBook(c.name)).catch(() => setBook(null)); }, [hidden]);
   if (hidden) return null;
   const hide = () => {
     setHidden(true);
@@ -67,12 +66,30 @@ function DemoIntro({ onNavigate }: { onNavigate: (v: View) => void }) {
   );
 }
 
-// EL RESUMEN DEL LIBRO (13-oct, Firm: diseño de página compartido — `PageKit.tsx`; rehecho el 18-oct,
-// ronda de diseño: no repetir arriba lo que ya dice la página).
-// El bloque principal es el P&L DEL AÑO EN CURSO (1-ene → hoy), con el mismo componente que se le entrega
-// al cliente (`IncomeStatement`, de Entregables); a la derecha, LO QUE NECESITA ATENCIÓN — cada renglón
-// lleva a la pantalla donde se resuelve. La línea de estado solo dice el período: las cifras ya están en el
-// P&L. Los números salen de SQL (`/income-statement`) y del auditor (`/audit/summary`); aquí no se calcula nada.
+// Una cifra de la portada: la etiqueta arriba, el monto abajo a la derecha (tabular, como en el P&L).
+function Kpi({ label, value, sub, tone = TONE.neutral, amber, onClick }: {
+  label: string; value: string; sub?: ReactNode; tone?: string; amber?: boolean; onClick?: () => void;
+}) {
+  const box = `block w-full text-start rounded-xl border px-4 py-3 ${amber ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"}`;
+  const body = (
+    <>
+      <div className={`text-xs font-medium ${amber ? "text-amber-800" : "text-slate-500"}`}>{label}</div>
+      <div className={`mt-1 text-xl sm:text-2xl font-semibold tabular-nums text-end ${tone}`}>{value}</div>
+      <div className={`mt-0.5 min-h-4 text-xs text-end ${amber ? "text-amber-700" : "text-slate-400"}`}>{sub}</div>
+    </>
+  );
+  return onClick
+    ? <button onClick={onClick} className={`${box} hover:border-amber-300`}>{body}</button>
+    : <div className={box}>{body}</div>;
+}
+
+// EL RESUMEN DEL LIBRO = LA PORTADA (13-oct, Firm: diseño de página compartido — `PageKit.tsx`; rehecho el
+// 18-oct en dos rondas de diseño).
+// Arriba, el libro y el período con 4 CIFRAS (ronda 2: Jose las quiere a la vista aunque el P&L las detalle —
+// aquí cede la regla de "no repetir arriba"). Debajo, dos mitades: el P&L DEL AÑO EN CURSO (1-ene → hoy), con
+// el mismo componente que se le entrega al cliente (`IncomeStatement`, de Entregables), y LO QUE NECESITA
+// ATENCIÓN — cada renglón lleva a la pantalla donde se resuelve — con las Notas del libro debajo. Los números
+// salen de SQL (`/income-statement`) y del auditor (`/audit/summary`); aquí no se calcula nada nuevo.
 export default function Dashboard({ onNavigate, onOpenPending }: {
   onNavigate: (v: View) => void;
   onOpenPending?: () => void;   // Pendientes → la Hoja filtrada, en la primera Pendiente (14-oct)
@@ -88,9 +105,11 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
   const [txs, setTxs] = useState<Transaction[] | null>(null);
   const [audit, setAudit] = useState<AuditBoard["stats"] | null>(null);
   const [banks, setBanks] = useState<BankConnection[]>([]);
+  const [book, setBook] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    getCompany().then((c) => setBook(c.name)).catch(() => setBook(null));
     const fail = (e: unknown) => setError(e instanceof Error ? e.message : "Error");
     getTransactions().then(setTxs).catch(fail);
     getIncomeStatement(start, end).then(setYtd).catch(fail);
@@ -101,7 +120,7 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
     getBankConnections().then((r) => setBanks(r.config.enabled ? r.connections : [])).catch(() => setBanks([]));
   }, [start, end]);
 
-  const intro = DEMO_MODE ? <DemoIntro onNavigate={onNavigate} /> : null;
+  const intro = DEMO_MODE ? <DemoIntro onNavigate={onNavigate} book={book} /> : null;
 
   if (error) return <div className="alert alert-error">{error}</div>;
   if (!ytd || !all || !txs)
@@ -147,6 +166,8 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
   // Hay movimientos este año, pero ninguno tiene sección todavía: el resultado es 0 por falta de datos.
   const nothingClassified = pending > 0 && ytd.revenue === 0 && ytd.cogs === 0 && ytd.operating_expenses === 0
     && ytd.other_expense === 0 && ytd.other_income === 0;
+  // Gastos de la portada = las tres secciones que restan en el P&L (lo mismo que hacía el Dashboard viejo).
+  const expenses = ytd.cogs + ytd.operating_expenses + ytd.other_expense;
 
   // LO QUE NECESITA ATENCIÓN, de lo más grave a lo menos. Cada renglón lleva a donde se resuelve.
   const down = banks.filter((b) => b.status === "disconnected");
@@ -172,9 +193,11 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
     <div className="space-y-3">
       {intro}
 
-      {/* 1. LA LÍNEA DE ESTADO: el período de TODO lo que sigue. Las cifras viven en el P&L, no se repiten. */}
+      {/* 1. LA LÍNEA DE ESTADO: el libro y el período de TODO lo que sigue */}
       <PageHeader
-        meta={<span className="text-sm font-medium text-slate-700">{t("page.summary.ytd", { year })}</span>}
+        meta={<span className="text-sm text-slate-700">
+          {book && <><b className="font-semibold text-slate-900">{book}</b> · </>}{t("page.summary.ytd", { year })}
+        </span>}
         primary={<button onClick={() => onNavigate("transactions")} className={BTN_PRIMARY}>{t("page.summary.openBook")}</button>}
         more={[
           { label: t("nav.audit"), onClick: () => onNavigate("audit") },
@@ -183,8 +206,23 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
         moreLabel={t("page.more")}
       />
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_420px] items-start">
-        {/* 2. EL P&L DEL AÑO EN CURSO — lo que al final recibe el cliente */}
+      {/* 2. LAS 4 CIFRAS, del mismo período que el P&L. Un año sin movimientos no pinta ceros (abajo se dice). */}
+      {!noneThisYear && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <Kpi label={t("page.summary.kpi.revenue")} value={money(ytd.revenue)} />
+          <Kpi label={t("page.summary.kpi.expenses")} value={money(expenses)} />
+          <Kpi label={t("page.summary.kpi.netIncome")} value={money(ytd.net_income)}
+               tone={ytd.net_income < 0 ? TONE.problem : TONE.good}
+               sub={pending > 0 ? <span className="text-amber-700">{t("pnl.beforePending")}</span> : undefined} />
+          <Kpi label={t("page.summary.kpi.pending")} value={String(pending)} tone={TONE.pending} amber
+               sub={pending > 0 ? t("page.summary.kpi.pendingSub") : undefined}
+               onClick={pending > 0 ? () => (onOpenPending ? onOpenPending() : onNavigate("transactions")) : undefined} />
+        </div>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-2 items-start">
+        {/* 3. EL P&L DEL AÑO EN CURSO — lo que al final recibe el cliente, en su modo COMPACTO (Entregables,
+            18-oct): secciones plegadas a su total y lo Pendiente siempre a la vista. */}
         <div className="relative bg-white rounded-xl border border-slate-200 p-5">
           <button onClick={() => onNavigate("pnl")} className="absolute top-5 end-5 text-xs text-emerald-800 font-medium hover:underline">
             {t("dashboard.seePnl", { defaultValue: "See full P&L →" })}
@@ -197,21 +235,39 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
           ) : (
             <>
               {nothingClassified && <p className="text-xs text-amber-700 mb-2 pe-28">{t("pnl.nothingClassified")}</p>}
-              <IncomeStatement data={ytd} bare />
+              <IncomeStatement data={ytd} bare compact />
             </>
           )}
         </div>
 
-        {/* 3. LO QUE NECESITA ATENCIÓN */}
-        <ListCard header={<div className="px-3 py-2 border-b border-slate-200 text-xs font-semibold uppercase tracking-wide text-slate-400">
-          {t("page.summary.attention")}</div>}>
-          {items.length === 0 && <EmptyRow text={t("page.summary.allClear")} />}
-          {items.map((it) => (
-            <ListRow key={it.key} active={false} dot={it.dot} title={it.title} sub={it.sub}
-                     onClick={() => (it.key === "pending" && onOpenPending ? onOpenPending() : onNavigate(it.go))}
-                     right={<span className="text-xs text-slate-400">→</span>} />
-          ))}
-        </ListCard>
+        <div className="space-y-3">
+          {/* 4. LO QUE NECESITA ATENCIÓN */}
+          <section className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <h2 className="px-5 pt-4 pb-2 text-sm font-semibold text-slate-900">{t("page.summary.attention")}</h2>
+            {items.length === 0 ? (
+              <p className="px-5 pb-5 text-sm text-slate-400">{t("page.summary.allClear")}</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 border-t border-slate-100">
+                {items.map((it) => (
+                  <li key={it.key}>
+                    <button onClick={() => (it.key === "pending" && onOpenPending ? onOpenPending() : onNavigate(it.go))}
+                            className="w-full text-start px-5 py-3 flex items-center gap-3 hover:bg-slate-50">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${it.dot}`} />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm text-slate-900">{it.title}</span>
+                        {it.sub && <span className="block text-xs text-slate-500 mt-0.5 truncate">{it.sub}</span>}
+                      </span>
+                      <span className="text-sm text-slate-400 shrink-0">→</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* NOTAS DEL LIBRO: aquí va <NotesCard/> de Auditoría/IA */}
+          <NotesCard onOpen={() => onNavigate("notes")} />
+        </div>
       </div>
     </div>
   );
