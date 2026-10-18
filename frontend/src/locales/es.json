@@ -679,18 +679,10 @@
     "reviewed": "Revisado {{when}}",
     "reviewBook": "Revisar el libro",
     "running": "Revisando…",
-    "moreActions": "Correr un solo paso",
-    "only": {
-      "audit": "Solo auditar (código, ⑥ notas, ⑤ y ①)",
-      "verify": "⑤ ¿Es personal? → ② verificar en internet",
-      "review": "① Revisar hallazgos",
-      "draft": "④ Proponer filas de la fórmula"
-    },
     "stepName": {
-      "audit": "Auditar (código + ①)",
-      "verify": "⑤ ¿Es personal? → ② verificado en internet",
-      "review": "① Revisar",
-      "draft": "④ Redactar"
+      "audit": "Auditar",
+      "verify": "Verificar en internet",
+      "draft": "Redactar reglas"
     },
     "step": {
       "auditing": "Auditando el libro…",
@@ -701,15 +693,9 @@
       "reviewing_one": "Revisando {{count}} hallazgo…",
       "reviewing_other": "Revisando {{count}} hallazgos…",
       "drafting": "Redactando filas de la fórmula…",
-      "searching_one": "El ⑤ marcó {{count}} comercio como posible gasto personal: verificándolo en internet…",
-      "searching_other": "El ⑤ marcó {{count}} comercios como posible gasto personal: verificándolos en internet…",
-      "searched": "{{searched}} buscados · {{cached}} de la memoria de la oficina · {{credits}} créditos · el ① volvió a juzgar {{rejudged}}"
-    },
-    "stat": {
-      "toReview": "por revisar",
-      "pending_one": "Pendientes ({{count}} comercio)",
-      "pending_other": "Pendientes ({{count}} comercios)",
-      "problems": "problemas"
+      "searching_one": "{{count}} comercio marcado como posible gasto personal: buscándolo en internet…",
+      "searching_other": "{{count}} comercios marcados como posible gasto personal: buscándolos en internet…",
+      "searched": "{{searched}} buscados · {{cached}} de la memoria de la oficina · {{credits}} créditos · {{rejudged}} hallazgos juzgados de nuevo"
     },
     "tab": {
       "findings": "Hallazgos",
@@ -733,13 +719,13 @@
       "inconsistent_merchant": "Mismo comercio, distintas categorías",
       "sign_mismatch": "La dirección no coincide con la categoría",
       "rule_collision": "Dos reglas chocan",
-      "merchant_type_mismatch": "② Internet dice: uso personal",
+      "merchant_type_mismatch": "Internet dice: uso personal",
       "payroll_net_only": "Nómina: el banco solo ve lo neto",
       "coverage_gap": "Faltan datos",
       "bank_disconnected": "Banco desconectado",
       "unusual_amount": "Monto inusual",
-      "note_check": "⑥ Lo que pide tu nota",
-      "personal_use": "⑤ ¿Personal para este negocio?"
+      "note_check": "Lo que pide tu nota",
+      "personal_use": "¿Personal para este negocio?"
     },
     "say": {
       "rule_deviation": "Tu regla “{{rule}}” dice {{says}}, pero esta fila tiene {{has}}.",
@@ -766,8 +752,8 @@
       "in": "entró",
       "out": "salió"
     },
-    "notReviewed": "El ① todavía no lo revisó.",
-    "staleVerdict": "El ① lo escribió en otro idioma; “Revisar el libro” lo rehace en español.",
+    "notReviewed": "Ningún agente revisó este hallazgo todavía.",
+    "staleVerdict": "El agente lo escribió en otro idioma; “Revisar el libro” lo rehace en español.",
     "okNote": "Por qué está bien (opcional)",
     "act": {
       "backToRule": "Volver a la regla ({{s}})",
@@ -798,7 +784,6 @@
     "costLine": "Este libro: {{cost}} · quedan {{left}} llamadas a los agentes hoy",
     "costTip": "Gastado en este libro: {{cost}} · llamadas a los agentes que quedan hoy: {{calls}} de {{cap}} · búsquedas web que quedan: {{searches}} de {{scap}}",
     "auditBtn": "Auditar",
-    "auditTip": "El auditor (código), tus notas (con el ⑥ traductor de notas), el ⑤ \"¿personal para este negocio?\" y el ① revisor. Sin redactar ni buscar en internet.",
     "est": {
       "calls_one": "~{{count}} llamada a la IA",
       "calls_other": "~{{count}} llamadas a la IA",
@@ -820,8 +805,8 @@
         "basic+advanced": "básica + a fondo"
       },
       "skipped": "No se busca: los pagos a personas, los cheques y las transferencias nunca se buscan.",
-      "rejudged_one": "El ① revisor volvió a juzgar {{count}} hallazgo con esto.",
-      "rejudged_other": "El ① revisor volvió a juzgar {{count}} hallazgos con esto."
+      "rejudged_one": "Con esto se volvió a juzgar {{count}} hallazgo.",
+      "rejudged_other": "Con esto se volvieron a juzgar {{count}} hallazgos."
     },
     "noteOffer": {
       "ask": "¿Proponer filas de la fórmula para esta nota?",
@@ -831,6 +816,57 @@
       "none": "El redactor no propuso filas para esta nota.",
       "done_one": "{{count}} fila propuesta para esta nota.",
       "done_other": "{{count}} filas propuestas para esta nota."
+    },
+    "agent": {
+      "auditor": "El auditor (código)",
+      "note_checker": "Lee tus notas",
+      "personal_judge": "Detecta gastos personales",
+      "reviewer": "Revisa cada hallazgo",
+      "verifier": "Busca el comercio en internet",
+      "drafter": "Redacta reglas"
+    },
+    "team": {
+      "title": "El equipo de IA",
+      "run": "Correr",
+      "lastRun": "Última corrida: {{when}}",
+      "neverRun": "El equipo todavía no trabajó en este libro.",
+      "step": {
+        "audit": "El código revisa el libro y luego tres agentes leen el resultado. Sin buscar en internet ni redactar.",
+        "verify": "Busca solo los comercios marcados como posible gasto personal, primero en la memoria de la oficina; luego esos hallazgos se vuelven a juzgar con esa evidencia.",
+        "draft": "Propone reglas a partir de tus notas y tus correcciones. Nada cambia hasta que apruebes."
+      },
+      "code": "Código · sin IA",
+      "reasoning": "razonando",
+      "auditor": "Corre siempre, primero. Gratis.",
+      "didNotRun": "No corrió en la última corrida.",
+      "lastWorked": "Trabajó por última vez {{when}}.",
+      "never": "Todavía no corrió en este libro.",
+      "why": {
+        "note_checker": "Solo corre si hay una nota nueva o cambiada.",
+        "personal_judge": "Solo corre con comercios que todavía no juzgó en este libro.",
+        "reviewer": "Solo corre si hay hallazgos que juzgar.",
+        "verifier": "Solo busca los comercios que la auditoría marcó; primero, la memoria de la oficina.",
+        "drafter": "Corre con “Redactar reglas” o “Revisar el libro”."
+      },
+      "did": {
+        "note_checker_one": "{{count}} nota convertida en chequeo",
+        "note_checker_other": "{{count}} notas convertidas en chequeos",
+        "personal_judge_one": "{{count}} comercio juzgado",
+        "personal_judge_other": "{{count}} comercios juzgados",
+        "reviewer_one": "{{count}} hallazgo juzgado",
+        "reviewer_other": "{{count}} hallazgos juzgados",
+        "verifier_one": "{{count}} búsqueda en internet",
+        "verifier_other": "{{count}} búsquedas en internet",
+        "drafter_one": "{{count}} regla redactada",
+        "drafter_other": "{{count}} reglas redactadas"
+      },
+      "calls_one": "{{count}} llamada",
+      "calls_other": "{{count}} llamadas",
+      "failed_one": "falló {{count}}",
+      "failed_other": "fallaron {{count}}",
+      "credits_one": "{{count}} crédito",
+      "credits_other": "{{count}} créditos",
+      "seconds": "{{s}} s"
     }
   },
   "audit": {

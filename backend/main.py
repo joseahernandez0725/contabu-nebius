@@ -1815,6 +1815,15 @@ def agent_usage(company_id: int, user: User = Depends(current_user), session: Se
     return agent_calls.summary(session, company)
 
 
+# "El equipo trabajando" (18-oct, ronda de diseño): qué hizo cada agente en la última corrida del libro, con
+# su modelo. Solo lee `AgentCall` (lógica en `agent_calls.team`). Consola, como `/agents/usage`.
+@app.get("/api/companies/{company_id}/agents/team")
+def agent_team(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    import agent_calls
+    company = console_company(company_id, user, session)
+    return agent_calls.team(session, company)
+
+
 # El viejo PROPONEDOR (`POST /rule-proposals` y `/rule-proposals/validate`, con `ai.propose_rules` sobre
 # Gemini) se borró el 13-oct (FASE 11): su pantalla, `RuleProposals.tsx`, ya no la montaba nadie y el
 # agente ④ redactor hace ese trabajo sobre Nemotron (`POST /agents/draft`), con validador y prueba contra

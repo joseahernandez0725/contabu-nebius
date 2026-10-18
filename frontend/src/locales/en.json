@@ -401,18 +401,10 @@
     "reviewed": "Reviewed {{when}}",
     "reviewBook": "Review the book",
     "running": "Reviewing…",
-    "moreActions": "Run one step",
-    "only": {
-      "audit": "Audit only (code, ⑥ notes, ⑤ and ①)",
-      "verify": "⑤ Personal? → ② verify on the web",
-      "review": "① Review findings",
-      "draft": "④ Propose formula rows"
-    },
     "stepName": {
-      "audit": "Audit (code + ①)",
-      "verify": "⑤ Personal? → ② verified on the web",
-      "review": "① Review",
-      "draft": "④ Draft"
+      "audit": "Audit",
+      "verify": "Check on the web",
+      "draft": "Draft rules"
     },
     "step": {
       "auditing": "Auditing the book…",
@@ -423,15 +415,9 @@
       "reviewing_one": "Reviewing {{count}} finding…",
       "reviewing_other": "Reviewing {{count}} findings…",
       "drafting": "Drafting formula rows…",
-      "searching_one": "⑤ flagged {{count}} merchant as possibly personal: verifying it on the web…",
-      "searching_other": "⑤ flagged {{count}} merchants as possibly personal: verifying them on the web…",
-      "searched": "{{searched}} searched · {{cached}} from the office's memory · {{credits}} credits · ① re-judged {{rejudged}}"
-    },
-    "stat": {
-      "toReview": "to review",
-      "pending_one": "pending ({{count}} merchant)",
-      "pending_other": "pending ({{count}} merchants)",
-      "problems": "problems"
+      "searching_one": "{{count}} merchant flagged as possibly personal: looking it up online…",
+      "searching_other": "{{count}} merchants flagged as possibly personal: looking them up online…",
+      "searched": "{{searched}} searched · {{cached}} from the office's memory · {{credits}} credits · {{rejudged}} findings judged again"
     },
     "tab": {
       "findings": "Findings",
@@ -455,13 +441,13 @@
       "inconsistent_merchant": "Same merchant, different categories",
       "sign_mismatch": "Direction doesn't match the category",
       "rule_collision": "Two rules collide",
-      "merchant_type_mismatch": "② The web says: personal use",
+      "merchant_type_mismatch": "The web says: personal use",
       "payroll_net_only": "Payroll: the bank only sees the net",
       "coverage_gap": "Missing data",
       "bank_disconnected": "Bank disconnected",
       "unusual_amount": "Unusual amount",
-      "note_check": "⑥ What your note asks",
-      "personal_use": "⑤ Personal for this business?"
+      "note_check": "What your note asks",
+      "personal_use": "Personal for this business?"
     },
     "say": {
       "rule_deviation": "Your rule “{{rule}}” says {{says}}, but this row has {{has}}.",
@@ -488,8 +474,8 @@
       "in": "in",
       "out": "out"
     },
-    "notReviewed": "Not reviewed by ① yet.",
-    "staleVerdict": "The reviewer wrote this in another language; “Review the book” redoes it in English.",
+    "notReviewed": "No agent has reviewed this finding yet.",
+    "staleVerdict": "The agent wrote this in another language; “Review the book” redoes it in English.",
     "okNote": "Why it's fine (optional)",
     "act": {
       "backToRule": "Back to the rule ({{s}})",
@@ -520,7 +506,6 @@
     "costLine": "This book: {{cost}} · {{left}} agent calls left today",
     "costTip": "Spent on this book: {{cost}} · agent calls left today: {{calls}} of {{cap}} · web searches left: {{searches}} of {{scap}}",
     "auditBtn": "Audit",
-    "auditTip": "The auditor (code), your notes (via the ⑥ note translator), ⑤ \"personal for this business?\" and the ① reviewer. No drafting, no web searches.",
     "est": {
       "calls_one": "~{{count}} AI call",
       "calls_other": "~{{count}} AI calls",
@@ -542,8 +527,8 @@
         "basic+advanced": "basic + deep search"
       },
       "skipped": "Not searched: payments to people, checks and transfers are never searched.",
-      "rejudged_one": "The ① reviewer re-judged {{count}} finding with it.",
-      "rejudged_other": "The ① reviewer re-judged {{count}} findings with it."
+      "rejudged_one": "{{count}} finding judged again with it.",
+      "rejudged_other": "{{count}} findings judged again with it."
     },
     "noteOffer": {
       "ask": "Propose formula rows for this note?",
@@ -553,6 +538,57 @@
       "none": "The drafter proposed no rows for this note.",
       "done_one": "{{count}} row proposed for this note.",
       "done_other": "{{count}} rows proposed for this note."
+    },
+    "agent": {
+      "auditor": "The auditor (code)",
+      "note_checker": "Reads your notes",
+      "personal_judge": "Spots personal spending",
+      "reviewer": "Reviews each finding",
+      "verifier": "Looks the merchant up online",
+      "drafter": "Drafts rules"
+    },
+    "team": {
+      "title": "The AI team",
+      "run": "Run",
+      "lastRun": "Last run {{when}}",
+      "neverRun": "The team hasn't worked on this book yet.",
+      "step": {
+        "audit": "Code checks the book, then three agents read the result. No web searches, no drafting.",
+        "verify": "Searches only the merchants flagged as possibly personal, the office's memory first; then those findings are judged again with that evidence.",
+        "draft": "Proposes rules from your notes and your corrections. Nothing changes until you approve."
+      },
+      "code": "Code · no AI",
+      "reasoning": "reasoning",
+      "auditor": "Always runs first. Free.",
+      "didNotRun": "Didn't run in the last run.",
+      "lastWorked": "Last worked {{when}}.",
+      "never": "Hasn't run on this book yet.",
+      "why": {
+        "note_checker": "Only runs when a note is new or changed.",
+        "personal_judge": "Only runs for merchants it hasn't judged in this book.",
+        "reviewer": "Only runs when there are findings to judge.",
+        "verifier": "Only searches merchants the audit flagged; the office's memory first.",
+        "drafter": "Runs with “Draft rules” or “Review the book”."
+      },
+      "did": {
+        "note_checker_one": "{{count}} note turned into a check",
+        "note_checker_other": "{{count}} notes turned into checks",
+        "personal_judge_one": "{{count}} merchant judged",
+        "personal_judge_other": "{{count}} merchants judged",
+        "reviewer_one": "{{count}} finding judged",
+        "reviewer_other": "{{count}} findings judged",
+        "verifier_one": "{{count}} web search",
+        "verifier_other": "{{count}} web searches",
+        "drafter_one": "{{count}} rule drafted",
+        "drafter_other": "{{count}} rules drafted"
+      },
+      "calls_one": "{{count}} call",
+      "calls_other": "{{count}} calls",
+      "failed_one": "{{count}} failed",
+      "failed_other": "{{count}} failed",
+      "credits_one": "{{count}} credit",
+      "credits_other": "{{count}} credits",
+      "seconds": "{{s}} s"
     }
   },
   "audit": {

@@ -976,6 +976,22 @@ export const getAgentEstimate = (action: EstimateAction, opts: { noteId?: number
 
 export const getAgentUsage = () => agentsFetch<AgentUsageSummary>("/usage");
 
+/** "El equipo trabajando" (18-oct): qué hizo cada agente en la ÚLTIMA corrida del libro, leído de `agentcall`.
+ *  `run: null` = ese agente no corrió en esa corrida; `last_seconds_ago: null` = nunca corrió en este libro. */
+export type TeamAgentKey = "note_checker" | "personal_judge" | "reviewer" | "verifier" | "drafter";
+export interface TeamAgent {
+  agent: TeamAgentKey;
+  model: { key: string; label: string; reasoning: boolean };
+  last_seconds_ago: number | null;
+  run: { calls: number; ok: number; items_out: number; items_valid: number; latency_ms: number;
+         cost_usd: number; credits: number } | null;
+}
+export interface AgentTeam {
+  run: { seconds_ago: number; calls: number; cost_usd: number; credits: number } | null;
+  agents: TeamAgent[];
+}
+export const getAgentTeam = () => agentsFetch<AgentTeam>("/team");
+
 
 // --- LA REVISIÓN DEL LIBRO (FASE 11, Auditoría / IA · 8-oct-2026): la lista ÚNICA de hallazgos ---
 // guardados (auditor + veredicto del ① + evidencia del ②), lo Pendiente agrupado y el encabezado.

@@ -125,7 +125,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
                   <p className="text-xs text-slate-700">{detectorSentence(f)}</p>
                   {!f.is_info && (f.agent_verdict ? (
                     <div className="flex items-start gap-1.5">
-                      <Badge cls={VERDICT_STYLE[f.agent_verdict]}>① {t(`agents.verdict.${f.agent_verdict}`)}</Badge>
+                      <Badge cls={VERDICT_STYLE[f.agent_verdict]}>{t(`agents.verdict.${f.agent_verdict}`)}</Badge>
                       {f.agent_observation && <span className="text-xs text-slate-600">{f.agent_observation}</span>}
                     </div>
                   ) : <p className="text-[11px] text-slate-400">{t("auditView.notReviewed")}</p>)}
@@ -200,7 +200,7 @@ function WebChip({ w, webLabel }: { w: NonNullable<TxInsight["web"]>; webLabel: 
   return (
     <a href={w.source_url ?? undefined} target="_blank" rel="noopener noreferrer"
        className="inline-block text-xs px-2 py-0.5 rounded-full bg-sky-50 text-sky-800 hover:underline">
-      🔎 ② {webLabel(w)}{w.source_domain ? ` · ${w.source_domain}` : ""}
+      🔎 Tavily: {webLabel(w)}{w.source_domain ? ` · ${w.source_domain}` : ""}
     </a>
   );
 }

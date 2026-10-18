@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentUsage, getAuditBoard, getCategories, money,
+  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentTeam, getAgentUsage, getAuditBoard, getCategories, money,
   resolveFinding, runAudit, runFormulaDrafter, runMerchantVerifier, updateTransaction,
-  type AgentEstimate, type AgentSpent, type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts, type DismissReason,
-  type FormulaProposal, type PendingGroup, type TxSummary,
+  type AgentEstimate, type AgentSpent, type AgentTeam, type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts,
+  type DismissReason, type FormulaProposal, type PendingGroup, type TeamAgent, type TeamAgentKey, type TxSummary,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import BookNotes from "./BookNotes";
 import MerchantSearch from "./MerchantSearch";
 import {
-  BTN_PRIMARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, PageHeader, Stat, TONE, Tabs,
+  BTN_PRIMARY, BTN_SECONDARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, PageHeader, Tabs,
   agoText, DetailEmpty,
 } from "./PageKit";
 
@@ -31,6 +31,16 @@ type Sel = { kind: "finding"; id: number } | { kind: "pending"; merchant: string
 type Step = "audit" | "verify" | "draft";
 const STEPS: Step[] = ["audit", "verify", "draft"];
 type StepState = "idle" | "running" | "done" | "error" | "skipped";
+// 18-oct (ronda de diseño, "la IA al frente"): cada paso con su botón y sus integrantes a la vista. En pantalla
+// los agentes se nombran por lo que hacen (`auditView.agent.*`), nunca ①…⑥; los números quedan para el código:
+// note_checker = ⑥ · personal_judge = ⑤ · reviewer = ① · verifier = ② · drafter = ④.
+type Member = "auditor" | TeamAgentKey;
+const STEP_MEMBERS: Record<Step, Member[]> = {
+  audit: ["auditor", "note_checker", "personal_judge", "reviewer"],
+  verify: ["verifier"],
+  draft: ["drafter"],
+};
+const STEP_MARK: Record<StepState, string> = { idle: "", running: "● ", done: "✓ ", error: "✗ ", skipped: "– " };
 
 const SECTIONS = ["REVENUE", "COGS", "OPERATING_EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE", "NON_PL"];
 const SEV_DOT: Record<string, string> = {
@@ -68,7 +78,9 @@ export default function AuditWorkspace({
   const [busy, setBusy] = useState(false);
   const [usage, setUsage] = useState<AgentUsageSummary | null>(null);
   // Lo que costaría cada acción (ANTES) y lo que costó la última (DESPUÉS), 14-oct.
-  const [est, setEst] = useState<{ audit?: AgentEstimate; review_book?: AgentEstimate }>({});
+  const [est, setEst] = useState<Partial<Record<Step | "review_book", AgentEstimate>>>({});
+  // "El equipo trabajando" (18-oct): qué hizo cada agente en la última corrida, leído de `agentcall`.
+  const [team, setTeam] = useState<AgentTeam | null>(null);
   const [lastSpent, setLastSpent] = useState<AgentSpent | null>(null);
   // La decisión se guarda como DATO y se traduce al mostrarla (si se cambia de idioma, sigue bien).
   type Decision = { kind: "approved"; count: number } | { kind: "dismissed" } | { kind: "failed" };
@@ -83,15 +95,21 @@ export default function AuditWorkspace({
     setBoard(b);
     onStats?.(b.stats);
     // Los estimados se recalculan con el libro como quedó (no bloquean la pantalla).
-    Promise.all([getAgentEstimate("audit", { lang }), getAgentEstimate("review_book", { lang })])
-      .then(([audit, review_book]) => setEst({ audit, review_book })).catch(() => {});
+    Promise.all((["audit", "verify", "draft", "review_book"] as const).map((a) => getAgentEstimate(a, { lang })))
+      .then(([audit, verify, draft, review_book]) => setEst({ audit, verify, draft, review_book })).catch(() => {});
     return b;
   }, [onStats, lang]);
 
+  /** El costo del libro y lo que hizo el equipo: después de cada acción de los agentes. */
+  const refreshUsage = useCallback(() => {
+    getAgentUsage().then(setUsage).catch(() => {});
+    getAgentTeam().then(setTeam).catch(() => {});
+  }, []);
+
   useEffect(() => {
     getCategories().then(setChart).catch(() => {});
-    getAgentUsage().then(setUsage).catch(() => {});
-  }, []);
+    refreshUsage();
+  }, [refreshUsage]);
   // Se recarga al cambiar de idioma: un veredicto del ① en otro idioma pasa a "pendiente de rehacer".
   useEffect(() => {
     void loadBoard().catch((e) => setError(errText(e)));
@@ -140,6 +158,7 @@ export default function AuditWorkspace({
         setDecided({});
       }
       setSteps((s) => ({ ...s, [step]: "done" }));
+      getAgentTeam().then(setTeam).catch(() => {});
     } catch (e) {
       // Un paso que falla (p. ej. sin clave de búsqueda) no detiene el flujo: se marca y se sigue.
       setSteps((s) => ({ ...s, [step]: e instanceof AgentError && /unavailable/.test(e.code) ? "skipped" : "error" }));
@@ -157,7 +176,7 @@ export default function AuditWorkspace({
     setRunning(null);
     setStepNote("");
     await loadBoard().catch(() => {});
-    getAgentUsage().then(setUsage).catch(() => {});
+    refreshUsage();
   }
 
   async function runOne(step: Step) {
@@ -168,7 +187,7 @@ export default function AuditWorkspace({
     setStepNote("");
     if (step !== "audit") await loadBoard().catch(() => {});
     if (step === "draft") setTab("proposals");
-    getAgentUsage().then(setUsage).catch(() => {});
+    refreshUsage();
   }
 
   // ── Acciones del bookkeeper ──────────────────────────────────────────────────────────────────
@@ -202,7 +221,7 @@ export default function AuditWorkspace({
       } else {
         setError(t("auditView.noRuleForMerchant", { merchant: g.merchant }));
       }
-      getAgentUsage().then(setUsage).catch(() => {});
+      refreshUsage();
     } catch (e) { setError(errText(e)); } finally { setBusy(false); }
   }
 
@@ -217,7 +236,7 @@ export default function AuditWorkspace({
       setTab("proposals");
       setSel({ kind: "proposal", idx: 0 });
     }
-    getAgentUsage().then(setUsage).catch(() => {});
+    refreshUsage();
     return r.proposals.length;
   }
 
@@ -225,7 +244,7 @@ export default function AuditWorkspace({
   async function afterSearch(s?: AgentSpent) {
     setLastSpent(s ?? null);
     await loadBoard().catch(() => {});
-    getAgentUsage().then(setUsage).catch(() => {});
+    refreshUsage();
   }
 
   async function approve(idx: number, p: FormulaProposal) {
@@ -274,58 +293,35 @@ export default function AuditWorkspace({
 
   return (
     <div className="space-y-3">
-      {/* 1. LA LÍNEA DE ESTADO + el flujo (estructura común: `PageHeader`) */}
+      {/* 1. LA LÍNEA DE ESTADO + la acción principal (estructura común: `PageHeader`). 18-oct: fuera las tres
+          cifras de arriba (por revisar · Pendientes · problemas): las pestañas de la cola ya dicen esos números. */}
       <PageHeader
         meta={stats?.reviewed_seconds_ago != null ? t("auditView.reviewed", { when: ago(stats.reviewed_seconds_ago) }) : t("auditView.neverReviewed")}
         primary={
-          <span className="flex items-center gap-2">
-            <button onClick={() => void runOne("audit")} disabled={running !== null || busy}
-                    title={`${t("auditView.auditTip")} · ${estimateText(est.audit)}`}
-                    className="px-3 py-1.5 rounded-lg text-sm font-semibold text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-50 disabled:opacity-50">
-              {t("auditView.auditBtn")}
-            </button>
-            <button onClick={reviewBook} disabled={running !== null || busy} className={BTN_PRIMARY}
-                    title={estimateText(est.review_book)}>
-              {running ? t("auditView.running") : t("auditView.reviewBook")}
-            </button>
-          </span>
+          <button onClick={reviewBook} disabled={running !== null || busy} className={BTN_PRIMARY}
+                  title={estimateText(est.review_book)}>
+            {running ? t("auditView.running") : t("auditView.reviewBook")}
+          </button>
         }
-        moreLabel={t("auditView.moreActions")}
-        more={STEPS.map((s) => ({
-          label: t(`auditView.only.${s}`), onClick: () => void runOne(s), disabled: running !== null,
-        }))}
-        below={running ? (
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            {STEPS.map((s, i) => (
-              <span key={s} className="flex items-center gap-1">
-                {i > 0 && <span className="text-slate-300">›</span>}
-                <span className={steps[s] === "running" ? "font-semibold text-emerald-800" : steps[s] === "done" ? "text-emerald-700" : steps[s] === "error" ? "text-rose-600" : "text-slate-400"}>
-                  {steps[s] === "done" ? "✓ " : steps[s] === "running" ? "● " : steps[s] === "error" ? "✗ " : ""}{t(`auditView.stepName.${s}`)}
-                </span>
-              </span>
-            ))}
-            <span className="ms-2 text-slate-500">{stepNote}</span>
-          </div>
-        ) : (
-          // ANTES: lo que costaría cada botón. DESPUÉS: lo que costó la última acción.
+        below={
+          // ANTES: lo que costaría. DESPUÉS: lo que costó la última acción.
           <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-3">
-            {lastSpent && <span className="text-emerald-800">{spentText(lastSpent)}</span>}
-            {est.audit && <span>{t("auditView.est.line", { action: t("auditView.auditBtn"), what: estimateText(est.audit) })}</span>}
+            {lastSpent && !running && <span className="text-emerald-800">{spentText(lastSpent)}</span>}
             {est.review_book && <span>{t("auditView.est.line", { action: t("auditView.reviewBook"), what: estimateText(est.review_book) })}</span>}
           </div>
-        )}
-      >
-        <Stat value={stats?.to_review} label={t("auditView.stat.toReview")} tone={TONE.neutral} />
-        <Stat value={stats?.pending} label={t("auditView.stat.pending", { count: stats?.pending_merchants ?? 0 })} tone={TONE.pending} />
-        <Stat value={stats?.problems} label={t("auditView.stat.problems")} tone={TONE.problem} />
-      </PageHeader>
+        }
+      />
+
+      {/* 2. LA IA AL FRENTE (18-oct): los pasos a la vista, cada agente con su nombre, su modelo y lo que hizo. */}
+      <TeamPanel team={team} steps={steps} running={running} stepNote={stepNote} est={est} disabled={running !== null || busy}
+                 onRun={(s) => void runOne(s)} ago={ago} estimateText={estimateText} />
 
       {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{error}</p>}
 
-      {/* 2. LAS NOTAS (compactas si están vacías) */}
+      {/* 3. LAS NOTAS (compactas si están vacías) */}
       <BookNotes compact onProposeForNote={proposeForNote} />
 
-      {/* 3. LA COLA + EL DETALLE (estructura común: `ListDetail`) */}
+      {/* 4. LA COLA + EL DETALLE (estructura común: `ListDetail`) */}
       <ListDetail
         selKey={sel ? JSON.stringify(sel) : undefined}
         list={
@@ -390,7 +386,7 @@ export default function AuditWorkspace({
         }
       />
 
-      {/* 4. PIE: quién hace el trabajo (para los jueces) y el costo, discreto */}
+      {/* 5. PIE: quién hace el trabajo (para los jueces) y el costo, discreto */}
       <p className="text-[11px] text-slate-400 flex flex-wrap gap-x-3" title={costTip}>
         <span>{t("auditView.poweredBy", { model: modelName })}</span>
         {usage && <span>{t("auditView.costLine", { cost: `$${(usage.total_cost_usd ?? 0).toFixed(5)}`, left: usage.left_today })}</span>}
@@ -489,6 +485,92 @@ export function useAuditText() {
 
 type T = ReturnType<typeof useTranslation>["t"];
 
+/** "El equipo de IA" (18-oct): los tres pasos con su botón; en cada uno, sus integrantes con el modelo que usan y
+ *  lo que hicieron en la ÚLTIMA corrida (datos de `agentcall`, nunca inventados). Mientras corre, el paso se marca. */
+function TeamPanel({ team, steps, running, stepNote, est, disabled, onRun, ago, estimateText }: {
+  team: AgentTeam | null; steps: Record<Step, StepState>; running: Step | null; stepNote: string;
+  est: Partial<Record<Step | "review_book", AgentEstimate>>; disabled: boolean; onRun: (s: Step) => void;
+  ago: (secs: number) => string; estimateText: (e: AgentEstimate | null | undefined) => string;
+}) {
+  const { t } = useTranslation();
+  const byKey = Object.fromEntries((team?.agents ?? []).map((a) => [a.agent, a])) as Partial<Record<TeamAgentKey, TeamAgent>>;
+  const r = team?.run;
+  return (
+    <section className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+        <h2 className="text-sm font-semibold text-slate-900">{t("auditView.team.title")}</h2>
+        {team && (
+          <span className="text-xs text-slate-500">
+            {r ? [t("auditView.team.lastRun", { when: ago(r.seconds_ago) }), t("auditView.team.calls", { count: r.calls }),
+                  `$${r.cost_usd.toFixed(5)}`, ...(r.credits ? [t("auditView.team.credits", { count: r.credits })] : [])].join(" · ")
+               : t("auditView.team.neverRun")}
+          </span>
+        )}
+        {running && <span className="text-xs text-emerald-800">{stepNote}</span>}
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        {STEPS.map((s, i) => (
+          <div key={s} className={`rounded-lg border p-2.5 space-y-2 ${steps[s] === "running" ? "border-emerald-400 bg-emerald-50/50" : "border-slate-200"}`}>
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                <div className={`text-xs font-semibold ${steps[s] === "error" ? "text-rose-700" : "text-slate-900"}`}>
+                  {STEP_MARK[steps[s]]}{i + 1}. {t(`auditView.stepName.${s}`)}
+                </div>
+                <p className="text-[11px] text-slate-500">{t(`auditView.team.step.${s}`)}</p>
+              </div>
+              <button onClick={() => onRun(s)} disabled={disabled} className={BTN_SECONDARY} title={estimateText(est[s])}>
+                {t("auditView.team.run")}
+              </button>
+            </div>
+            {est[s] && <p className="text-[11px] text-slate-400">{estimateText(est[s])}</p>}
+            <ul className="space-y-1.5 border-t border-slate-100 pt-1.5">
+              {STEP_MEMBERS[s].map((m) => <TeamMember key={m} m={m} a={m === "auditor" ? undefined : byKey[m]} loaded={team !== null} ago={ago} />)}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Un integrante: su nombre por lo que hace, su modelo y lo que hizo (o que no corrió, y por qué puede pasar). */
+function TeamMember({ m, a, loaded, ago }: { m: Member; a?: TeamAgent; loaded: boolean; ago: (secs: number) => string }) {
+  const { t } = useTranslation();
+  const model = m === "auditor" ? t("auditView.team.code")
+    : a ? `${a.model.label}${a.model.reasoning ? ` · ${t("auditView.team.reasoning")}` : ""}` : "";
+  let line: string = "";
+  let why: string | null = null;
+  if (m === "auditor") line = t("auditView.team.auditor");
+  else if (a?.run) {
+    const x = a.run;
+    // Lo que produjo, según lo que guarda cada agente en `items_out` / `items_valid` (ver `agent_calls.record`).
+    const did = m === "verifier" ? x.calls : m === "drafter" ? x.items_out : x.items_valid;
+    line = [
+      t(`auditView.team.did.${m}`, { count: did }),
+      ...(m === "verifier" ? [] : [t("auditView.team.calls", { count: x.calls })]),
+      ...(x.ok < x.calls ? [t("auditView.team.failed", { count: x.calls - x.ok })] : []),
+      t("auditView.team.seconds", { s: (x.latency_ms / 1000).toFixed(1) }),
+      m === "verifier" ? t("auditView.team.credits", { count: x.credits }) : `$${x.cost_usd.toFixed(5)}`,
+    ].join(" · ");
+  } else if (a && a.last_seconds_ago != null) {
+    line = `${t("auditView.team.didNotRun")} ${t("auditView.team.lastWorked", { when: ago(a.last_seconds_ago) })}`;
+    why = t(`auditView.team.why.${m}`);
+  } else if (loaded) {
+    line = t("auditView.team.never");
+    why = t(`auditView.team.why.${m}`);
+  }
+  return (
+    <li className="text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-medium text-slate-800">{t(`auditView.agent.${m}`)}</span>
+        {model && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] text-slate-600">{model}</span>}
+      </div>
+      {line && <div className={`text-[11px] ${a?.run ? "text-slate-700" : "text-slate-500"}`}>{line}</div>}
+      {why && <div className="text-[11px] text-slate-400">{why}</div>}
+    </li>
+  );
+}
+
 /** Un movimiento: comercio limpio · fecha · monto · cuenta; la línea cruda del banco, al expandir. */
 function TxRow({ x, fmtDate, extra, onOpen, openLabel }: {
   x: TxSummary; fmtDate: (s: string) => string; extra?: React.ReactNode;
@@ -561,22 +643,25 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
       </div>
       {/* Lo que vio el auditor */}
       <p className="text-sm text-slate-700">{sentence}</p>
-      {/* El ① revisor */}
+      {/* El ① revisor ("Revisa cada hallazgo": en pantalla, por su nombre, 18-oct) */}
       {!f.is_info && (
         f.agent_verdict ? (
-          <div className="flex items-start gap-2">
-            <Badge cls={VERDICT_STYLE[f.agent_verdict]}>① {t(`agents.verdict.${f.agent_verdict}`)}</Badge>
-            {f.observation_stale
-              ? <span className="text-xs text-slate-400 italic">{t("auditView.staleVerdict")}</span>
-              : <span className="text-sm text-slate-600">{f.agent_observation}</span>}
+          <div>
+            <div className="text-[11px] text-slate-400">{t("auditView.agent.reviewer")}</div>
+            <div className="flex items-start gap-2">
+              <Badge cls={VERDICT_STYLE[f.agent_verdict]}>{t(`agents.verdict.${f.agent_verdict}`)}</Badge>
+              {f.observation_stale
+                ? <span className="text-xs text-slate-400 italic">{t("auditView.staleVerdict")}</span>
+                : <span className="text-sm text-slate-600">{f.agent_observation}</span>}
+            </div>
           </div>
         ) : <p className="text-xs text-slate-400">{t("auditView.notReviewed")}</p>
       )}
-      {/* La evidencia del ② */}
+      {/* La evidencia del ② (Tavily es la fuente) */}
       {f.web && (
         <a href={f.web.source_url ?? undefined} target="_blank" rel="noopener noreferrer"
            className="inline-block text-xs px-2 py-0.5 rounded-full bg-sky-50 text-sky-800 hover:underline">
-          🔎 ② Tavily: {webLabel(f.web)}{f.web.source_domain ? ` · ${f.web.source_domain}` : ""}
+          🔎 Tavily: {webLabel(f.web)}{f.web.source_domain ? ` · ${f.web.source_domain}` : ""}
         </a>
       )}
       {f.transactions.length > 0 && (
@@ -637,7 +722,7 @@ function PendingDetail({ g, t, webLabel, fmtDate, chart, catToType, busy, onCate
       {g.web && (
         <a href={g.web.source_url ?? undefined} target="_blank" rel="noopener noreferrer"
            className="inline-block text-xs px-2 py-0.5 rounded-full bg-sky-50 text-sky-800 hover:underline">
-          🔎 ② Tavily: {webLabel(g.web)}{g.web.source_domain ? ` · ${g.web.source_domain}` : ""}
+          🔎 Tavily: {webLabel(g.web)}{g.web.source_domain ? ` · ${g.web.source_domain}` : ""}
         </a>
       )}
       <ul className="border-t border-slate-100 pt-1">{g.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate}
@@ -646,9 +731,9 @@ function PendingDetail({ g, t, webLabel, fmtDate, chart, catToType, busy, onCate
         <CategoryPicker chart={chart} busy={busy} t={t} cta={t("auditView.act.categorizeAll", { count: g.count })}
                         onPick={(c) => onCategorize(ids, catToType[c], c)} />
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => onAskRule(g)} disabled={busy || g.person_payment}
+          <button onClick={() => onAskRule(g)} disabled={busy || g.person_payment} title={t("auditView.agent.drafter")}
                   className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-emerald-700 text-emerald-800 disabled:opacity-40">
-            ④ {t("auditView.act.askRule")}
+            {t("auditView.act.askRule")}
           </button>
           {onOpenSheet && <button onClick={() => onOpenSheet(g.transactions[0]?.id)} className="px-2 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("auditView.act.openSheet")}</button>}
         </div>
@@ -673,7 +758,7 @@ function ProposalDetail({ p, idx, decided, t, label, webLabel, fmtDate, busy, on
   return (
     <div className="space-y-2.5">
       <div>
-        <div className="text-xs text-emerald-700">④ {t("auditView.proposal")}</div>
+        <div className="text-xs text-emerald-700">{t("auditView.proposal")} · {t("auditView.agent.drafter")}</div>
         <h3 className="text-sm font-semibold text-slate-900 mt-0.5 flex flex-wrap items-center gap-1.5">
           <span className="font-mono">{p.keyword}</span>
           {period && <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800">{period}</span>}

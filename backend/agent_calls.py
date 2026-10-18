@@ -129,3 +129,59 @@ def spent(session: Session, company: Company, since_id: int) -> dict:
     web = [r for r in rows if r.agent == "verifier"]
     return {"calls": len(model), "cost_usd": round(sum(r.cost_usd or 0.0 for r in model), 6),
             "searches": len(web), "credits": sum(r.credits or 0 for r in web)}
+
+
+# ── EL EQUIPO TRABAJANDO (18-oct, ronda de diseño: "la IA al frente") ─────────────────────────────
+# Qué hizo cada agente en la ÚLTIMA CORRIDA del libro, leído de `AgentCall` (nunca inventado). No hay un
+# id de corrida: una corrida = las llamadas seguidas del equipo, sin una pausa de más de `RUN_GAP_S`
+# entre una y la siguiente ("Revisar el libro" hace auditar → verificar → redactar sin pausas). Un
+# agente que no aparece en esa corrida "no corrió" (p. ej. el ⑥ sin notas nuevas): se dice, con cuándo
+# trabajó por última vez. Fuera del equipo: el mapeo de columnas al importar (`column_mapper`…).
+
+TEAM = ("note_checker", "personal_judge", "reviewer", "verifier", "drafter")
+_MODEL_KEY = {"note_checker": "notes", "personal_judge": "personal", "reviewer": "reviewer", "drafter": "drafter"}
+RUN_GAP_S = 180
+
+
+def team(session: Session, company: Company) -> dict:
+    import agent_models
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    ago = lambda t: max(0, int((now - t).total_seconds()))   # noqa: E731
+    rows = session.exec(select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.agent.in_(TEAM))
+                        .order_by(AgentCall.id.desc()).limit(500)).all()
+    # La corrida: de la llamada más nueva hacia atrás, mientras la pausa entre dos llamadas seguidas no pase
+    # de RUN_GAP_S. `created_at` se escribe al TERMINAR la llamada: la pausa descuenta lo que tardó.
+    run: list[AgentCall] = []
+    for r in rows:
+        if run and (run[-1].created_at - r.created_at).total_seconds() - run[-1].latency_ms / 1000 > RUN_GAP_S:
+            break
+        run.append(r)
+    last = dict(session.exec(select(AgentCall.agent, func.max(AgentCall.created_at))
+                             .where(AgentCall.company_id == company.id, AgentCall.agent.in_(TEAM))
+                             .group_by(AgentCall.agent)).all())
+    agents = []
+    for a in TEAM:
+        mine = [r for r in run if r.agent == a]
+        if a in _MODEL_KEY:
+            model_id, reasoning = agent_models.get(_MODEL_KEY[a])
+            key = agent_models.short(model_id)
+            model = {"key": key, "label": agent_models.LABELS.get(key, model_id), "reasoning": reasoning}
+        else:
+            model = {"key": "tavily", "label": "Tavily", "reasoning": False}
+        agents.append({
+            "agent": a, "model": model,
+            "last_seconds_ago": ago(last[a]) if a in last else None,
+            "run": {
+                "calls": len(mine), "ok": sum(r.outcome == "ok" for r in mine),
+                "items_out": sum(r.items_out for r in mine), "items_valid": sum(r.items_valid for r in mine),
+                "latency_ms": sum(r.latency_ms for r in mine),
+                "cost_usd": round(sum(r.cost_usd or 0.0 for r in mine), 6),
+                "credits": sum(r.credits or 0 for r in mine),
+            } if mine else None,
+        })
+    return {
+        "run": {"seconds_ago": ago(run[0].created_at), "calls": len(run),
+                "cost_usd": round(sum(r.cost_usd or 0.0 for r in run), 6),
+                "credits": sum(r.credits or 0 for r in run)} if run else None,
+        "agents": agents,
+    }

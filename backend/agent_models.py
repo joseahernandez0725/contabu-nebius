@@ -43,6 +43,16 @@ _ENV = {"reviewer": "REVIEWER", "drafter": "DRAFTER", "personal": "PERSONAL", "n
 OVERRIDES: dict[str, tuple[str, bool]] = {}
 
 
+# El nombre que se ve en pantalla (18-oct, "la IA al frente"): es un nombre propio, igual en EN y ES.
+LABELS = {
+    "nano": "Nemotron 3 Nano",
+    "lightning": "Nemotron 3.5 Lightning",
+    "super": "Nemotron 3 Super",
+    "ultra": "Nemotron 3 Ultra",
+    "vl": "Nemotron 3.5 Super VL",
+}
+
+
 def short(model: Optional[str]) -> Optional[str]:
     """El id completo → su nombre corto (para las tablas)."""
     return next((k for k, v in MODEL_IDS.items() if v == model), model)
