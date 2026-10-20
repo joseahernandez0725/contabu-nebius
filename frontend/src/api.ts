@@ -1195,7 +1195,10 @@ export interface TxInsight {
 
 /** {transaction_id: nivel}. Pone los hallazgos al día antes (como abrir Auditoría). */
 export const getTransactionFlags = () => auditFetch<Record<string, FlagLevel>>("/transactions/flags");
-export const getTransactionInsight = (id: number) => auditFetch<TxInsight>(`/transactions/${id}/insight`);
+/** `lang`: el idioma de la pantalla — mismo criterio que `getAuditBoard` (19-oct: el panel lateral
+ *  también puede mostrar la observación guardada del ① en el idioma de hoy). */
+export const getTransactionInsight = (id: number, lang?: string) =>
+  auditFetch<TxInsight>(`/transactions/${id}/insight${lang ? `?lang=${encodeURIComponent(lang)}` : ""}`);
 
 /** POR QUÉ tiene su categoría (14-oct, Movimientos): las reglas que mencionan la descripción, en el orden
  *  real, y qué pasó con cada una (`wins` decide · `date`/`amount` no cumple la condición · `after` va detrás). */

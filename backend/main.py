@@ -2745,15 +2745,16 @@ def transaction_flags(company_id: int, user: User = Depends(current_user), sessi
 
 
 @app.get("/api/companies/{company_id}/transactions/{transaction_id}/insight")
-def transaction_insight(company_id: int, transaction_id: int, user: User = Depends(current_user),
-                        session: Session = Depends(get_session)):
-    """Todo lo que se sabe de UN movimiento: procedencia, historial, hallazgos, evidencia web y notas."""
+def transaction_insight(company_id: int, transaction_id: int, lang: Optional[str] = None,
+                        user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Todo lo que se sabe de UN movimiento: procedencia, historial, hallazgos, evidencia web y notas.
+    `lang`: el idioma de la pantalla (igual que `/audit/board`), para la observación del ① guardada."""
     import tx_insight
     company = console_company(company_id, user, session)
     tx = tx_insight.transaction_of(session, company, transaction_id)
     if tx is None:
         raise HTTPException(status_code=404, detail="transaction not found")
-    return tx_insight.insight(session, company, tx)
+    return tx_insight.insight(session, company, tx, lang=lang)
 
 
 @app.get("/api/companies/{company_id}/transactions/{transaction_id}/rule-trace")

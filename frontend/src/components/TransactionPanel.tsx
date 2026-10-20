@@ -60,17 +60,17 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
   useEffect(() => {
     let alive = true;
     setError(false);
-    getTransactionInsight(txId)
+    getTransactionInsight(txId, lang)
       .then((d) => { if (alive) setData(d); })
       .catch(() => { if (alive) setError(true); });
     return () => { alive = false; };
-  }, [txId, refreshKey]);
+  }, [txId, refreshKey, lang]);
 
   async function markOk(findingId: number) {
     setBusy(findingId);
     try {
       await resolveFinding(findingId, "ok");
-      setData(await getTransactionInsight(txId));
+      setData(await getTransactionInsight(txId, lang));
       onChanged();
     } catch { setError(true); } finally { setBusy(null); }
   }
@@ -148,7 +148,9 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
                   {!f.is_info && (f.agent_verdict ? (
                     <div className="flex items-start gap-1.5">
                       <Badge cls={VERDICT_STYLE[f.agent_verdict]}>{t(`agents.verdict.${f.agent_verdict}`)}</Badge>
-                      {f.agent_observation && <span className="text-xs text-slate-600">{f.agent_observation}</span>}
+                      {f.observation_stale
+                        ? <span className="text-[11px] text-slate-400 italic">{t("auditView.staleVerdict")}</span>
+                        : f.agent_observation && <span className="text-xs text-slate-600">{f.agent_observation}</span>}
                     </div>
                   ) : <p className="text-[11px] text-slate-400">{t("auditView.notReviewed")}</p>)}
                   {f.web && <WebChip w={f.web} webLabel={webLabel} />}

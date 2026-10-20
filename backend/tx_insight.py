@@ -129,8 +129,9 @@ def _notes(session: Session, company: Company, tx: Transaction, merchant: str) -
     return out
 
 
-def insight(session: Session, company: Company, tx: Transaction) -> dict:
-    """Todo lo que se sabe de UN movimiento, para el panel lateral."""
+def insight(session: Session, company: Company, tx: Transaction, lang: Optional[str] = None) -> dict:
+    """Todo lo que se sabe de UN movimiento, para el panel lateral. `lang`: el idioma de la pantalla —
+    mismo criterio que `book_review.board()`, para la observación del ① guardada (19-oct)."""
     txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
     by_id = {t.id: t for t in txs}
     web = merchant_verifier.web_by_tx(session, company, txs)
@@ -140,7 +141,7 @@ def insight(session: Session, company: Company, tx: Transaction) -> dict:
                                                        Finding.status == "open")).all()
     mine = [f for f in _shown(open_findings, _silencers(session, company)) if tx.id in (f.transaction_ids or [])]
     mine.sort(key=lambda f: (-LEVEL_ORDER[finding_level(f)], book_review.SEVERITY_ORDER.get(f.severity, 9)))
-    findings = [{**book_review.finding_dict(f, by_id, web), "level": finding_level(f)} for f in mine]
+    findings = [{**book_review.finding_dict(f, by_id, web, lang), "level": finding_level(f)} for f in mine]
 
     hit = web.get(tx.id)
     return {

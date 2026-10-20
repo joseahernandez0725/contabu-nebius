@@ -69,26 +69,33 @@ _PAYROLL_RE = re.compile(r"\b(GUSTO|ADP|PAYCHEX|PAYROLL|ONLINE PAYROLL|DIR(?:ECT
 _PAYROLL_TAX_RE = re.compile(r"\b(IRS|EFTPS|USATAXPYMT|USA TAX PYMT|TAX PAYMT|TAXPAYMENT|EDD|IRS TREAS)\b")
 
 
-_ES_WORDS = {"el", "la", "los", "las", "de", "del", "que", "es", "está", "pero", "como", "una", "un", "por", "para",
-             "con", "debería", "parece", "aparece", "se", "su", "sus", "y", "o", "no"}
-_EN_WORDS = {"the", "is", "are", "but", "as", "it", "should", "be", "this", "of", "and", "to", "for", "with",
-             "appears", "seems", "looks", "an", "a", "not", "or"}
-
-
-def text_lang(text: Optional[str]) -> Optional[str]:
-    """¿En qué idioma está una observación? Cuenta palabras frecuentes de cada idioma (sin IA). None si
-    no alcanza para decidir. Sirve para no mostrar un veredicto en inglés con la app en español (13-oct)."""
-    words = re.findall(r"[a-záéíóúñü]+", (text or "").lower())
-    es, en = sum(w in _ES_WORDS for w in words), sum(w in _EN_WORDS for w in words)
-    if es == en or max(es, en) < 2:
-        return None
-    return "es" if es > en else "en"
-
-
 def observation_stale(f: Finding, lang: Optional[str]) -> bool:
     """Un veredicto guardado en OTRO idioma que el de la pantalla está viejo: no se muestra su texto y el
-    próximo "Revisar el libro" lo rehace en el idioma actual."""
+    próximo "Revisar el libro" lo rehace en el idioma actual. Solo le pasa a un hallazgo de ANTES del
+    19-oct (una sola columna, `agent_observation`/`agent_lang`): desde entonces el ① guarda los dos
+    idiomas en la misma llamada, así que nunca queda viejo por idioma."""
+    if f.agent_observation_en or f.agent_observation_es:
+        return False
     return bool(f.agent_observation and lang and f.agent_lang and f.agent_lang != lang)
+
+
+def observation_text(f: Finding, lang: Optional[str]) -> Optional[str]:
+    """La observación del ① para la PANTALLA, en el idioma que pide `lang` (19-oct: sin volver a llamar
+    a la IA). Un hallazgo de antes, en otro idioma que el de hoy, no muestra texto (`observation_stale`
+    ya lo marca); ese caso se resuelve solo con la próxima revisión."""
+    if f.agent_observation_en or f.agent_observation_es:
+        want_es = (lang or "en").split("-")[0] == "es"
+        text = (f.agent_observation_es if want_es else f.agent_observation_en)
+        return text or f.agent_observation_es or f.agent_observation_en
+    return None if observation_stale(f, lang) else f.agent_observation
+
+
+def needs_review(f: Finding, lang: Optional[str]) -> bool:
+    """¿Este hallazgo necesita que el ① lo juzgue (de nuevo)? Sin veredicto y sin observación guardada
+    (nunca se juzgó), o con una observación de antes del 19-oct en OTRO idioma que el de hoy (se rehace
+    una vez para que quede con los dos idiomas)."""
+    unjudged = f.agent_verdict is None and not (f.agent_observation or f.agent_observation_en or f.agent_observation_es)
+    return unjudged or observation_stale(f, lang)
 
 
 def _now() -> datetime:
@@ -338,7 +345,8 @@ def sync(session: Session, company: Company) -> list[Finding]:
                 f.status = "open"            # volvió a aparecer
             if f.transaction_ids != d["transaction_ids"] or f.payload != d["payload"]:
                 if f.transaction_ids != d["transaction_ids"]:
-                    f.agent_verdict = f.agent_observation = None   # cambió lo que el ① juzgó
+                    # Cambió lo que el ① juzgó: se olvida el veredicto, en las dos formas (legado y 19-oct).
+                    f.agent_verdict = f.agent_observation = f.agent_observation_en = f.agent_observation_es = None
                 f.transaction_ids, f.payload = d["transaction_ids"], d["payload"]
             f.severity, f.merchant = d["severity"], d["merchant"]
         f.last_seen_at = now
@@ -378,12 +386,11 @@ def pending_groups(txs: list[Transaction], web: dict) -> list[dict]:
 
 def finding_dict(f: Finding, by_id: dict, web: dict, lang: Optional[str] = None) -> dict:
     hit = next((web[i] for i in f.transaction_ids if i in web), None)
-    stale = observation_stale(f, lang)
     return {
-        "observation_stale": stale,
+        "observation_stale": observation_stale(f, lang),
         "id": f.id, "key": f.key, "type": f.type, "severity": f.severity, "merchant": f.merchant,
         "payload": f.payload or {}, "status": f.status,
-        "agent_verdict": f.agent_verdict, "agent_observation": None if stale else f.agent_observation,
+        "agent_verdict": f.agent_verdict, "agent_observation": observation_text(f, lang),
         "agent_lang": f.agent_lang,
         "agent_reviewed_at": f.agent_reviewed_at.isoformat() if f.agent_reviewed_at else None,
         "web": {"business_type": hit.business_type, "confidence": hit.confidence,

@@ -689,7 +689,8 @@ def warnings(p: Proposal) -> list[str]:
 class Verdict(BaseModel):
     ref: str
     verdict: Literal["problem", "legitimate", "unsure"]
-    observation: str
+    observation_en: str = ""
+    observation_es: str = ""
     hint_for_drafter: str = ""
 
 
@@ -703,7 +704,8 @@ both Materials and Office for good reasons; rows the bookkeeper set by hand are 
 or UNSURE. You never change any category: you only write an observation for the bookkeeper.
 
 Rules:
-- Output ONLY JSON: {"reviews": [{"ref", "verdict", "observation", "hint_for_drafter"}]}, one per finding.
+- Output ONLY JSON: {"reviews": [{"ref", "verdict", "observation_en", "observation_es", "hint_for_drafter"}]},
+  one per finding.
 - Judge ONLY from the "facts" given for each finding; never assume facts that are not there. A note
   applies to a finding only if its id is in "note_periods_covering_these_dates" (for dated notes).
 - rule_deviation where the row was "decided by rule": the row is stale against its own rule → PROBLEM.
@@ -723,10 +725,11 @@ Rules:
   bookkeeper does not want that reported (mark it legitimate).
 - Rows decided "manual" were set by the bookkeeper on purpose ("hand-written wins"). Disagreement among
   them is a reason to ask, not an error by itself.
-- observation: WRITE IT IN {lang} (even though these instructions are in English), with no English
-  words mixed in (no "mismatch", no "bookkeeper"). ONE short sentence (max ~20 words), concrete, speaking
-  directly to the reader. No amounts (you don't have them), no internal refs (F1), no field names like
-  NON_PL or OPERATING_EXPENSE.
+- observation_en / observation_es: the SAME observation, in English and in Spanish (at most 400
+  characters each, like personal_use's reason_en/reason_es), with no words of the other language mixed
+  in. ONE short sentence (max ~20 words), concrete, speaking directly to the reader. No amounts (you
+  don't have them), no internal refs (F1), no field names like NON_PL or OPERATING_EXPENSE, no "mismatch"
+  or "bookkeeper" literally in the Spanish one.
 - hint_for_drafter: a short note in English for the formula drafter if a new rule would fix it, else "".
 - Placeholders like "PERSON 1" stand for private people: keep them as written."""
 
@@ -874,15 +877,13 @@ def review(session: Session, company: Company, *, lang: str = "es", reasoning: O
     else:
         # "Sin juzgar" = sin explicación guardada (un hallazgo que el ① no puede despachar queda con veredicto
         # vacío pero CON explicación: no se vuelve a pagar en cada revisión).
-        todo = open_findings if force else [f for f in open_findings
-                                            if (f.agent_verdict is None and not f.agent_observation)
-                                            or book_review.observation_stale(f, lang)]
+        todo = open_findings if force else [f for f in open_findings if book_review.needs_review(f, lang)]
     findings, silenced, ids_of = review_input(session, company, view, todo)
     if not findings:
         session.commit()
         return ReviewResult(note_usage=note_usage, personal_usage=personal_usage, reviews=[], silenced=silenced, usage=None, outcome="nothing_to_review")
     agent_calls.check_cap(session, company)
-    system = _REVIEW_SYSTEM.replace("{lang}", LANG_NAMES.get(lang, "Spanish"))
+    system = _REVIEW_SYSTEM
     user = f"""Bookkeeper notes:
 {json.dumps(view.notes, ensure_ascii=False)}
 
@@ -910,15 +911,17 @@ Findings to review:
         if v is not None:
             # El ① explica, pero no despacha lo que no puede despachar: un "legítimo" ahí no se guarda.
             f.agent_verdict = None if (v.verdict == "legitimate" and book_review.ai_cannot_dismiss(f)) else v.verdict
-            f.agent_observation = view.names.unmask(v.observation)[:400]
-            # El idioma que se guarda es el que TIENE el texto (comprobado), no el que se pidió: si el modelo
-            # contestó en otro idioma, queda marcado viejo y se rehace la próxima vez.
-            f.agent_lang = book_review.text_lang(f.agent_observation) or lang
+            # 19-oct: los DOS idiomas en la misma llamada (como personal_use.py); la pantalla elige el
+            # suyo sin volver a llamar. Las columnas de un solo idioma (`agent_observation`/`agent_lang`)
+            # ya no se escriben: quedan solo en los hallazgos de antes de esta fecha.
+            f.agent_observation_en = view.names.unmask(v.observation_en)[:400] or None
+            f.agent_observation_es = view.names.unmask(v.observation_es)[:400] or None
+            f.agent_observation, f.agent_lang = None, None
             f.agent_reviewed_at = now
             session.add(f)
         reviews.append({"ref": item["ref"], "finding_id": f.id, "type": f.type, "merchant": f.merchant,
                         "transaction_ids": f.transaction_ids, "verdict": v.verdict if v else "unsure",
-                        "observation": f.agent_observation or "", "answered": v is not None})
+                        "observation": book_review.observation_text(f, lang) or "", "answered": v is not None})
     agent_calls.record(session, company, "reviewer", reply.usage, user_id=user_id,
                        items_out=len(findings), items_valid=len(verdicts))
     session.commit()
@@ -967,8 +970,7 @@ def _estimate(session: Session, company: Company, action: str, *, note_id: Optio
         have = personal_use.current(session, company, h)
         calls += any(k not in have for k in personal_use.candidates(view.ctx.txs))
         open_findings = book_review.sync(session, company)
-        calls += any(f.type not in book_review.UNJUDGED_TYPES and ((f.agent_verdict is None and not f.agent_observation)
-                                                                or book_review.observation_stale(f, lang))
+        calls += any(f.type not in book_review.UNJUDGED_TYPES and book_review.needs_review(f, lang)
                      for f in open_findings) or calls > 0
     if action in ("verify", "review_book"):
         cache = merchant_verifier.cached(session, company)

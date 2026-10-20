@@ -602,7 +602,10 @@ class Finding(SQLModel, table=True):
     - "ok": el bookkeeper dijo que está bien, no vuelve a salir;
     - "gone": el auditor ya no lo ve (se arregló).
     `payload`: los datos estructurados para la pantalla (en inglés; la pantalla traduce por `type`).
-    `agent_*`: lo que dijo el ① (la IA nunca cambia una categoría desde aquí).
+    `agent_*`: lo que dijo el ① (la IA nunca cambia una categoría desde aquí). Desde el 19-oct escribe su
+    observación en inglés Y en español en la misma llamada (`agent_observation_en`/`_es`); la pantalla
+    muestra la del idioma actual sin volver a llamar. `agent_observation`/`agent_lang` quedan para los
+    hallazgos de antes (una sola columna) — ver `book_review.observation_text`.
     """
     id: Optional[int] = Field(default=None, primary_key=True)
     company_id: int = Field(foreign_key="company.id", index=True)
@@ -614,8 +617,10 @@ class Finding(SQLModel, table=True):
     payload: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     status: str = Field(default="open", index=True)
     agent_verdict: Optional[str] = Field(default=None)        # problem | legitimate | unsure
-    agent_observation: Optional[str] = Field(default=None)
-    agent_lang: Optional[str] = Field(default=None)
+    agent_observation: Optional[str] = Field(default=None)    # 🔴 legado: hallazgos de antes del 19-oct
+    agent_lang: Optional[str] = Field(default=None)            # (una sola columna); ver book_review.observation_text
+    agent_observation_en: Optional[str] = Field(default=None)  # 19-oct: el ① ya escribe los dos idiomas
+    agent_observation_es: Optional[str] = Field(default=None)  # a la vez, en la misma llamada
     agent_reviewed_at: Optional[datetime] = Field(default=None)
     resolved_by_user_id: Optional[int] = Field(default=None)
     resolved_at: Optional[datetime] = Field(default=None)
