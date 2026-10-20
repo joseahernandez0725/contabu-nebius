@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getPivot, getPivotLeaves, type PivotNode, type PivotLeaf } from "../api";
+import { inRange, type DateRange } from "./DateFilter";
 
 /**
  * EL PIVOTE (FASE 10, paso 7) — el drill-down que pidió Jose:
@@ -123,8 +124,10 @@ function Row({ node, depth, path, open, leaves, onToggle, t, section }: {
   );
 }
 
-// `accounts`: el mismo filtro de cuentas con casillas que la hoja (vacío = todas).
-export default function Pivot({ accounts = [] }: { accounts?: string[] }) {
+// `accounts`: el mismo filtro de cuentas con casillas que la hoja (vacío = todas). `range`: el mismo filtro
+// de fechas (19-oct). El árbol lo suma SQL con `start`/`end`; las transacciones de un mes se recortan aquí
+// por fecha (un rango propio puede cortar un mes por la mitad), así cuadran con el total de su mes.
+export default function Pivot({ accounts = [], range = null }: { accounts?: string[]; range?: DateRange | null }) {
   const { t } = useTranslation();
   const [nodes, setNodes] = useState<PivotNode[] | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -132,9 +135,9 @@ export default function Pivot({ accounts = [] }: { accounts?: string[] }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setLeaves({});  // las transacciones de cada mes dependen de las cuentas: se vuelven a pedir
-    getPivot(accounts).then(setNodes).catch((e) => setError(String(e?.message ?? e)));
-  }, [accounts.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+    setLeaves({});  // las transacciones de cada mes dependen de las cuentas y las fechas: se vuelven a pedir
+    getPivot(accounts, range?.from, range?.to).then(setNodes).catch((e) => setError(String(e?.message ?? e)));
+  }, [accounts.join("|"), range?.from, range?.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = useCallback(async (node: PivotNode, path: string[]) => {
     const key = node.key;
@@ -149,18 +152,18 @@ export default function Pivot({ accounts = [] }: { accounts?: string[] }) {
       try {
         const [section, category, subcategory] = path;
         const rows = await getPivotLeaves(section, category, subcategory, node.label, accounts);
-        setLeaves((l) => ({ ...l, [key]: rows }));
+        setLeaves((l) => ({ ...l, [key]: rows.filter((r) => inRange(r.date, range)) }));
       } catch {
         setLeaves((l) => ({ ...l, [key]: [] }));
       }
     }
-  }, [leaves, accounts]);
+  }, [leaves, accounts, range]);
 
   if (error) return <p style={{ color: "#991b1b", padding: 16 }}>{error}</p>;
   if (!nodes) return <p style={{ color: "#5b6b62", padding: 16 }}>{t("common.loading", { defaultValue: "Loading…" })}</p>;
   if (!nodes.length)
     return <p style={{ color: "#5b6b62", padding: 16 }}>
-      {t("pivot.empty", { defaultValue: "No categorized transactions yet." })}
+      {range ? t("pivot.emptyRange") : t("pivot.empty", { defaultValue: "No categorized transactions yet." })}
     </p>;
 
   return (

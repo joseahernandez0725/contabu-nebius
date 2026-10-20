@@ -9,6 +9,8 @@
 // - `scrollToCoordinate({ x, y })` recibe esos mismos píxeles (`scrollToRow(i)` convierte el índice a
 //   píxeles y lo llama: `revo-grid.js`, `scrollToRow` → `getViewPortPos` → `scrollToCoordinate({ y })`).
 
+import type { DateFilter } from "./DateFilter";
+
 export type GridSpot = {
   x: number;              // desplazamiento horizontal, px
   y: number;              // desplazamiento vertical, px
@@ -63,4 +65,14 @@ export async function restoreSpot(
     }
     await grid.scrollToCoordinate({ x: spot.x, y: spot.y });
   } catch { /* la grilla se fue (otra pestaña): no pasa nada */ }
+}
+
+// EL FILTRO DE FECHAS DE LA HOJA, POR LIBRO (Jose, 19-oct). La Hoja se desmonta al ir a otra pantalla
+// (Auditoría, Notas…); el filtro no debe perderse por eso. Vive aquí, en memoria, uno por libro, hasta
+// que se recarga la página. Nada va al navegador.
+const dateFilters = new Map<number, DateFilter>();
+export const rememberedDateFilter = (book: number | null): DateFilter => (book == null ? null : dateFilters.get(book) ?? null);
+export function rememberDateFilter(book: number | null, f: DateFilter) {
+  if (book == null) return;
+  if (f) dateFilters.set(book, f); else dateFilters.delete(book);
 }

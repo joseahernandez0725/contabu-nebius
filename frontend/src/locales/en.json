@@ -987,8 +987,6 @@
     "fromRule": "Comes from a rule — click to see which",
     "manualClick": "Written by hand — click to follow the rule again",
     "subcategory": "Subcategory",
-    "note": "Note",
-    "notePlaceholder": "add a note…",
     "formulaLabel": "Cell content",
     "formulaEmpty": "Select a cell to see its full content",
     "section": {
@@ -1052,7 +1050,9 @@
       "bankKeep": "Keep it (clear the bank's mark)",
       "bankDelete": "Delete it from the book (the bank withdrew it)",
       "bankDeleteConfirm": "Delete this transaction? The bank withdrew it. This can't be undone.",
-      "goToRule": "Go to the rule"
+      "goToRule": "Go to the rule",
+      "note": "Note…",
+      "bookNote": "Book note about this merchant…"
     },
     "case": {
       "asis": "Text as written",
@@ -1107,7 +1107,8 @@
       "chart": "Chart of accounts…",
       "language": "Language",
       "shortcuts": "Keyboard shortcuts",
-      "shortcutsText": "Type on a cell — starts editing right away (no Enter needed)\nEnter / F2 / double-click — edit the cell\nArrows while typing — save and move\nTab — save and move right\nTab on a gray suggestion — use it\n→ at the end of a gray suggestion — fill it in and keep typing\nDelete at the end of a gray suggestion — drop it\nEscape — cancel the edit\nCtrl+C / Ctrl+V — copy / paste (also a range)\nDelete — clear the selected cells\nDrag the corner of a cell — fill (like Excel)\nCtrl+Z — undo\nRight-click — more options for the cell"
+      "shortcutsText": "Type on a cell — starts editing right away (no Enter needed)\nEnter / F2 / double-click — edit the cell\nArrows while typing — save and move\nTab — save and move right\nTab on a gray suggestion — use it\n→ at the end of a gray suggestion — fill it in and keep typing\nDelete at the end of a gray suggestion — drop it\nEscape — cancel the edit\nCtrl+C / Ctrl+V — copy / paste (also a range)\nDelete — clear the selected cells\nDrag the corner of a cell — fill (like Excel)\nCtrl+Z — undo\nRight-click — more options for the cell",
+      "newBookNote": "New book note…"
     },
     "undoFormat_one": "format {{count}} row",
     "undoFormat_other": "format {{count}} rows",
@@ -1134,7 +1135,27 @@
     "noAccounts": "No accounts in this book yet.",
     "searchHint": "Ctrl+F to search · Enter: next · Shift+Enter: previous · Esc: clear",
     "searchCount": "{{n}} of {{m}}",
-    "searchNone": "0 found"
+    "searchNone": "0 found",
+    "hasNote": "This transaction has a note — click to read or edit it in the panel",
+    "clearAccounts": "Show all accounts",
+    "bookNoteHint": "New book note — something about this book you want kept in mind",
+    "dates": {
+      "label": "Dates",
+      "all": "All dates",
+      "thisMonth": "This month",
+      "lastMonth": "Last month",
+      "thisQuarter": "This quarter",
+      "thisYear": "This year",
+      "lastYear": "Last year",
+      "custom": "Custom range",
+      "from": "From",
+      "to": "To",
+      "apply": "Apply",
+      "clear": "Clear the date filter",
+      "since": "From {{d}}",
+      "until": "Until {{d}}"
+    },
+    "bookNote": "Book note"
   },
   "common": {
     "loading": "Loading…",
@@ -1147,7 +1168,8 @@
     "account": "Account",
     "total": "Total",
     "txs_one": "{{count}} tx",
-    "txs_other": "{{count}} txs"
+    "txs_other": "{{count}} txs",
+    "emptyRange": "Nothing categorized in these dates."
   },
   "company": {
     "add": "Add business",

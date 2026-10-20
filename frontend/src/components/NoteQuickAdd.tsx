@@ -16,12 +16,15 @@ import { BTN_GHOST, BTN_PRIMARY } from "./PageKit";
 
 type Draft = { kind: BookNoteKind; priority: BookNotePriority; text: string; merchant: string; valid_from: string; valid_to: string };
 
-export default function NoteQuickAdd({ merchant, onClose, onSaved }: {
+export default function NoteQuickAdd({ merchant, onClose, onSaved, onOpenNotes }: {
   /** Comercio para PRELLENAR el campo (p. ej. el de la fila donde se pidió la nota); el bookkeeper lo puede borrar o cambiar. */
   merchant?: string | null;
   onClose: () => void;
   /** Tras guardar, por si quien abrió la ventana necesita refrescar algo (p. ej. la columna del puntito). */
   onSaved?: (note: BookNote) => void;
+  /** "Abrir en Notas →" deja la nota elegida (`openNoteNext`) y llama esto para IR a la página de Notas: quien
+   *  abre la ventana es quien sabe navegar (19-oct, Movimientos: desde la Hoja solo cerraba la ventana). */
+  onOpenNotes?: () => void;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<Draft>({ kind: "keep_in_mind", priority: "normal", text: "", merchant: merchant ?? "", valid_from: "", valid_to: "" });
@@ -65,7 +68,7 @@ export default function NoteQuickAdd({ merchant, onClose, onSaved }: {
             {saved.kind === "keep_in_mind" && <p className="text-xs text-slate-500">{t("notesQuick.willRead")}</p>}
             <div className="flex items-center gap-2 pt-1">
               <button className={BTN_PRIMARY} onClick={onClose}>{t("notesQuick.done")}</button>
-              <button className={BTN_GHOST} onClick={() => { openNoteNext(saved.id); onClose(); }}>{t("notesQuick.openInNotes")}</button>
+              <button className={BTN_GHOST} onClick={() => { openNoteNext(saved.id); onClose(); onOpenNotes?.(); }}>{t("notesQuick.openInNotes")}</button>
             </div>
           </div>
         ) : (

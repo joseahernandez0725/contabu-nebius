@@ -7,7 +7,7 @@ import {
   decideBankRemoved, getBankConnections, syncBankConnection, BankApiError, getTransactionFlags,
   type FlagLevel,
   type BankConnection, type BankSync,
-  setTransactionLabels, applyCellFormat, type ChartOfAccounts,
+  setTransactionLabels, applyCellFormat, type ChartOfAccounts, previewRule, currentCompanyId,
 } from "../api";
 import type { CellFormat, SheetLabel, SheetRow } from "../types";
 import { CATEGORY_EDITOR, categoryEditors, setEditorChart } from "./CategoryEditor";
@@ -33,7 +33,9 @@ function timeAgo(iso: string, lang: string): string {
 
 const SHEET_EDITORS = { ...categoryEditors, ...textEditors };
 import Pivot from "./Pivot";
-import { emptySpot, restoreSpot, trackScroll, type GridSpot } from "./gridMemory";
+import { emptySpot, restoreSpot, trackScroll, rememberedDateFilter, rememberDateFilter, type GridSpot } from "./gridMemory";
+import { DateFilterButton, dateRangeOf, inRange, type DateFilter } from "./DateFilter";
+import NoteQuickAdd from "./NoteQuickAdd";
 import RulesSheet, { type RulesCommands } from "./RulesSheet";
 
 /**
@@ -60,15 +62,11 @@ const MANUAL_CSS = ".rgCell.cb-manual{background:rgba(250,204,21,.18)!important}
   + ".rgCell.cb-hit-cur{background:rgba(251,191,36,.55)!important;box-shadow:inset 0 0 0 2px #d97706}";
 
 // LAS COLUMNAS LLENAN EL ANCHO (18-oct, ronda de diseño): desde que la Observación salió el 13-oct,
-// ese espacio quedaba en blanco a la derecha de las 6 columnas. Anchos base (iguales a los de antes)
-// de las 4 columnas que NO crecen; el sobrante del contenedor se reparte entre Descripción y Nota.
+// ese espacio quedaba en blanco a la derecha de las columnas. Anchos base (iguales a los de antes)
+// de las 4 columnas que NO crecen; TODO el sobrante del contenedor va a Descripción (19-oct: la columna
+// Nota salió; la nota se escribe en el panel lateral y la fila con nota lleva un 📝 en su Descripción).
 const FIXED_COLS_WIDTH = 116 + 120 + 190 + 165; // date + amount + category + subcategory
 const BASE_DESC_SIZE = 360;
-const BASE_NOTE_SIZE = 220;
-// Tope de lo que crece Descripción antes de que el resto empiece a ir a Nota — de sobra para que la
-// descripción del banco + el texto agregado + las etiquetas no se corten en una pantalla ancha normal;
-// solo en una ventana MUY ancha (o con el panel lateral cerrado) el sobrante sigue a Nota.
-const DESC_MAX_EXTRA = 400;
 // Ancho aproximado de lo que RevoGrid dibuja fuera de las columnas (números de fila + la barra de
 // scroll): no hay una API para leerlo exacto, así que es una estimación — de sobrar unos px, quedan
 // en blanco como antes (nunca un scroll horizontal nuevo); verificado contra
@@ -105,7 +103,7 @@ function downloadSheetCsv(rows: SheetRow[]) {
 }
 
 /** El texto de cada columna VISIBLE en el que busca Ctrl+F (lo que el bookkeeper lee en la celda). */
-const SEARCH_PROPS = ["date", "description_extra", "amount", "category", "subcategory", "note"] as const;
+const SEARCH_PROPS = ["date", "description_extra", "amount", "category", "subcategory"] as const;
 function searchText(r: SheetRow, prop: string): string {
   switch (prop) {
     case "date": return r.date ? `${r.date} ${new Date(r.date + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" })}` : "";
@@ -117,6 +115,12 @@ function searchText(r: SheetRow, prop: string): string {
     default: return String((r as any)[prop] ?? "");
   }
 }
+/** La búsqueda encuentra la fila por sus columnas, su cuenta o SU NOTA (19-oct: la nota ya no es columna,
+ *  pero se sigue buscando; la coincidencia se marca en la Descripción, donde está el 📝). */
+const noteHas = (r: SheetRow, q: string) => (r.note ?? "").toLowerCase().includes(q);
+const matchesSearch = (r: SheetRow, q: string) =>
+  SEARCH_PROPS.some((p) => searchText(r, p).toLowerCase().includes(q)) ||
+  (r.bank_account ?? "").toLowerCase().includes(q) || noteHas(r, q);
 
 /** IR A UNA TRANSACCIÓN desde otra pantalla (Auditoría, 14-oct). `n` cambia en cada pedido, así el
  *  mismo id pedido dos veces vuelve a llevar ahí. Sin `id` y con `onlyPending` (el Resumen): la hoja
@@ -136,6 +140,14 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   // CUENTAS con casillas (Jose, 4-oct): ver 2 o más a la vez. Vacío = todas. El Pivote usa el mismo.
   const [acctSel, setAcctSel] = useState<string[]>([]);
   const [acctOpen, setAcctOpen] = useState(false);
+  // FECHAS (Jose, 19-oct): junto a las cuentas y con ellas; también filtra el Pivote. Se recuerda por libro
+  // mientras no se recargue la página (`gridMemory.ts`), aunque la Hoja se desmonte al ir a otra pantalla.
+  const [dateFilter, setDateFilterState] = useState<DateFilter>(() => rememberedDateFilter(currentCompanyId()));
+  const setDateFilter = useCallback((f: DateFilter) => { setDateFilterState(f); rememberDateFilter(currentCompanyId(), f); }, []);
+  const dateRange = dateRangeOf(dateFilter);
+  // NOTA DEL LIBRO desde la Hoja (Jose, 19-oct; `NoteQuickAdd` es de Auditoría/IA): `merchant` = el comercio
+  // de la fila (clic derecho) o null (menú Edición y botón 📌).
+  const [quickNote, setQuickNote] = useState<{ merchant: string | null } | null>(null);
   // "IR A LA REGLA" desde una fila (clic derecho): la pestaña Reglas abre con esa regla a la vista.
   // `n` cambia en cada pedido, así dos clics seguidos a la misma regla vuelven a llevar ahí.
   const [goRule, setGoRule] = useState<{ id: number; n: number } | null>(null);
@@ -310,16 +322,22 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     }).join("\n");
   }, [rows]);
 
-  const visible = useMemo(() => {
+  // Lo que dejan ver las cuentas y las fechas: de aquí salen también los conteos de "Pendientes" y
+  // "Por revisar", para que el número del botón sea el que se ve al pulsarlo.
+  const scoped = useMemo(() => {
     let out = rows ?? [];
     if (acctSel.length) out = out.filter((r) => acctSel.includes(r.bank_account ?? ""));
+    if (dateRange) out = out.filter((r) => inRange(r.date, dateRange));
+    return out;
+  }, [rows, acctSel, dateRange?.from, dateRange?.to]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const visible = useMemo(() => {
+    let out = scoped;
     if (onlyFlagged) out = out.filter((r) => flags[r.id]);
     if (onlyPending) out = out.filter((r) => !r.category);
-    // Busca en TODAS las columnas visibles + la cuenta (Jose, 4-oct); antes solo descripción y categoría.
+    // Busca en TODAS las columnas visibles + la cuenta (Jose, 4-oct) + la nota (19-oct).
     const q = search.trim().toLowerCase();
-    if (q) out = out.filter((r) =>
-      SEARCH_PROPS.some((p) => searchText(r, p).toLowerCase().includes(q)) ||
-      (r.bank_account ?? "").toLowerCase().includes(q));
+    if (q) out = out.filter((r) => matchesSearch(r, q));
     // La grilla necesita los valores ya planos para pintarlos y editarlos.
     // `_rowClass` pinta la fila COMPLETA (borde a borde). Estilar dentro de cada `cellTemplate`
     // no alcanzaba: dejaba sin color la columna de observación y el espacio sobrante a la derecha.
@@ -328,21 +346,30 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       _flag: flags[r.id] ?? "",
       _rowClass: rowClassOf(r),
     }));
-  }, [rows, acctSel, onlyFlagged, onlyPending, search, lang, flags]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scoped, onlyFlagged, onlyPending, search, lang, flags]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Las CELDAS que coinciden, en orden de lectura (fila por fila, de izquierda a derecha): son las que
   // se resaltan y por las que se navega con Enter / Shift+Enter ("N de M").
+  // Lo hallado SOLO en la nota se marca en la Descripción (donde está el 📝) con `note: true`: al ir ahí
+  // se abre el panel, que es donde se lee la nota.
   const hits = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return [] as { id: number; prop: string; y: number }[];
-    const out: { id: number; prop: string; y: number }[] = [];
-    visible.forEach((r, y) => { for (const p of SEARCH_PROPS) if (searchText(r, p).toLowerCase().includes(q)) out.push({ id: r.id, prop: p, y }); });
+    type Hit = { id: number; prop: string; y: number; note: boolean };
+    if (!q) return [] as Hit[];
+    const out: Hit[] = [];
+    visible.forEach((r, y) => {
+      for (const p of SEARCH_PROPS) {
+        const own = searchText(r, p).toLowerCase().includes(q);
+        const inNote = p === "description_extra" && !own && noteHas(r, q);
+        if (own || inNote) out.push({ id: r.id, prop: p, y, note: inNote });
+      }
+    });
     return out;
   }, [visible, search]);
   useEffect(() => { setHit(0); }, [search]);
 
-  const flagged = (rows ?? []).filter((r) => flags[r.id]).length;
-  const pending = (rows ?? []).filter((r) => !r.category).length;
+  const flagged = scoped.filter((r) => flags[r.id]).length;
+  const pending = scoped.filter((r) => !r.category).length;
 
   /** Una edición: se manda a la base y se recarga. Si falla, se revierte recargando. */
   const { push: pushUndo, undo, canUndo, last: lastUndo } = useUndo((m) => setError(
@@ -357,13 +384,13 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
 
   /** Guarda UNA celda (edición, pegado, borrado o "Pegar" del menú) y deja cómo deshacerla. */
   const saveCell = useCallback(async (model: any, prop: string, raw: unknown, reload = true): Promise<boolean> => {
-    if (!model?.id || !["category", "subcategory", "note", "description_extra"].includes(prop)) return false;
+    if (!model?.id || !["category", "subcategory", "description_extra"].includes(prop)) return false;
     const value = String(raw ?? "").trim();
     // OJO: RevoGrid ya aplicó el valor nuevo a `model` ANTES de disparar `afteredit`, así que
     // comparar contra `model[prop]` siempre da igual y descartaría toda edición (bug 27-sep).
     // El valor ANTERIOR real está en el estado de React, que es la copia de lo que hay en la base.
     const row = rowsRef.current?.find((r) => r.id === model.id);
-    const before = row?.[prop as "category" | "subcategory" | "note" | "description_extra"];
+    const before = row?.[prop as "category" | "subcategory" | "description_extra"];
     if (value === (before ?? "")) return false;
     // Supr sobre un rango no "borra" categorías: quedarían en "" (no es Pendiente de verdad).
     if (prop === "category" && !value) { load(); return false; }
@@ -388,7 +415,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         undoCategorization(model.id, t("sheet.undoCell", { defaultValue: "{{col}} of {{what}}", col: t(`sheet.${prop}`), what }));
       } else {
         const prev = before ?? "";
-        pushUndo({ label: t("sheet.undoCell", { defaultValue: "{{col}} of {{what}}", col: t(prop === "note" ? "sheet.note" : "sheet.description"), what }),
+        pushUndo({ label: t("sheet.undoCell", { defaultValue: "{{col}} of {{what}}", col: t("sheet.description"), what }),
                    run: async () => { await updateTransaction(model.id, { [prop]: prev } as any); load(); } });
       }
       if (reload) load();
@@ -430,6 +457,8 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
 
   const rowsRef = useRef<SheetRow[] | null>(null);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
+  const visibleRef = useRef<SheetRow[]>([]);
+  useEffect(() => { visibleRef.current = visible; }, [visible]);
 
   const onEditRef = useRef(onEdit);
   useEffect(() => { onEditRef.current = onEdit; }, [onEdit]);
@@ -476,27 +505,28 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     (el as any).__contabuHandler = handler;
     el.addEventListener("afteredit", handler);
 
-    // El bookkeeper sigue pudiendo arrastrar el borde de Descripción o Nota: ese ancho a mano gana
-    // sobre el reparto automático del sobrante (18-oct).
+    // El bookkeeper sigue pudiendo arrastrar el borde de Descripción: ese ancho a mano gana sobre el
+    // reparto automático del sobrante (18-oct).
     const onColResize = (e: Event) => {
       const cols = Object.values((e as CustomEvent).detail ?? {}) as { prop?: string; size?: number }[];
-      const changed: Partial<Record<"description_extra" | "note", number>> = {};
-      for (const c of cols) {
-        if ((c.prop === "description_extra" || c.prop === "note") && c.size) changed[c.prop] = c.size;
-      }
-      if (Object.keys(changed).length) setManualFlexSize((prev) => ({ ...prev, ...changed }));
+      const desc = cols.find((c) => c.prop === "description_extra" && c.size);
+      if (desc?.size) setManualDescSize(desc.size);
     };
     (el as any).__contabuColResize = onColResize;
     el.addEventListener("aftercolumnresize", onColResize);
 
     // Selección: el rango que el bookkeeper marcó arrastrando (o la celda enfocada).
-    const onRange = (e: Event) => {
+    // 19-oct: el índice es el de la fila EN LA GRILLA (filtrada y ordenada); antes se buscaba en todas las
+    // filas del libro y, con un filtro o un orden puesto, la selección caía en OTRAS transacciones.
+    const onRange = async (e: Event) => {
       const d = (e as CustomEvent).detail ?? {};
-      const rows = (rowsRef.current ?? []);
       const a = d.y ?? d.rowIndex, b = d.y1 ?? d.y ?? d.rowIndex;
       if (a == null) return;
       const [lo, hi] = [Math.min(a, b), Math.max(a, b)];
-      setSelected(rows.slice(lo, hi + 1).map((r) => r.id));
+      let shown: any[] = [];
+      try { shown = (await (el as any).getVisibleSource?.()) ?? []; } catch { /* aún no lista */ }
+      if (!shown.length) shown = visibleRef.current;
+      setSelected(shown.slice(lo, hi + 1).map((r) => r?.id).filter((id): id is number => id != null));
     };
     // La celda ENFOCADA (no el rango): de aquí sale la barra de fórmulas.
     const onFocus = (e: Event) => {
@@ -591,15 +621,24 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   // categoría y subcategoría. Un resaltado de fila que ponga el bookkeeper gana sobre este tinte.
   const manualCell = (p: any) => (p?.model?.source === "manual" ? { class: { "cb-manual": true } } : {});
 
-  // El sobrante de ancho sobre las 6 columnas fijas (lo mide un ResizeObserver más abajo, sobre
-  // `hostRef`) y lo que el bookkeeper fijó A MANO arrastrando el borde de Descripción o Nota — eso
-  // gana sobre el reparto automático. RevoGrid 4.28 trae un plugin de `stretch`, pero verificado en
-  // su código (`column.stretch.plugin`) que solo estira la ÚLTIMA columna; aquí hace falta repartir
-  // en dos (primero Descripción, luego Nota), así que no alcanza.
+  // El sobrante de ancho sobre las columnas fijas (lo mide un ResizeObserver más abajo, sobre `hostRef`)
+  // va entero a Descripción; lo que el bookkeeper fijó A MANO arrastrando su borde gana. RevoGrid 4.28
+  // trae un plugin de `stretch`, pero verificado en su código (`column.stretch.plugin`) que solo estira
+  // la ÚLTIMA columna, y Descripción es la segunda: por eso se mide aquí.
   const [flexExtra, setFlexExtra] = useState(0);
-  const [manualFlexSize, setManualFlexSize] = useState<Partial<Record<"description_extra" | "note", number>>>({});
-  const descSize = manualFlexSize.description_extra ?? (BASE_DESC_SIZE + Math.min(flexExtra, DESC_MAX_EXTRA));
-  const noteSize = manualFlexSize.note ?? (BASE_NOTE_SIZE + Math.max(flexExtra - DESC_MAX_EXTRA, 0));
+  const [manualDescSize, setManualDescSize] = useState<number | null>(null);
+  const descSize = manualDescSize ?? (BASE_DESC_SIZE + flexExtra);
+
+  // ABRIR EL PANEL EN UNA FILA aunque en Ver esté apagado (clic derecho → "Nota…", el 📝, una
+  // coincidencia de la búsqueda que está solo en la nota): es donde se lee y se escribe la nota (19-oct).
+  const openPanelFor = useCallback((id: number, prop: string, y: number) => {
+    setFocus({ id, prop, row: y + 1 });
+    setSelected([id]);
+    setPanelClosedFor(null);
+    setPanelForcedFor(id);
+  }, []);
+  const openPanelRef = useRef(openPanelFor);
+  useEffect(() => { openPanelRef.current = openPanelFor; }, [openPanelFor]);
 
   const columns = useMemo(() => ([
     { prop: "date", name: t("sheet.date", { defaultValue: "Date" }), size: 116, sortable: true, readonly: true,
@@ -627,28 +666,39 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     { prop: "description_extra", name: t("sheet.description", { defaultValue: "Description" }),
       size: descSize, sortable: true, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => {
-        const kids: any[] = [
+        // El texto se corta con "…" y lo que va detrás (etiquetas, 📝) queda siempre a la vista.
+        const text: any[] = [
           h("span", { style: styleOf(p.model, "description") }, p.model.description ?? ""),
         ];
         if (p.model.description_extra) {
           // " - " + el texto del bookkeeper, un poco TRANSLÚCIDO (Jose, 2-oct). Antes iba verde, en
           // negrita y tras una raya vertical. Sigue distinguiéndose del texto del banco (más claro y
           // tras el guion), que es el punto: nunca dudar de qué dijo el banco y qué escribiste tú.
-          kids.push(h("span", {
+          text.push(h("span", {
             title: t("sheet.yourText", { defaultValue: "Text you added — rules match on it too" }),
             style: { ...styleOf(p.model, "description"), opacity: 0.55, whiteSpace: "pre" },
           }, ` - ${p.model.description_extra}`));
         } else {
-          kids.push(h("span", {
+          text.push(h("span", {
             style: { marginInlineStart: "6px", color: "#c9c2b2", fontStyle: "italic", fontSize: "12px" },
           }, t("sheet.addText", { defaultValue: "+ add" })));
         }
+        const kids: any[] = [h("span", { style: { flex: "0 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ...text)];
         for (const l of (p.model.labels ?? []) as SheetLabel[]) {
           kids.push(h("span", {
             title: l.name,
             style: { marginInlineStart: "6px", background: l.color, color: "#fff", borderRadius: "4px",
-                     padding: "0 6px", fontSize: "10.5px", fontWeight: 700, whiteSpace: "nowrap" },
+                     padding: "0 6px", fontSize: "10.5px", fontWeight: 700, whiteSpace: "nowrap", flex: "none" },
           }, l.name));
+        }
+        // LA FILA TIENE NOTA (19-oct): una marca discreta, con la nota de tooltip; el clic abre el panel,
+        // donde se lee entera y se edita. La columna Nota salió de la Hoja.
+        if (p.model.note) {
+          kids.push(h("span", {
+            title: p.model.note, "aria-label": t("sheet.hasNote"),
+            onClick: () => openPanelRef.current(p.model.id, "description_extra", p.rowIndex ?? 0),
+            style: { marginInlineStart: "6px", fontSize: "11px", opacity: 0.7, cursor: "pointer", flex: "none" },
+          }, "📝"));
         }
         return h("span", { style: { display: "flex", alignItems: "center", overflow: "hidden" } }, ...kids);
       } },
@@ -704,16 +754,8 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     { prop: "subcategory", name: t("sheet.subcategory", { defaultValue: "Subcategory" }), size: 165,
       cellProperties: manualCell, editor: TEXT_EDITOR,
       cellTemplate: (h: any, p: any) => h("span", { style: styleOf(p.model, "subcategory") }, applyCase(p.model.subcategory, caseStyle)) },
-    // NOTA: texto libre del bookkeeper sobre ESA línea. Lo del agente ya no es columna: vive en el
-    // panel lateral (13-oct).
-    { prop: "note", name: t("sheet.note", { defaultValue: "Note" }), size: noteSize, editor: TEXT_EDITOR,
-      cellTemplate: (h: any, p: any) => h("span", {
-        title: p.model.note || "",
-        style: { ...styleOf(p.model, "note"), whiteSpace: "normal", lineHeight: 1.35,
-                 display: "block", color: p.model.note ? "#0f172a" : "#b9b2a2",
-                 fontStyle: p.model.note ? "normal" : "italic", fontSize: "12.5px" },
-      }, p.model.note || t("sheet.notePlaceholder", { defaultValue: "add a note…" })) },
-  ]), [t, caseStyle, descSize, noteSize]);
+    // La NOTA de la fila ya no es columna (19-oct): se escribe en el panel lateral y aquí queda el 📝.
+  ]), [t, caseStyle, descSize]);
 
   // BARRA DE FÓRMULAS: referencia (columna + fila) y el contenido COMPLETO de la celda enfocada.
   // Solo muestra; editar sigue siendo en la celda. En Descripción: "banco - texto agregado".
@@ -775,10 +817,20 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 0;
-      setFlexExtra(Math.max(0, Math.round(w - FIXED_COLS_WIDTH - ROW_HEADER_AND_SCROLLBAR - BASE_DESC_SIZE - BASE_NOTE_SIZE)));
+      setFlexExtra(Math.max(0, Math.round(w - FIXED_COLS_WIDTH - ROW_HEADER_AND_SCROLLBAR - BASE_DESC_SIZE)));
     });
     ro.observe(el);
     return () => ro.disconnect();
+  }, []);
+  /** La ventana de NOTA DEL LIBRO. Con una fila, el comercio va prellenado con la MISMA palabra clave que
+   *  sugiere "Crear regla" (sin fechas, IDs ni números de rastreo): la nota caza por ese texto dentro de la
+   *  descripción, y la descripción entera solo cazaría a esta fila. */
+  const openBookNote = useCallback(async (row: SheetRow | null) => {
+    if (!row) { setQuickNote({ merchant: null }); return; }
+    let merchant = (row.description ?? "").slice(0, 80);
+    try { const p = await previewRule({ transaction_id: row.id }); if (p.keyword) merchant = p.keyword.slice(0, 80); }
+    catch { /* sin sugerencia: va la descripción del banco, editable */ }
+    setQuickNote({ merchant });
   }, []);
   const [menu, setMenu] = useState<{ at: { x: number; y: number }; model: any; prop: string; row: number } | null>(null);
   const [viewer, setViewer] = useState<{ title: string; text: string } | null>(null);
@@ -789,7 +841,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     const c = await cellFromEvent(e.nativeEvent);
     if (c) setMenu({ at, model: c.model, prop: c.prop, row: c.y });
   }, [tab]);
-  const EDITABLE = ["category", "subcategory", "note", "description_extra"];
+  const EDITABLE = ["category", "subcategory", "description_extra"];
   const sheetCellText = (m: any, prop: string) => prop === "description_extra"
     ? [m.description, m.description_extra].filter(Boolean).join(" - ")
     : String(m[prop] ?? "");
@@ -829,6 +881,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     );
     items.push({ label: t("sheet.menu.newRule", { defaultValue: "Create a rule from this row" }),
       onClick: () => setRuleDialog({ seed: m as SheetRow }) });
+    // LAS NOTAS (19-oct): la de ESTA fila se escribe en el panel; la del libro, en su ventana.
+    items.push("sep",
+      { label: t("sheet.menu.note"), onClick: () => openPanelFor(m.id, prop, row) },
+      { label: t("sheet.menu.bookNote"), onClick: () => void openBookNote(m as SheetRow) });
     items.push("sep",
       { label: lastUndo ? t("sheet.undoWhat", { defaultValue: "Undo: {{what}}", what: lastUndo }) : t("sheet.undo", { defaultValue: "Undo" }),
         hint: "Ctrl+Z", disabled: !canUndo, onClick: () => void undo() },
@@ -884,7 +940,8 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       if (!isPin) await grid.scrollToColumnProp?.(h.prop);
       await grid.setCellsFocus?.({ x, y: h.y }, { x, y: h.y }, isPin ? "colPinStart" : "rgCol", "rgRow");
     } catch { /* la grilla aún no está lista */ }
-  }, [hits, pinDesc, columns]);
+    if (h.note) openPanelFor(h.id, h.prop, h.y);   // lo hallado está en la nota: se lee en el panel
+  }, [hits, pinDesc, columns, openPanelFor]);
 
   // IR A LA TRANSACCIÓN (Jose, 14-oct; Buzón 8-oct): desde Auditoría se llega a la fila EXACTA.
   // Paso 1, con las filas ya cargadas: si no existe, se avisa; si existe, se quita SOLO lo que la
@@ -893,17 +950,19 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   useEffect(() => {
     if (!focusTx || !rows) return;
     onFocusTxDone?.();
+    // Desde el Resumen: la 1ª Pendiente DENTRO de las fechas elegidas; si no hay ninguna, la 1ª de todas.
     const r = focusTx.id != null ? rows.find((x) => x.id === focusTx.id)
-      : focusTx.onlyPending ? rows.find((x) => !x.category) : undefined;
+      : focusTx.onlyPending ? (rows.find((x) => !x.category && inRange(x.date, dateRange)) ?? rows.find((x) => !x.category))
+      : undefined;
     if (focusTx.onlyPending) { setTab("sheet"); setOnlyPending(true); }
     if (!r) { if (focusTx.id != null) setError(t("sheet.focusGone")); return; }
     setTab("sheet");
     if (acctSel.length && !acctSel.includes(r.bank_account ?? "")) setAcctSel([]);
+    if (!inRange(r.date, dateRange)) setDateFilter(null);
     if (onlyPending && r.category) setOnlyPending(false);
     if (onlyFlagged && !flags[r.id]) setOnlyFlagged(false);
     const q = search.trim().toLowerCase();
-    if (q && !(SEARCH_PROPS.some((p) => searchText(r, p).toLowerCase().includes(q))
-               || (r.bank_account ?? "").toLowerCase().includes(q))) setSearch("");
+    if (q && !matchesSearch(r, q)) setSearch("");
     setGoTo(r.id);
   }, [focusTx, rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1030,6 +1089,8 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             disabled: tab !== "sheet" || selRow?.source !== "rule" || selRow?.matched_rule_id == null,
             onClick: () => { if (selRow?.matched_rule_id != null) { setGoRule({ id: selRow.matched_rule_id, n: Date.now() }); setTab("rules"); } } },
       "sep",
+      { label: t("sheet.mb.newBookNote"), onClick: () => void openBookNote(null) },
+      "sep",
       { label: t("sheet.mb.find"), hint: "Ctrl+F", disabled: tab !== "sheet",
         onClick: () => setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 0) },
     ] },
@@ -1152,17 +1213,23 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         </div>
 
         {/* CUENTAS con casillas: el botón dice cuáles están activas (todas, una, dos, o "N de M"). */}
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
           <button type="button" onClick={() => setAcctOpen((o) => !o)} aria-expanded={acctOpen}
             title={acctSel.length ? acctSel.join(" · ") : undefined}
             style={{ ...input, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
                      borderColor: acctSel.length ? "#1A8754" : "#d5d0c4", color: acctSel.length ? "#1A8754" : undefined,
-                     fontWeight: acctSel.length ? 600 : 400 }}>
+                     fontWeight: acctSel.length ? 600 : 400, paddingInlineEnd: acctSel.length ? 28 : undefined }}>
             {acctSel.length === 0 ? t("sheet.allAccounts", { defaultValue: "All accounts" })
               : acctSel.length <= 2 ? acctSel.join(" · ")
               : t("sheet.accountsSome", { defaultValue: "{{n}} of {{m}} accounts", n: acctSel.length, m: accounts.length })}
-            <span style={{ fontSize: 10 }}>▾</span>
+            {acctSel.length === 0 && <span style={{ fontSize: 10 }}>▾</span>}
           </button>
+          {/* Filtro activo → se ve cuál y se quita con una × (19-oct, igual que el de fechas). */}
+          {acctSel.length > 0 && (
+            <button type="button" onClick={() => setAcctSel([])} aria-label={t("sheet.clearAccounts")} title={t("sheet.clearAccounts")}
+              style={{ position: "absolute", insetInlineEnd: 6, border: 0, background: "transparent", cursor: "pointer",
+                       color: "#1A8754", fontSize: 15, lineHeight: 1, padding: "0 3px" }}>×</button>
+          )}
           {acctOpen && (
             <>
               <div onClick={() => setAcctOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
@@ -1194,6 +1261,9 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             </>
           )}
         </div>
+
+        {/* FECHAS (19-oct): atajos o un rango propio; se combina con todo lo demás y filtra el Pivote. */}
+        <DateFilterButton value={dateFilter} onChange={setDateFilter} inputStyle={input} />
 
         {/* BUSCAR: Ctrl+F lo enfoca · Enter / Shift+Enter siguiente / anterior · Esc limpia. */}
         <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -1244,7 +1314,17 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
           </button>
         )}
 
-        {toolbar && tab === "sheet" && pending > 0 && (
+        {/* 📌 NOTA DEL LIBRO (19-oct): lo que el bookkeeper sabe del libro, sin salir de la Hoja. Con texto y
+            junto a "Crear regla" (Jose: "el botón está muy escondido" cuando era solo el 📌). */}
+        {toolbar && tab === "sheet" && (
+          <button onClick={() => void openBookNote(null)} title={t("sheet.bookNoteHint")}
+            style={{ border: "1px solid #d5d0c4", background: "#fff", borderRadius: 8, padding: "5px 12px",
+                     fontWeight: 600, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+            📌 {t("sheet.bookNote")}
+          </button>
+        )}
+
+        {toolbar && tab === "sheet" && (pending > 0 || onlyPending) && (
           <button onClick={() => setOnlyPending((v) => !v)}
             style={{ ...input, cursor: "pointer", fontWeight: 600,
                      border: "1px solid " + (onlyPending ? "#dc2626" : "#d5d0c4"),
@@ -1254,7 +1334,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
           </button>
         )}
 
-        {toolbar && tab === "sheet" && flagged > 0 && (
+        {toolbar && tab === "sheet" && (flagged > 0 || onlyFlagged) && (
           <button onClick={() => setOnlyFlagged((v) => !v)}
             style={{ ...input, cursor: "pointer", fontWeight: 600,
                      border: "1px solid " + (onlyFlagged ? "#f4b400" : "#d5d0c4"),
@@ -1404,7 +1484,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
               toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands}
               focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} showPriority={showPriority} />
           : tab === "pivot"
-          ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot accounts={acctSel} /></div>
+          ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot accounts={acctSel} range={dateRange} /></div>
           : rows === null
           ? <p style={{ padding: 16, color: "#5b6b62" }}>{t("common.loading", { defaultValue: "Loading…" })}</p>
           : <RevoGrid
@@ -1427,7 +1507,9 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
           onClose={() => setPanelClosedFor(panelTx)}
           onGoRule={(id) => { setGoRule({ id, n: Date.now() }); setTab("rules"); }}
           onOpenAudit={() => onNavigate?.("audit")}
-          onChanged={loadFlags} />
+          // Recarga las FILAS (y con ellas los puntitos): la nota se escribe en el panel y su 📝 y la
+          // búsqueda viven en la Hoja (19-oct).
+          onChanged={load} />
       )}
       </div>
       {menu && <CellMenu at={menu.at} items={menuItems(menu.model, menu.prop, menu.row)} onClose={() => setMenu(null)} />}
@@ -1444,6 +1526,12 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             setTimeout(() => setSaving(null), 4000);
             load();
           }} />
+      )}
+      {/* Al guardar, la Hoja sigue igual detrás (la ventana es un portal encima): mismo lugar, misma fila.
+          Se recargan los puntitos y el panel, que muestran las notas del libro de cada fila. */}
+      {quickNote && (
+        <NoteQuickAdd merchant={quickNote.merchant} onClose={() => setQuickNote(null)} onSaved={() => loadFlags()}
+          onOpenNotes={onNavigate ? () => onNavigate("notes") : undefined} />
       )}
       {viewer && <CellViewer title={viewer.title} text={viewer.text} onClose={() => setViewer(null)}
                     closeLabel={t("sheet.menu.close", { defaultValue: "Close" })} />}

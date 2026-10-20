@@ -26,6 +26,8 @@ function cid(): number {
   if (companyId == null) throw new Error("Sesión no iniciada (llama a getMe primero)");
   return companyId;
 }
+/** El libro abierto, o null antes de `getMe` (Movimientos, 19-oct: la Hoja recuerda su filtro de fechas por libro). */
+export function currentCompanyId(): number | null { return companyId; }
 
 interface Me {
   user: { id: number; firebase_uid: string; email: string | null };
@@ -194,9 +196,13 @@ export interface PivotLeaf {
   amount: string; is_inflow: boolean | null; subcategory: string | null;
 }
 
-export async function getPivot(accounts: string[] = []): Promise<PivotNode[]> {
-  // Varias cuentas: ?account=A&account=B (el filtro con casillas de la hoja).
-  const qs = accounts.length ? "?" + new URLSearchParams(accounts.map((a) => ["account", a])).toString() : "";
+export async function getPivot(accounts: string[] = [], start?: string | null, end?: string | null): Promise<PivotNode[]> {
+  // Varias cuentas: ?account=A&account=B (el filtro con casillas de la hoja). `start`/`end`: el filtro de
+  // fechas de la hoja (19-oct; el backend ya los aceptaba).
+  const p = new URLSearchParams(accounts.map((a) => ["account", a]));
+  if (start) p.set("start", start);
+  if (end) p.set("end", end);
+  const qs = p.toString() ? "?" + p.toString() : "";
   const res = await fetch(`${API}/api/companies/${cid()}/pivot${qs}`, { headers: await authHeaders() });
   if (!res.ok) throw new Error("No se pudo cargar el pivote");
   return res.json();

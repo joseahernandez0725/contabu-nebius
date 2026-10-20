@@ -107,9 +107,9 @@ export default function Upload({ onDone }: { onDone: () => void }) {
       {banks.last && <SyncSummary s={banks.last} />}
       {banks.error && <div className="alert alert-error text-sm">{banks.error}</div>}
 
-      {/* 2. LOS BANCOS Y EL EXTRACTO (lista) + EL ELEGIDO (detalle) */}
+      {/* 2. LOS BANCOS Y EL EXTRACTO (lista) + EL ELEGIDO (detalle). 60/40 como Auditoría (Jose, 19-oct). */}
       <ListDetail
-        wide="detail"
+        wide="split"
         selKey={sel ?? undefined}
         list={
           <ListCard

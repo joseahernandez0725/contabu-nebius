@@ -1119,7 +1119,8 @@
     "tx": "mov.",
     "txs": "movs.",
     "txs_one": "{{count}} mov.",
-    "txs_other": "{{count}} movs."
+    "txs_other": "{{count}} movs.",
+    "emptyRange": "Nada categorizado en estas fechas."
   },
   "sheet": {
     "addLabel": "Nueva etiqueta",
@@ -1144,8 +1145,6 @@
     "newLabel": "Nombre de la etiqueta (qué significa):",
     "noRule": "Ninguna regla cubre esta transacción. Crea una en la pestaña Reglas.",
     "focusGone": "Esa transacción ya no está en este libro: quizá se borró, o el banco la retiró.",
-    "note": "Nota",
-    "notePlaceholder": "agregar una nota…",
     "formulaLabel": "Contenido de la celda",
     "formulaEmpty": "Selecciona una celda para ver su contenido completo",
     "section": {
@@ -1198,7 +1197,9 @@
       "bankKeep": "Mantenerlo (quitar la marca del banco)",
       "bankDelete": "Eliminarlo del libro (el banco lo retiró)",
       "bankDeleteConfirm": "¿Eliminar este movimiento? El banco lo retiró. No se puede deshacer.",
-      "goToRule": "Ir a la regla"
+      "goToRule": "Ir a la regla",
+      "note": "Nota…",
+      "bookNote": "Nota del libro sobre este comercio…"
     },
     "case": {
       "asis": "Texto como está escrito",
@@ -1253,7 +1254,8 @@
       "chart": "Plan de cuentas…",
       "language": "Idioma",
       "shortcuts": "Atajos de teclado",
-      "shortcutsText": "Escribir sobre una celda — empieza a editar de una vez (sin Enter)\nEnter / F2 / doble clic — editar la celda\nFlechas mientras escribes — guardar y moverse\nTab — guardar y pasar a la derecha\nTab sobre una sugerencia en gris — usarla\n→ al final de una sugerencia en gris — ponerla y seguir escribiendo\nSupr al final de una sugerencia en gris — descartarla\nEscape — cancelar la edición\nCtrl+C / Ctrl+V — copiar / pegar (también un rango)\nSupr — borrar las celdas seleccionadas\nArrastrar la esquina de una celda — rellenar (como en Excel)\nCtrl+Z — deshacer\nClic derecho — más opciones de la celda"
+      "shortcutsText": "Escribir sobre una celda — empieza a editar de una vez (sin Enter)\nEnter / F2 / doble clic — editar la celda\nFlechas mientras escribes — guardar y moverse\nTab — guardar y pasar a la derecha\nTab sobre una sugerencia en gris — usarla\n→ al final de una sugerencia en gris — ponerla y seguir escribiendo\nSupr al final de una sugerencia en gris — descartarla\nEscape — cancelar la edición\nCtrl+C / Ctrl+V — copiar / pegar (también un rango)\nSupr — borrar las celdas seleccionadas\nArrastrar la esquina de una celda — rellenar (como en Excel)\nCtrl+Z — deshacer\nClic derecho — más opciones de la celda",
+      "newBookNote": "Nueva nota del libro…"
     },
     "undoFormat_one": "formato de {{count}} fila",
     "undoFormat_other": "formato de {{count}} filas",
@@ -1280,7 +1282,27 @@
     "noAccounts": "Este libro todavía no tiene cuentas.",
     "searchHint": "Ctrl+F para buscar · Enter: siguiente · Shift+Enter: anterior · Esc: limpiar",
     "searchCount": "{{n}} de {{m}}",
-    "searchNone": "0 encontrados"
+    "searchNone": "0 encontrados",
+    "hasNote": "Este movimiento tiene una nota — clic para leerla o editarla en el panel",
+    "clearAccounts": "Ver todas las cuentas",
+    "bookNoteHint": "Nueva nota del libro — algo de este libro que quieres que se tenga en cuenta",
+    "dates": {
+      "label": "Fechas",
+      "all": "Todas las fechas",
+      "thisMonth": "Este mes",
+      "lastMonth": "Mes anterior",
+      "thisQuarter": "Este trimestre",
+      "thisYear": "Este año",
+      "lastYear": "Año anterior",
+      "custom": "Rango propio",
+      "from": "Desde",
+      "to": "Hasta",
+      "apply": "Aplicar",
+      "clear": "Quitar el filtro de fechas",
+      "since": "Desde el {{d}}",
+      "until": "Hasta el {{d}}"
+    },
+    "bookNote": "Nota del libro"
   },
   "shell": {
     "book": "Este libro",
