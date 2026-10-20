@@ -104,19 +104,23 @@ export function MoreMenu({ items, label }: { items: MoreItem[]; label?: string }
 /** La lista a la izquierda y el detalle a la derecha. En pantalla angosta, el detalle va DEBAJO y, al
  *  elegir algo (`selKey` cambia), la página baja hasta él.
  *  `wide="detail"`: cuando lo que se lee es el DETALLE (un P&L, un banco), la lista va angosta (300 px)
- *  y el detalle toma el resto. Por defecto (Auditoría) la lista es lo ancho y el detalle mide 420 px. */
+ *  y el detalle toma el resto. `wide="split"`: 60/40 (Auditoría, 19-oct) — las dos partes pesan, el
+ *  detalle queda fijo como en `wide="list"`. Por defecto (`"list"`) la lista es lo ancho y el detalle
+ *  mide 420 px. */
 export function ListDetail({ list, detail, selKey, wide = "list" }: {
-  list: ReactNode; detail: ReactNode; selKey?: unknown; wide?: "list" | "detail";
+  list: ReactNode; detail: ReactNode; selKey?: unknown; wide?: "list" | "detail" | "split";
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (selKey != null && window.innerWidth < 1024) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [selKey]);
-  const cols = wide === "detail" ? "lg:grid-cols-[300px_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1fr)_420px]";
+  const cols = wide === "detail" ? "lg:grid-cols-[300px_minmax(0,1fr)]"
+    : wide === "split" ? "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
+    : "lg:grid-cols-[minmax(0,1fr)_420px]";
   return (
     <div className={`grid gap-3 ${cols} items-start`}>
       {list}
-      <DetailCard ref={ref} sticky={wide === "list"}>{detail}</DetailCard>
+      <DetailCard ref={ref} sticky={wide !== "detail"}>{detail}</DetailCard>
     </div>
   );
 }

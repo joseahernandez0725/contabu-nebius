@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getTransactionInsight, money, resolveFinding, type FlagLevel, type TxInsight } from "../api";
+import {
+  getCompany, getTransactionInsight, money, resolveFinding, updateTransaction,
+  type FlagLevel, type TxInsight,
+} from "../api";
+import type { Company } from "../types";
 import { useAuditText, VERDICT_STYLE } from "./AuditWorkspace";
 import RuleTrace from "./RuleTrace";
 import {
@@ -14,6 +18,10 @@ import {
 //
 // 🔴 Solo lectura, más dos acciones que ya existían: "Está bien" (el mismo resolver de Auditoría) y
 // "Ver en Auditoría". El panel NO categoriza ni toca lo escrito a mano: eso se hace en la celda.
+//
+// 🔄 19-oct: "Nota de este movimiento" SÍ se edita aquí (`NoteEditor`), justo debajo del encabezado —
+// la Hoja quitó su columna "Note" (Movimientos). Se guarda sola al salir del campo o con Ctrl+Enter. Un
+// visor (rol VIEWER) la ve, no la edita (mismo candado que `Settings.tsx`: `role !== "VIEWER"`).
 
 export const LEVEL_DOT: Record<FlagLevel, string> = { problem: DOT.problem, review: DOT.review, info: DOT.info };
 
@@ -32,6 +40,11 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
   const [error, setError] = useState(false);
   const [rawOpen, setRawOpen] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
+  // Candado de "Nota de este movimiento" (19-oct): visor (rol VIEWER) la ve, no la edita. Mismo
+  // criterio que `Settings.tsx` (`canEdit = role !== "VIEWER"`); se pide una sola vez, no por movimiento.
+  const [company, setCompany] = useState<Company | null>(null);
+  useEffect(() => { getCompany().then(setCompany).catch(() => {}); }, []);
+  const canEditNote = (company?.role ?? "OWNER") !== "VIEWER";
 
   useEffect(() => {
     let alive = true;
@@ -63,7 +76,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
     // `preventDefault` en mouseup: si no, RevoGrid toma el clic como "afuera" y suelta la celda que se
     // estaba editando (regla de la hoja, `.claude/rules/hoja.md`). Así el teclado sigue en la hoja.
     <div onMouseUp={(e) => e.preventDefault()} onTouchEnd={(e) => e.preventDefault()}
-         className="h-full w-[360px] max-w-[45vw] shrink-0">
+         className="h-full w-[460px] max-w-[45vw] shrink-0">
       <DetailCard onClose={onClose} closeLabel={t("panel.close")} className="h-full overflow-y-auto space-y-2.5">
         {!x && !error && <DetailEmpty text={t("panel.loading")} />}
         {error && !x && <DetailEmpty text={t("panel.error")} />}
@@ -78,6 +91,14 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               title={x.merchant}
               sub={`${fmtDate(tx.date)}${tx.account ? ` · ${tx.account}` : ""}`}
             />
+
+            {/* 2. LA NOTA DE ESTE MOVIMIENTO (19-oct, Firm, arriba por pedido de Jose): editable, distinta
+                de las notas del libro de abajo — esa es la del bookkeeper sobre ESTA fila; "panel.notes"
+                son las del libro entero que la tocan. Antes solo lectura, al final del panel. */}
+            <DetailSection title={t("panel.note")}>
+              <NoteEditor txId={tx.id} note={tx.note} canEdit={canEditNote} onSaved={onChanged} />
+            </DetailSection>
+
             <div className={`text-xl font-semibold tabular-nums ${tx.is_inflow ? "text-emerald-700" : "text-slate-900"}`}>
               {tx.is_inflow ? "+" : "−"}{money(Math.abs(tx.amount))}
               <span className="ms-2 text-xs font-normal text-slate-500">{t(tx.is_inflow ? "panel.in" : "panel.out")}</span>
@@ -95,7 +116,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               <p className="text-xs text-rose-800 bg-rose-50 rounded-lg px-2 py-1">{t("panel.bankRemoved")}</p>
             )}
 
-            {/* 2. LA CATEGORÍA Y DE DÓNDE SALIÓ */}
+            {/* 3. LA CATEGORÍA Y DE DÓNDE SALIÓ */}
             <DetailSection title={t("panel.category")}>
               {tx.category && tx.account_type ? (
                 <div className="text-sm text-slate-900">
@@ -112,7 +133,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               <RuleTrace txId={tx.id} refreshKey={refreshKey} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
             </DetailSection>
 
-            {/* 3. LO QUE ENCONTRARON LOS AGENTES */}
+            {/* 4. LO QUE ENCONTRARON LOS AGENTES */}
             <DetailSection title={t("panel.agents")}>
               {x.findings.length === 0 && <p className="text-xs text-slate-400">{t("panel.noFindings")}</p>}
               {x.findings.map((f) => (
@@ -142,7 +163,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               {x.web && !x.findings.some((f) => f.web) && <WebChip w={x.web} webLabel={webLabel} />}
             </DetailSection>
 
-            {/* 4. LAS NOTAS DEL LIBRO QUE LE APLICAN */}
+            {/* 5. LAS NOTAS DEL LIBRO QUE LE APLICAN */}
             {x.notes.length > 0 && (
               <DetailSection title={t("panel.notes")}>
                 {x.notes.map((n) => (
@@ -156,7 +177,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               </DetailSection>
             )}
 
-            {/* 5. EL HISTORIAL DE CORRECCIONES */}
+            {/* 6. EL HISTORIAL DE CORRECCIONES */}
             <DetailSection title={t("panel.history")}>
               {x.history.length === 0 && <p className="text-xs text-slate-400">{t("panel.noHistory")}</p>}
               <ol className="space-y-1.5">
@@ -177,14 +198,54 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               </ol>
             </DetailSection>
 
-            {tx.note && (
-              <DetailSection title={t("panel.note")}>
-                <p className="text-xs text-slate-700 whitespace-pre-wrap">{tx.note}</p>
-              </DetailSection>
-            )}
           </>
         )}
       </DetailCard>
+    </div>
+  );
+}
+
+/** La nota de ESTE movimiento: se guarda sola al salir del campo o con Ctrl+Enter (19-oct). Visor = solo lectura. */
+function NoteEditor({ txId, note, canEdit, onSaved }: {
+  txId: number; note: string | null; canEdit: boolean; onSaved: () => void;
+}) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(note ?? "");
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  useEffect(() => { setValue(note ?? ""); setStatus("idle"); }, [txId, note]);
+
+  async function save() {
+    const next = value.trim();
+    if (next === (note ?? "")) return;
+    setStatus("saving");
+    try {
+      await updateTransaction(txId, { note: next });
+      setStatus("saved");
+      onSaved();
+    } catch {
+      setStatus("error");
+    }
+  }
+
+  if (!canEdit) {
+    return value
+      ? <p className="text-xs text-slate-700 whitespace-pre-wrap">{value}</p>
+      : <p className="text-xs text-slate-400 italic">{t("panel.noteEmpty")}</p>;
+  }
+  return (
+    <div>
+      <textarea
+        className="w-full border border-slate-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-200"
+        rows={3}
+        value={value}
+        onChange={(e) => { setValue(e.target.value); setStatus("idle"); }}
+        onBlur={() => void save()}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void save(); } }}
+        placeholder={t("panel.notePlaceholder")}
+      />
+      {status === "saving" && <p className="text-[11px] text-slate-400 mt-0.5">{t("panel.noteSaving")}</p>}
+      {status === "saved" && <p className="text-[11px] text-emerald-700 mt-0.5">{t("panel.noteSaved")}</p>}
+      {status === "error" && <p className="text-[11px] text-rose-700 mt-0.5">{t("panel.noteError")}</p>}
     </div>
   );
 }

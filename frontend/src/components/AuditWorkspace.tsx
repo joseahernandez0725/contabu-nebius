@@ -381,8 +381,11 @@ export default function AuditWorkspace({
         </button>
       )}
 
-      {/* 3. LA COLA + EL DETALLE (estructura común: `ListDetail`) */}
+      {/* 3. LA COLA + EL DETALLE (estructura común: `ListDetail`). Jose, 19-oct: el detalle (un hallazgo,
+          un grupo de Pendientes, una propuesta) necesita más espacio que la cola → antes `wide="detail"`
+          (lista 300px fija); tras mirarlo, Jose lo quiere 60/40 → `wide="split"` (PageKit, de Firm). */}
       <ListDetail
+        wide="split"
         selKey={sel ? JSON.stringify(sel) : undefined}
         list={
           <ListCard
