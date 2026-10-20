@@ -14,7 +14,7 @@ import { CATEGORY_EDITOR, categoryEditors, setEditorChart } from "./CategoryEdit
 import RuleDialog from "./RuleDialog";
 import {
   TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useCaseStyle, applyCase, CellMenu, CellViewer,
-  cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem,
+  cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem, type CaseStyle,
 } from "./gridKit";
 import type { View } from "./Sidebar";
 import { SyncSummary, sumSyncs } from "./BankConnections";
@@ -115,6 +115,31 @@ function searchText(r: SheetRow, prop: string): string {
     default: return String((r as any)[prop] ?? "");
   }
 }
+/** Lo que COPIA una celda (Ctrl+C y el menú "Copiar"): lo que se ve, listo para pegar en Excel o Sheets.
+ *  RevoGrid copiaría el valor crudo (`item[prop]`): de Descripción solo el texto agregado, del monto la
+ *  magnitud sin signo, de la fecha el ISO. El monto va como NÚMERO (guion ASCII, sin "$" ni miles) para que
+ *  la hoja de cálculo lo lea como número; la fecha, MM/DD/YYYY. Sin tabs ni saltos: romperían las columnas. */
+function copyText(r: SheetRow, prop: string, caseStyle: CaseStyle, pending: string): string {
+  let text: string;
+  switch (prop) {
+    case "date": {
+      const [y, m, d] = String(r.date ?? "").split("-");
+      text = y && m && d ? `${m}/${d.slice(0, 2)}/${y}` : "";
+      break;
+    }
+    case "description_extra": text = [r.description, r.description_extra].filter(Boolean).join(" - "); break;
+    case "amount": {
+      const n = Number(r.amount ?? 0);
+      text = (r.is_inflow || !n ? "" : "-") + n.toFixed(2);
+      break;
+    }
+    case "category": text = r.category ? applyCase(r.category, caseStyle) : pending; break;
+    case "subcategory": text = applyCase(r.subcategory, caseStyle); break;
+    default: text = String((r as any)[prop] ?? "");
+  }
+  return text.replace(/[\t\r\n]+/g, " ");
+}
+
 /** La búsqueda encuentra la fila por sus columnas, su cuenta o SU NOTA (19-oct: la nota ya no es columna,
  *  pero se sigue buscando; la coincidencia se marca en la Descripción, donde está el 📝). */
 const noteHas = (r: SheetRow, q: string) => (r.note ?? "").toLowerCase().includes(q);
@@ -377,6 +402,11 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       ? t("sheet.undoChanged", { defaultValue: "That row changed after this edit, so it wasn't undone." })
       : m));
   const [caseStyle, setCaseStyle] = useCaseStyle();
+  // Para el Ctrl+C de la grilla (un listener que se pone una vez): el texto con el estilo y el idioma de AHORA.
+  const cellCopyText = (r: SheetRow, prop: string) =>
+    copyText(r, prop, caseStyle, t("sheet.pending", { defaultValue: "Pending" }));
+  const cellCopyRef = useRef(cellCopyText);
+  cellCopyRef.current = cellCopyText;
   /** Deshacer una corrección de categoría = el historial del servidor (vuelve EXACTA, con su ƒ). */
   const undoCategorization = useCallback((id: number, label: string) => pushUndo({
     label, run: async () => { await undoTransactionChange(id); load(); },
@@ -491,6 +521,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       prev.removeEventListener("aftercolumnresize", prev.__contabuColResize);
       delete prev.__contabuColResize;
     }
+    if (prev?.__contabuCopy) {
+      prev.removeEventListener("clipboardrangecopy", prev.__contabuCopy);
+      delete prev.__contabuCopy;
+    }
     gridRef.current = el;
     if (!el) return;
     // El wrapper de React vuelve a llamar a este `ref` en cada render (null y luego el MISMO elemento): solo
@@ -514,6 +548,33 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     };
     (el as any).__contabuColResize = onColResize;
     el.addEventListener("aftercolumnresize", onColResize);
+
+    // CTRL+C (19-oct): RevoGrid copia el valor CRUDO de cada columna (`copyRangeArray` → `item[prop]`) y deja
+    // cambiar `detail.data` antes de escribir el portapapeles (`onCopy` lo lee después de emitir). Aquí va,
+    // celda por celda, lo que se ve (`copyText`). Filas y columnas salen de los almacenes del overlay que copia,
+    // igual que en RevoGrid: es el de SU zona (columnas fijadas o no) y trae el orden y el filtro de la grilla.
+    const onCopy = (e: Event) => {
+      const d = (e as CustomEvent).detail;
+      const overlay = e.composedPath()[0] as any;
+      const shown = (store: any): any[] => {
+        const src = store.get("source") ?? [];
+        return (store.get("items") ?? []).map((i: number) => src[i]);
+      };
+      try {
+        const r = d?.range;
+        if (!r || !overlay?.dataStore || !overlay?.colData) return;
+        const models = shown(overlay.dataStore);
+        const props = shown(overlay.colData).slice(r.x, r.x1 + 1).map((c: any) => String(c?.prop));
+        const data: string[][] = [];
+        for (let y = r.y; y <= r.y1; y++) {
+          const m = models[y];
+          data.push(m ? props.map((p: string) => cellCopyRef.current(m, p)) : []);
+        }
+        d.data = data;
+      } catch { /* algo cambió dentro de RevoGrid: se queda su copia cruda */ }
+    };
+    (el as any).__contabuCopy = onCopy;
+    el.addEventListener("clipboardrangecopy", onCopy);
 
     // Selección: el rango que el bookkeeper marcó arrastrando (o la celda enfocada).
     // 19-oct: el índice es el de la fila EN LA GRILLA (filtrada y ordenada); antes se buscaba en todas las
@@ -854,7 +915,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       { label: t("sheet.menu.edit", { defaultValue: "Edit" }), hint: "Enter", disabled: !can,
         onClick: () => void (gridRef.current as any)?.setCellEdit?.(row, prop) },
       { label: t("sheet.menu.copy", { defaultValue: "Copy" }), hint: "Ctrl+C",
-        onClick: () => void navigator.clipboard?.writeText(sheetCellText(m, prop)) },
+        onClick: () => void navigator.clipboard?.writeText(cellCopyText(m, prop)) },
       { label: t("sheet.menu.paste", { defaultValue: "Paste" }), hint: "Ctrl+V", disabled: !can,
         onClick: async () => {
           try { const txt = await navigator.clipboard.readText(); await saveCell(m, prop, txt.split(/\r?\n/)[0]); }
