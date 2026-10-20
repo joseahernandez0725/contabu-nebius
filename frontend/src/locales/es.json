@@ -793,6 +793,7 @@
       "agent_error": "El agente no pudo terminar. Inténtalo de nuevo.",
       "forbidden": "No tienes permiso para correr los agentes en este libro.",
       "agent_cap_reached": "Esta oficina llegó al límite de llamadas a los agentes de hoy. Inténtalo mañana.",
+      "agent_busy": "Los agentes ya están trabajando en este libro. Espera a que terminen.",
       "ai_unavailable": "La IA no está configurada en este servidor.",
       "out_of_tokens": "El modelo se quedó sin tokens antes de contestar. Inténtalo de nuevo.",
       "not_json": "La respuesta del modelo no fue válida. Inténtalo de nuevo.",

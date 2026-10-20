@@ -1902,6 +1902,7 @@ def delete_book_note(company_id: int, note_id: int, user: User = Depends(current
 # LOS AGENTES DE LA FÓRMULA (FASE 11, Auditoría / IA · 7-oct-2026), sobre Nemotron (Nebius).
 # ④ /agents/draft: PROPONE filas de la fórmula (nunca las aplica: se aprueban con POST /rules).
 # ① /agents/review: juzga los hallazgos del auditor. Lógica en `agents.py`; costo en `agent_calls.py`.
+# 20-oct: un solo paso de agentes a la vez por libro (`agent_calls.exclusive`); el segundo recibe 409 agent_busy.
 # Correr un agente = operador (gasta crédito y propone sobre el libro). Ver el costo = consola.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -1917,6 +1918,8 @@ def _agent_error(e: Exception) -> HTTPException:
     import nemotron
     if isinstance(e, agent_calls.CapReached):
         return HTTPException(status_code=429, detail={"code": "agent_cap_reached"})
+    if isinstance(e, agent_calls.AlreadyRunning):   # 20-oct: otro paso de agentes ya corre sobre este libro
+        return HTTPException(status_code=409, detail={"code": "agent_busy"})
     if isinstance(e, nemotron.NemotronUnavailable):
         return HTTPException(status_code=503, detail={"code": "ai_unavailable"})
     raise e
@@ -1930,8 +1933,9 @@ def run_formula_drafter(company_id: int, payload: AgentRunIn, user: User = Depen
     company = owned_company(company_id, user, session, write=True)
     since = agent_calls.mark(session, company)
     try:
-        res = agents.draft(session, company, lang=payload.lang or "es", reasoning=payload.reasoning,
-                           user_id=user.id, focus_tx_ids=payload.focus_tx_ids, note_id=payload.note_id)
+        with agent_calls.exclusive(company):
+            res = agents.draft(session, company, lang=payload.lang or "es", reasoning=payload.reasoning,
+                               user_id=user.id, focus_tx_ids=payload.focus_tx_ids, note_id=payload.note_id)
     except LookupError:
         raise HTTPException(status_code=404, detail={"code": "note_not_found"})
     except Exception as e:
@@ -1951,8 +1955,9 @@ def run_reviewer(company_id: int, payload: AgentRunIn, user: User = Depends(curr
     company = owned_company(company_id, user, session, write=True)
     since = agent_calls.mark(session, company)
     try:
-        res = agents.review(session, company, lang=payload.lang or "es", reasoning=payload.reasoning,
-                            user_id=user.id)
+        with agent_calls.exclusive(company):
+            res = agents.review(session, company, lang=payload.lang or "es", reasoning=payload.reasoning,
+                                user_id=user.id)
     except Exception as e:
         raise _agent_error(e)
     return {"outcome": res.outcome, "silenced": res.silenced, "reviews": res.reviews,
@@ -1996,10 +2001,13 @@ def run_merchant_verifier(company_id: int, payload: Optional[VerifyIn] = None, u
     company = owned_company(company_id, user, session, write=True)
     since = agent_calls.mark(session, company)
     try:
-        res = merchant_verifier.verify_flagged(session, company, user_id=user.id)
+        with agent_calls.exclusive(company):
+            res = merchant_verifier.verify_flagged(session, company, user_id=user.id)
+            again = _rejudge(session, company, res, (payload.lang if payload else None) or "es", user.id)
+    except agent_calls.AlreadyRunning as e:
+        raise _agent_error(e)
     except merchant_verifier.TavilyUnavailable:
         raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
-    again = _rejudge(session, company, res, (payload.lang if payload else None) or "es", user.id)
     return {"outcome": res.outcome, "items": res.items, "searched": res.searched,
             "from_cache": res.from_cache, "skipped": dict(res.skipped), "credits": res.credits,
             "rejudge": again, "spent": agent_calls.spent(session, company, since)}
@@ -2020,12 +2028,15 @@ def search_merchant(company_id: int, payload: SearchMerchantIn, user: User = Dep
     company = owned_company(company_id, user, session, write=True)
     since = agent_calls.mark(session, company)
     try:
-        res = merchant_verifier.search_one(session, company, payload.transaction_id, user_id=user.id)
+        with agent_calls.exclusive(company):
+            res = merchant_verifier.search_one(session, company, payload.transaction_id, user_id=user.id)
+            again = _rejudge(session, company, res, payload.lang or "es", user.id)
+    except agent_calls.AlreadyRunning as e:
+        raise _agent_error(e)
     except LookupError:
         raise HTTPException(status_code=404, detail={"code": "transaction_not_found"})
     except merchant_verifier.TavilyUnavailable:
         raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
-    again = _rejudge(session, company, res, payload.lang or "es", user.id)
     return {"outcome": res.outcome, "item": res.items[0] if res.items else None,
             "skipped": next(iter(res.skipped), None), "searched": res.searched, "from_cache": res.from_cache,
             "rejudge": again, "spent": agent_calls.spent(session, company, since)}

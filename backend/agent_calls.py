@@ -12,9 +12,11 @@ Para qué:
 """
 
 import os
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Iterator, Optional
 
+from sqlalchemy import text
 from sqlmodel import Session, func, select
 
 from models import AgentCall, Company
@@ -31,6 +33,37 @@ _MODEL_AGENTS = ("drafter", "reviewer", "note_checker", "personal_judge")
 
 class CapReached(RuntimeError):
     code = "agent_cap_reached"
+
+
+class AlreadyRunning(RuntimeError):
+    code = "agent_busy"
+
+
+# ── UN PASO DE AGENTES A LA VEZ POR LIBRO (20-oct) ─────────────────────────────────────────────────
+# ✅ 20-oct, demo (libro 7, 15:28 UTC): "Revisar el libro" corrió DOS veces en paralelo —cada llamada
+# duplicada, doble costo y doble cupo—. El candado vive en Postgres, así vale con varias instancias de
+# Cloud Run. Es `pg_try_advisory_xact_lock` (de TRANSACCIÓN, no de sesión) sobre una conexión aparte que
+# mantiene su transacción abierta mientras corre el paso: el Neon del demo entra por su pooler
+# (PgBouncer en modo transacción) y ahí un candado de sesión puede quedarse pegado a una conexión del
+# pooler que otro cliente reusa. Al terminar (o si el proceso muere) la transacción se cierra y el candado
+# se suelta solo. La sesión del agente sigue haciendo sus commits por su cuenta: no la toca.
+_LOCK_SPACE = 0x41474E54   # "AGNT": el espacio de candados de los agentes; el segundo número es el libro
+
+
+@contextmanager
+def exclusive(company: Company) -> Iterator[None]:
+    """Corre el bloque solo si NINGÚN otro paso de agentes está corriendo sobre este libro; si no,
+    `AlreadyRunning` al instante (no espera)."""
+    from db import engine
+    with engine.connect() as conn:
+        try:
+            got = conn.execute(text("select pg_try_advisory_xact_lock(:space, :book)"),
+                               {"space": _LOCK_SPACE, "book": company.id}).scalar()
+            if not got:
+                raise AlreadyRunning(f"libro {company.id}")
+            yield
+        finally:
+            conn.rollback()   # cierra la transacción → suelta el candado
 
 
 def _since() -> datetime:

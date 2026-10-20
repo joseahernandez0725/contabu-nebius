@@ -87,6 +87,12 @@ export default function AuditWorkspace({
   // En pantalla angosta el detalle queda DEBAJO de la cola: al elegir algo, `ListDetail` baja hasta él.
   const [steps, setSteps] = useState<Record<Step, StepState>>({ audit: "idle", verify: "idle", draft: "idle" });
   const [running, setRunning] = useState<Step | null>(null);
+  // 20-oct: el botón se apaga AL INSTANTE del clic. Antes `running` se ponía recién después de `beginAction()` (una
+  // ida y vuelta al backend: 13 s con el demo en frío) y un segundo clic en ese hueco lanzaba otra revisión entera
+  // (✅ logs de Cloud Run, libro 7, 15:28 UTC: los 3 pasos, dos veces). La ref no espera a que React pinte;
+  // `launching` es lo que se ve. El backend además rechaza el segundo paso (409 `agent_busy`).
+  const runLock = useRef(false);
+  const [launching, setLaunching] = useState(false);
   const [stepNote, setStepNote] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -179,7 +185,8 @@ export default function AuditWorkspace({
     calls: p.calls + s.calls, cost_usd: p.cost_usd + s.cost_usd, searches: p.searches + s.searches, credits: p.credits + s.credits,
   } : s);
 
-  async function runStep(step: Step, b: AuditBoard | null) {
+  /** Corre un paso. `stop`: otro paso de agentes ya corre sobre este libro (409 `agent_busy`): no se sigue. */
+  async function runStep(step: Step, b: AuditBoard | null): Promise<{ b: AuditBoard | null; stop: boolean }> {
     setRunning(step);
     setSteps((s) => ({ ...s, [step]: "running" }));
     try {
@@ -206,37 +213,64 @@ export default function AuditWorkspace({
       setSteps((s) => ({ ...s, [step]: "done" }));
       getAgentTeam(sinceRef.current).then(setTeam).catch(() => {});
     } catch (e) {
+      if (e instanceof AgentError && e.code === "agent_busy") {
+        setSteps({ audit: "idle", verify: "idle", draft: "idle" });
+        setError(errText(e));
+        return { b, stop: true };
+      }
       // Un paso que falla (p. ej. sin clave de búsqueda) no detiene el flujo: se marca y se sigue.
       setSteps((s) => ({ ...s, [step]: e instanceof AgentError && /unavailable/.test(e.code) ? "skipped" : "error" }));
       setError(errText(e));
     }
-    return b;
+    return { b, stop: false };
+  }
+
+  /** Una acción de los agentes a la vez en esta pantalla: `false` si ya hay una (el clic se ignora). */
+  function claimRun(): boolean {
+    if (runLock.current) return false;
+    runLock.current = true;
+    setLaunching(true);
+    return true;
+  }
+  function releaseRun() {
+    runLock.current = false;
+    setLaunching(false);
   }
 
   async function reviewBook() {
-    setError(null);
-    setLastSpent(null);
-    setSteps({ audit: "queued", verify: "queued", draft: "queued" });
-    await beginAction();
-    let b: AuditBoard | null = board;
-    for (const step of STEPS) b = await runStep(step, b);
-    setRunning(null);
-    setStepNote("");
-    await loadBoard().catch(() => {});
-    refreshUsage();
+    if (!claimRun()) return;
+    try {
+      setError(null);
+      setLastSpent(null);
+      setSteps({ audit: "queued", verify: "queued", draft: "queued" });
+      await beginAction();
+      let b: AuditBoard | null = board;
+      for (const step of STEPS) {
+        const r = await runStep(step, b);
+        b = r.b;
+        if (r.stop) break;
+      }
+      setRunning(null);
+      setStepNote("");
+      await loadBoard().catch(() => {});
+      refreshUsage();
+    } finally { releaseRun(); }
   }
 
   async function runOne(step: Step) {
-    setError(null);
-    setLastSpent(null);
-    setSteps({ audit: "idle", verify: "idle", draft: "idle" });
-    await beginAction();
-    await runStep(step, board);
-    setRunning(null);
-    setStepNote("");
-    if (step !== "audit") await loadBoard().catch(() => {});
-    if (step === "draft") setTab("proposals");
-    refreshUsage();
+    if (!claimRun()) return;
+    try {
+      setError(null);
+      setLastSpent(null);
+      setSteps({ audit: "idle", verify: "idle", draft: "idle" });
+      await beginAction();
+      await runStep(step, board);
+      setRunning(null);
+      setStepNote("");
+      if (step !== "audit") await loadBoard().catch(() => {});
+      if (step === "draft") setTab("proposals");
+      refreshUsage();
+    } finally { releaseRun(); }
   }
 
   // ── Acciones del bookkeeper ──────────────────────────────────────────────────────────────────
@@ -258,6 +292,7 @@ export default function AuditWorkspace({
   }
 
   async function askRule(g: PendingGroup) {
+    if (!claimRun()) return;
     setBusy(true); setError(null);
     try {
       await beginAction();
@@ -272,7 +307,7 @@ export default function AuditWorkspace({
         setError(t("auditView.noRuleForMerchant", { merchant: g.merchant }));
       }
       refreshUsage();
-    } catch (e) { setError(errText(e)); } finally { setBusy(false); }
+    } catch (e) { setError(errText(e)); } finally { setBusy(false); releaseRun(); }
   }
 
   /** "Proponer las filas para esta nota" (14-oct): el ④ corre SOLO para esa nota. */
@@ -296,6 +331,7 @@ export default function AuditWorkspace({
   useEffect(() => {
     if (!proposeNote || handledNote.current === proposeNote.n) return;
     handledNote.current = proposeNote.n;
+    if (!claimRun()) { onProposeNoteDone?.(); return; }
     setBusy(true);
     setRunning("draft");
     setSteps({ audit: "idle", verify: "idle", draft: "running" });
@@ -303,7 +339,7 @@ export default function AuditWorkspace({
     proposeForNote(proposeNote.id)
       .then((count) => { setSteps((x) => ({ ...x, draft: "done" })); if (!count) setError(t("notesPage.noRulesForNote")); })
       .catch((e) => { setSteps((x) => ({ ...x, draft: "error" })); setError(errText(e)); })
-      .finally(() => { setBusy(false); setRunning(null); setStepNote(""); onProposeNoteDone?.(); });
+      .finally(() => { setBusy(false); setRunning(null); setStepNote(""); releaseRun(); onProposeNoteDone?.(); });
   }, [proposeNote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Después de "Buscar este comercio": la evidencia y el veredicto nuevos se ven en el tablero. */
@@ -362,7 +398,8 @@ export default function AuditWorkspace({
       {/* 1. LA IA AL FRENTE (18-oct): los pasos a la vista, cada agente con su nombre y lo que hizo. Ronda 2: "Revisar el
           libro" vive AQUÍ (es el botón que corre los 3 pasos) y la línea de estado de arriba se fue: el "hace cuánto" y el
           costo ya los dice el equipo. */}
-      <TeamPanel team={team} exact={sinceRef.current !== null} steps={steps} running={running} stepNote={stepNote} est={est} disabled={running !== null || busy}
+      <TeamPanel team={team} exact={sinceRef.current !== null} steps={steps} running={running} launching={launching} stepNote={stepNote} est={est}
+                 disabled={running !== null || busy || launching}
                  onRun={(s) => void runOne(s)} onReviewBook={() => void reviewBook()} lastSpent={lastSpent} spentText={spentText}
                  detailed={DEMO_MODE || teamOpen} canCollapse={!DEMO_MODE} onToggle={toggleTeam} ago={ago} estimateText={estimateText} />
 
@@ -552,10 +589,10 @@ type T = ReturnType<typeof useTranslation>["t"];
  *  lo que hicieron en la ÚLTIMA corrida (datos de `agentcall`, nunca inventados). Mientras corre, el paso se marca.
  *  Ronda 2: "Revisar el libro" (los 3 pasos en orden) va en su encabezado. `detailed` = cada integrante a la vista
  *  (siempre en el demo); si no, cada paso dice su resultado en UNA línea y "Ver detalle" despliega lo demás. */
-function TeamPanel({ team, exact, steps, running, stepNote, est, disabled, onRun, onReviewBook, lastSpent, spentText,
+function TeamPanel({ team, exact, steps, running, launching, stepNote, est, disabled, onRun, onReviewBook, lastSpent, spentText,
                      detailed, canCollapse, onToggle, ago, estimateText }: {
-  team: AgentTeam | null; exact: boolean; steps: Record<Step, StepState>; running: Step | null; stepNote: string;
-  est: Partial<Record<Step | "review_book", AgentEstimate>>; disabled: boolean; onRun: (s: Step) => void;
+  team: AgentTeam | null; exact: boolean; steps: Record<Step, StepState>; running: Step | null; launching: boolean;
+  stepNote: string; est: Partial<Record<Step | "review_book", AgentEstimate>>; disabled: boolean; onRun: (s: Step) => void;
   onReviewBook: () => void; lastSpent: AgentSpent | null; spentText: (s: AgentSpent | null | undefined) => string;
   detailed: boolean; canCollapse: boolean; onToggle: () => void;
   ago: (secs: number) => string; estimateText: (e: AgentEstimate | null | undefined) => string;
@@ -598,7 +635,7 @@ function TeamPanel({ team, exact, steps, running, stepNote, est, disabled, onRun
           )}
           {/* La acción principal de la página: corre Auditar → Verificar → Redactar, en orden. */}
           <button onClick={onReviewBook} disabled={disabled} className={BTN_PRIMARY} title={estimateText(est.review_book)}>
-            {running ? t("auditView.running") : t("auditView.reviewBook")}
+            {running || launching ? t("auditView.running") : t("auditView.reviewBook")}
           </button>
         </div>
       </div>

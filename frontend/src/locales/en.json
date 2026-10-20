@@ -450,6 +450,7 @@
       "agent_error": "The agent couldn't finish. Try again.",
       "forbidden": "You don't have permission to run the agents on this book.",
       "agent_cap_reached": "This office reached today's agent call limit. Try again tomorrow.",
+      "agent_busy": "The agents are already working on this book. Wait for them to finish.",
       "ai_unavailable": "The AI isn't configured on this server.",
       "out_of_tokens": "The model ran out of tokens before answering. Try again.",
       "not_json": "The model's answer wasn't valid. Try again.",
