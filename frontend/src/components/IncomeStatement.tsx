@@ -27,16 +27,17 @@ function Row({ label, value, strong, indent }: {
 // ronda de diseño 2) porque es justo donde el lector en español más la necesita — las cabeceras
 // plegadas de alrededor son contables y SIEMPRE en inglés; truncar ya la recorta primero que el
 // nombre de la cuenta, así que nunca rompe el ancho de ~600px.
-function CatLines({ rows }: { rows?: CategoryAmount[] }) {
+function CatLines({ rows, size = "xs" }: { rows?: CategoryAmount[]; size?: "xs" | "sm" }) {
   const { t, i18n } = useTranslation();
   const showTr = (i18n.language || "en").split("-")[0] !== "en";
   if (!rows || rows.length === 0) return null;
+  const textCls = size === "sm" ? "text-sm py-1.5" : "text-xs py-1";
   return (
     <div className="ps-5 pb-1">
       {rows.map((r) => {
         const tr = showTr ? t(`cat.${r.category}`, { defaultValue: "" }) : "";
         return (
-          <div key={r.category} className="flex justify-between py-1 text-xs text-slate-500">
+          <div key={r.category} className={["flex justify-between text-slate-500", textCls].join(" ")}>
             <span className="truncate">
               {r.category}
               {tr && <span className="ms-1 text-slate-400/60 italic">· {tr}</span>}
@@ -147,7 +148,7 @@ function CompactSection({ label, value, rows, open, onToggle }: {
         aria-expanded={foldable ? open : undefined}
         disabled={!foldable}
         className={[
-          "w-full flex items-center justify-between gap-2 py-1.5 text-sm text-left",
+          "w-full flex items-center justify-between gap-2 py-2 text-base text-left",
           foldable ? "cursor-pointer hover:bg-slate-50 rounded" : "cursor-default",
         ].join(" ")}
       >
@@ -159,7 +160,7 @@ function CompactSection({ label, value, rows, open, onToggle }: {
         </span>
         <span className="tabular-nums text-slate-900">{money(value)}</span>
       </button>
-      {foldable && open && <CatLines rows={rows} />}
+      {foldable && open && <CatLines rows={rows} size="sm" />}
     </div>
   );
 }
@@ -182,7 +183,7 @@ function CompactOther({ incomeValue, expenseValue, incomeRows, expenseRows, open
         aria-expanded={foldable ? open : undefined}
         disabled={!foldable}
         className={[
-          "w-full flex items-center justify-between gap-2 py-1.5 text-sm text-left",
+          "w-full flex items-center justify-between gap-2 py-2 text-base text-left",
           foldable ? "cursor-pointer hover:bg-slate-50 rounded" : "cursor-default",
         ].join(" ")}
       >
@@ -197,9 +198,9 @@ function CompactOther({ incomeValue, expenseValue, incomeRows, expenseRows, open
       {foldable && open && (
         <div className="ps-3 pb-1">
           <Row label={PNL.otherIncome} value={incomeValue} />
-          <CatLines rows={incomeRows} />
+          <CatLines rows={incomeRows} size="sm" />
           <Row label={PNL.otherExpense} value={expenseValue} />
-          <CatLines rows={expenseRows} />
+          <CatLines rows={expenseRows} size="sm" />
         </div>
       )}
     </div>
@@ -214,14 +215,14 @@ function CompactTotal({ label, value, big, suffix }: {
   return (
     <div
       className={[
-        "flex items-center justify-between py-1.5 text-sm font-semibold",
+        "flex items-center justify-between py-2 text-base font-bold",
         big
-          ? "mt-1 pt-2 border-t-2 border-brand-green text-brand-green"
+          ? "mt-1 pt-2.5 border-t-2 border-brand-green text-brand-green"
           : "border-t border-slate-200 text-slate-900",
       ].join(" ")}
     >
       <span className="flex items-center">{label}{suffix}</span>
-      <span className={["tabular-nums", big ? "text-lg" : ""].join(" ")}>{money(value)}</span>
+      <span className={["tabular-nums", big ? "text-xl" : ""].join(" ")}>{money(value)}</span>
     </div>
   );
 }
@@ -229,14 +230,15 @@ function CompactTotal({ label, value, big, suffix }: {
 // Estado de resultados (P&L) DETALLADO: cada sección con su desglose por categoría.
 // Términos contables en inglés (no se traducen); los montos los calcula SQL en el backend.
 // `bare` (13-oct, Firm): sin su propia tarjeta, para ir DENTRO del detalle del diseño compartido (`PageKit`).
-// `compact` (18-oct, ronda de diseño 2): secciones plegadas por defecto —solo el total—, cuentas y
-// montos cerca, para convivir en MEDIA pantalla junto a "Lo que necesita tu atención". Sin la prop,
-// nada cambia: la pestaña P&L, el PDF y el Excel siguen con el layout de siempre.
+// `compact` (18-oct, ronda de diseño 2): cuentas y montos cerca, para convivir en MEDIA pantalla junto
+// a "Lo que necesita tu atención". Las secciones arrancan DESPLEGADAS (Jose, 19-oct) y se pliegan con
+// un clic; el detalle de lo Pendiente arranca plegado (su línea siempre se ve). Sin la prop, nada
+// cambia: la pestaña P&L, el PDF y el Excel siguen con el layout de siempre.
 export default function IncomeStatement({ data, bare = false, compact = false }: {
   data: IS; bare?: boolean; compact?: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [open, setOpen] = useState<Record<string, boolean>>({ revenue: true, cogs: true, opex: true, other: true });
   const toggle = (key: string) => setOpen((o) => ({ ...o, [key]: !o[key] }));
 
   const b = data.breakdown ?? {};

@@ -9,7 +9,7 @@ import { exportIncomeStatementPdf } from "../pdf";
 import type { IncomeStatement as IS } from "../types";
 import IncomeStatementCard from "./IncomeStatement";
 import {
-  BTN_PRIMARY, BTN_SMALL_PRIMARY, BTN_GHOST, DOT, DetailHeader, ListCard, ListDetail, ListRow, PageHeader, Stat, TONE,
+  BTN_PRIMARY, BTN_SECONDARY, BTN_SMALL_PRIMARY, BTN_GHOST, DOT, DetailHeader, ListCard, ListDetail, ListRow, PageHeader, Stat, TONE,
 } from "./PageKit";
 
 // `allTime` llega traducido desde el componente: "All time" cableado aquí salía en inglés
@@ -63,6 +63,8 @@ export default function Pnl({ companyName }: { companyName: string }) {
     if (selected) exportIncomeStatementPdf(companyName, selected.pnl, selected.start || undefined, selected.end || undefined);
     else if (is) exportIncomeStatementPdf(companyName, is, start || undefined, end || undefined);
   };
+  // Sin proyecto, "Guardar como proyecto" es la única opción del "⋯": en vez de un menú para una
+  // sola cosa, va como botón secundario junto a "Exportar PDF" y el "⋯" no aparece (`more` vacío).
   const more = selected ? [
     closed
       ? { label: t("pnl.reopen", { defaultValue: "Reopen (draft)" }),
@@ -74,16 +76,23 @@ export default function Pnl({ companyName }: { companyName: string }) {
         if (!confirm(t("pnl.confirmDelete", { defaultValue: "Delete this project?" }))) return;
         await deletePnlReport(selected.id); setSelected(null); loadReports();
       } },
-  ] : [
-    { label: t("pnl.saveProject", { defaultValue: "Save as project" }), onClick: () => setNaming(true) },
-  ];
+  ] : undefined;
 
   return (
     <div className="space-y-3">
       {/* 1. LA LÍNEA DE ESTADO */}
       <PageHeader
         meta={<>{period}{closed && <span className="ms-2">🔒 {t("pnl.closed", { defaultValue: "Closed" })}</span>}</>}
-        primary={<button onClick={exportPdf} disabled={!data} className={BTN_PRIMARY}>{t("pnl.pdf", { defaultValue: "Export PDF" })}</button>}
+        primary={
+          <>
+            {!selected && (
+              <button onClick={() => setNaming(true)} className={BTN_SECONDARY}>
+                {t("pnl.saveProject", { defaultValue: "Save as project" })}
+              </button>
+            )}
+            <button onClick={exportPdf} disabled={!data} className={BTN_PRIMARY}>{t("pnl.pdf", { defaultValue: "Export PDF" })}</button>
+          </>
+        }
         more={more}
         moreLabel={t("page.more")}
       >
