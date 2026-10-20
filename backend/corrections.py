@@ -31,6 +31,11 @@ VIA_RULE_PRECEDENCE = "rule_precedence"  # cambió qué regla gana (p. ej. una p
 VIA_UNDO = "undo"                    # el bookkeeper deshizo un cambio (Ctrl+Z / botón Deshacer)
 VIA_BANK_MODIFIED = "bank_modified"  # el banco vinculado cambió el movimiento y el motor lo re-decidió
 VIA_RULE_DELETED = "rule_deleted"    # se borró la regla que la decidía: el motor la re-decidió (Jose, 4-oct)
+# El PLAN DE CUENTAS cambió (18-oct): la categoría de la fila se renombró (o se fusionó con otra) o se movió
+# de sección. No es una corrección de la fila: Deshacer no la toma y el ④ no aprende de ella.
+VIA_CHART_RENAME = "chart_rename"
+VIA_CHART_MOVE = "chart_move"
+CHART_VIAS = (VIA_CHART_RENAME, VIA_CHART_MOVE)
 
 _FIELDS = ("account_type", "category", "subcategory")
 
@@ -98,6 +103,9 @@ def undo_change(session: Session, tx: Transaction, change: CategorizationChange,
 
 
 def last_change(session: Session, tx: Transaction) -> Optional[CategorizationChange]:
+    """El último cambio que se puede DESHACER: un cambio del plan de cuentas no cuenta (deshacerlo
+    devolvería la fila a un nombre que el plan ya no tiene)."""
     return session.exec(select(CategorizationChange)
                         .where(CategorizationChange.transaction_id == tx.id)
+                        .where(CategorizationChange.via.not_in(CHART_VIAS))
                         .order_by(CategorizationChange.id.desc())).first()

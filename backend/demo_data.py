@@ -12,8 +12,8 @@ El contrato, punto por punto:
 2. `session.flush()`, **nunca `commit()`**: el commit lo hace `/api/me`, así oficina y libros nacen
    juntos. Firm lo envuelve en un SAVEPOINT.
 3. Toda tabla sembrada cuelga de `company` o de `transaction` (`categoryrule.company_id`,
-   `transaction.company_id`, `categorizationchange.company_id/transaction_id`): la limpieza de 7 días
-   la borra sola.
+   `transaction.company_id`, `categorizationchange.company_id/transaction_id`, `companycategory.company_id`
+   — el plan de cuentas del libro, 18-oct): la limpieza de 7 días la borra sola.
 4. Determinista y rápido: fechas FIJAS (jul–sep 2026) y montos de un `random.Random` con semilla por
    libro; ~600 filas en total, sin IA y sin red.
 
@@ -35,6 +35,7 @@ from sqlmodel import Session, select
 
 import book_notes
 import corrections
+from categories import seed_chart
 import demo_web_evidence
 from ingestion import ingest_parsed, make_fingerprint
 from models import AccountType, CategoryRule, Company, Firm, RuleScope, Transaction, User
@@ -225,6 +226,7 @@ def _seed_book(session: Session, firm: Firm, owner: User, name: str, sector: str
     company = Company(name=name, sector=sector, user_id=owner.id, firm_id=firm.id)
     session.add(company)
     session.flush()
+    seed_chart(session, company)   # SU copia del plan por defecto (Schedule C del sector; 18-oct)
     made = [_rule(company, *r) for r in rules]
     session.add_all(made)
     session.flush()
@@ -312,47 +314,47 @@ def _rivera() -> Book:
 
 
 _RIVERA_RULES = [
-    ("INTUIT QB PAYMENTS", REVENUE, "Construction Revenue", "QuickBooks Payments"),
-    ("STARBUCKS", OPEX, "Meals", "Starbucks"),
+    ("INTUIT QB PAYMENTS", REVENUE, "Gross receipts or sales", "QuickBooks Payments"),
+    ("STARBUCKS", OPEX, "Deductible meals", "Starbucks"),
     ("STATE FARM", OPEX, "Insurance", "State Farm"),
-    ("VERIZON", OPEX, "Telephone & Internet", "Verizon"),
+    ("VERIZON", OPEX, "Utilities", "Verizon"),
     ("PG&E", OPEX, "Utilities", "PG&E"),
-    ("MONTHLY SERVICE FEE", OPEX, "Bank Fees", "Bank"),
+    ("MONTHLY SERVICE FEE", OPEX, "Bank fees", "Bank"),
     # Dos reglas que chocan: "AMAZON MKTPL" cae también en "AMAZON" con otra categoría.
-    ("AMAZON", OPEX, "Office Expense", "Amazon"),
-    ("AMAZON MKTPL", COGS, "Small Tools & Equipment", "Amazon Marketplace"),
+    ("AMAZON", OPEX, "Office expense", "Amazon"),
+    ("AMAZON MKTPL", OPEX, "Supplies", "Amazon Marketplace"),
 ]
 
 
 def _plant_rivera(session, company, rules, tagged, owner) -> None:
     # SHELL de dos formas: la mitad a mano como combustible del vehículo, la otra como del equipo.
     for i, tx in enumerate(tagged["shell"]):
-        at, cat = (OPEX, "Vehicle Fuel") if i % 2 == 0 else (COGS, "Equipment Fuel")
+        at, cat = (OPEX, "Car and truck expenses") if i % 2 == 0 else (COGS, "Equipment fuel")
         _manual(session, tx, at, cat, "Shell", owner, datetime.combine(tx.date + timedelta(days=3),
                                                                         datetime.min.time()))
     # LOWE'S: el bookkeeper lo puso en Office y lo corrigió a Materials, las 3 veces.
     for tx in tagged["lowes"]:
         first = datetime.combine(tx.date + timedelta(days=2), datetime.min.time())
-        _manual(session, tx, OPEX, "Office Expense", "Lowe's", owner, first)
+        _manual(session, tx, OPEX, "Office expense", "Lowe's", owner, first)
         session.flush()
         _manual(session, tx, COGS, "Materials", "Lowe's", owner, first + timedelta(days=9))
     # Una fila que SE SALIÓ de su regla: dice que la decidió "PG&E", pero su categoría ya no es la de
     # la regla (la regla se editó después y esta fila quedó atrás) → el auditor la marca.
     stray = tagged["pge"][0]
-    stray.category = "Office Expense"
+    stray.category = "Office expense"
     session.add(stray)
     # El historial de un trimestre: lo que el bookkeeper fue resolviendo a mano. HOME DEPOT una vez
     # como herramienta (se contradice), la renta en julio y agosto, la nómina, los Zelle al dueño.
     _history(session, company, owner, [
-        ("CHEVRON", [(0, OPEX, "Vehicle Fuel", "Chevron"), (4, OPEX, "Vehicle Fuel", "Chevron"),
-                     (9, OPEX, "Vehicle Fuel", "Chevron")]),
-        ("THE HOME DEPOT", [(0, COGS, "Materials", "Home Depot"), (3, COGS, "Small Tools & Equipment", "Home Depot"),
+        ("CHEVRON", [(0, OPEX, "Car and truck expenses", "Chevron"), (4, OPEX, "Car and truck expenses", "Chevron"),
+                     (9, OPEX, "Car and truck expenses", "Chevron")]),
+        ("THE HOME DEPOT", [(0, COGS, "Materials", "Home Depot"), (3, OPEX, "Supplies", "Home Depot"),
                             (7, COGS, "Materials", "Home Depot")]),
         ("FERGUSON", [(0, COGS, "Materials", "Ferguson"), (2, COGS, "Materials", "Ferguson")]),
         ("JOHNSTONE", [(1, COGS, "Materials", "Johnstone Supply")]),
-        ("ACH DEBIT BAYSIDE", [(0, OPEX, "Office Rent", "Bayside Properties"), (1, OPEX, "Office Rent", "Bayside Properties")]),
-        ("GUSTO PAYROLL", [(0, COGS, "Direct Labor", "Gusto"), (2, COGS, "Direct Labor", "Gusto"),
-                           (5, OPEX, "Admin Wages", "Gusto")]),
+        ("ACH DEBIT BAYSIDE", [(0, OPEX, "Rent or lease – other business property", "Bayside Properties"), (1, OPEX, "Rent or lease – other business property", "Bayside Properties")]),
+        ("GUSTO PAYROLL", [(0, OPEX, "Wages", "Gusto"), (2, OPEX, "Wages", "Gusto"),
+                           (5, OPEX, "Wages", "Gusto")]),
         ("ZELLE PAYMENT TO DANIEL RIVERA", [(0, NON_PL, "Owner Draw", "Daniel Rivera"), (3, NON_PL, "Owner Draw", "Daniel Rivera")]),
     ])
 
@@ -393,33 +395,33 @@ def _sparkle() -> Book:
 
 
 _SPARKLE_RULES = [
-    ("BAYVIEW HOA", REVENUE, "Cleaning Revenue", "Bayview HOA"),
-    ("COSTCO", COGS, "Cleaning Supplies", "Costco"),
-    ("SHELL", OPEX, "Vehicle Fuel", "Shell"),
+    ("BAYVIEW HOA", REVENUE, "Gross receipts or sales", "Bayview HOA"),
+    ("COSTCO", COGS, "Supplies – cleaning supplies", "Costco"),
+    ("SHELL", OPEX, "Car and truck expenses", "Shell"),
     ("NEXT INSURANCE", OPEX, "Insurance", "Next Insurance"),
-    ("MONTHLY SERVICE FEE", OPEX, "Bank Fees", "Bank"),
+    ("MONTHLY SERVICE FEE", OPEX, "Bank fees", "Bank"),
 ]
 
 
 def _plant_sparkle(session, company, rules, tagged, owner) -> None:
     # El gimnasio, cargado a mano como gasto de oficina (un gasto personal camuflado).
     for tx in tagged["gym"]:
-        _manual(session, tx, OPEX, "Office Expense", "24 Hour Fitness", owner,
+        _manual(session, tx, OPEX, "Office expense", "24 Hour Fitness", owner,
                 datetime.combine(tx.date + timedelta(days=4), datetime.min.time()), reason="planted_mistake")
     _history(session, company, owner, [
-        ("TST* EL FAROLITO", [(0, OPEX, "Meals", "El Farolito"), (3, OPEX, "Meals", "El Farolito")]),
-        ("SQ *JANITEX", [(0, COGS, "Cleaning Supplies", "Janitex Supply"), (2, COGS, "Cleaning Supplies", "Janitex Supply")]),
-        ("PAYPAL *ULINE", [(0, COGS, "Cleaning Supplies", "Uline"), (2, OPEX, "Office Expense", "Uline")]),
-        ("T-MOBILE", [(0, OPEX, "Telephone & Internet", "T-Mobile"), (2, OPEX, "Telephone & Internet", "T-Mobile")]),
-        ("ZELLE PAYMENT TO MARIA LOPEZ", [(0, COGS, "Subcontractors", "Maria Lopez"), (2, COGS, "Subcontractors", "Maria Lopez"),
-                                          (5, COGS, "Direct Labor", "Maria Lopez")]),
-        ("SQ DEP", [(0, REVENUE, "Cleaning Revenue", "Square"), (6, REVENUE, "Cleaning Revenue", "Square")]),
+        ("TST* EL FAROLITO", [(0, OPEX, "Deductible meals", "El Farolito"), (3, OPEX, "Deductible meals", "El Farolito")]),
+        ("SQ *JANITEX", [(0, COGS, "Supplies – cleaning supplies", "Janitex Supply"), (2, COGS, "Supplies – cleaning supplies", "Janitex Supply")]),
+        ("PAYPAL *ULINE", [(0, COGS, "Supplies – cleaning supplies", "Uline"), (2, OPEX, "Office expense", "Uline")]),
+        ("T-MOBILE", [(0, OPEX, "Utilities", "T-Mobile"), (2, OPEX, "Utilities", "T-Mobile")]),
+        ("ZELLE PAYMENT TO MARIA LOPEZ", [(0, COGS, "Contract labor – subcontractors", "Maria Lopez"), (2, COGS, "Contract labor – subcontractors", "Maria Lopez"),
+                                          (5, OPEX, "Wages", "Maria Lopez")]),
+        ("SQ DEP", [(0, REVENUE, "Gross receipts or sales", "Square"), (6, REVENUE, "Gross receipts or sales", "Square")]),
     ])
 
 
 # ── Casa Lupita Taqueria (restaurante) ──────────────────────────────────────────────────────────
 # La nota "más de $50 en supermercado suele ser personal" y compras de supermercado que la cruzan
-# (SAFEWAY y WALMART, por regla como Food Purchases), y una regla vieja que ya no agarra nada.
+# (SAFEWAY y WALMART, por regla como Purchases – food), y una regla vieja que ya no agarra nada.
 
 def _lupita() -> Book:
     b = Book("lupita")
@@ -454,25 +456,25 @@ def _lupita() -> Book:
 
 
 _LUPITA_RULES = [
-    ("SQUARE INC", REVENUE, "Food & Beverage Sales", "Square"),
-    ("SYSCO", COGS, "Food Purchases", "Sysco"),
-    ("SAFEWAY", COGS, "Food Purchases", "Safeway"),
-    ("WALMART", COGS, "Food Purchases", "Walmart"),
+    ("SQUARE INC", REVENUE, "Gross receipts or sales", "Square"),
+    ("SYSCO", COGS, "Purchases – food", "Sysco"),
+    ("SAFEWAY", COGS, "Purchases – food", "Safeway"),
+    ("WALMART", COGS, "Purchases – food", "Walmart"),
     ("PG&E", OPEX, "Utilities", "PG&E"),
     # La regla vieja: el proveedor de verduras cerró y ya no aparece en el banco.
-    ("CHEVYS FRESH PRODUCE", COGS, "Food Purchases", "Chevys Fresh Produce"),
+    ("CHEVYS FRESH PRODUCE", COGS, "Purchases – food", "Chevys Fresh Produce"),
 ]
 
 
 def _plant_lupita(session, company, rules, tagged, owner) -> None:
     _history(session, company, owner, [
-        ("RESTAURANT DEPOT", [(0, COGS, "Food Purchases", "Restaurant Depot"), (4, COGS, "Food Purchases", "Restaurant Depot"),
-                              (9, COGS, "Paper & Packaging", "Restaurant Depot")]),
-        ("CINTAS", [(0, OPEX, "Linens", "Cintas"), (3, OPEX, "Linens", "Cintas")]),
-        ("ADP PAYROLL", [(0, OPEX, "Kitchen Wages", "ADP"), (3, OPEX, "Kitchen Wages", "ADP")]),
-        ("ECOLAB", [(0, OPEX, "Contract Cleaning", "Ecolab"), (2, OPEX, "Repairs & Maintenance", "Ecolab")]),
-        ("ACH DEBIT MISSION ST", [(0, OPEX, "Rent", "Mission St Properties"), (1, OPEX, "Rent", "Mission St Properties")]),
-        ("SMART & FINAL", [(1, COGS, "Food Purchases", "Smart & Final")]),
+        ("RESTAURANT DEPOT", [(0, COGS, "Purchases – food", "Restaurant Depot"), (4, COGS, "Purchases – food", "Restaurant Depot"),
+                              (9, COGS, "Materials and supplies", "Restaurant Depot")]),
+        ("CINTAS", [(0, OPEX, "Linens and laundry", "Cintas"), (3, OPEX, "Linens and laundry", "Cintas")]),
+        ("ADP PAYROLL", [(0, OPEX, "Wages", "ADP"), (3, OPEX, "Wages", "ADP")]),
+        ("ECOLAB", [(0, OPEX, "Cleaning services", "Ecolab"), (2, OPEX, "Repairs and maintenance", "Ecolab")]),
+        ("ACH DEBIT MISSION ST", [(0, OPEX, "Rent or lease – other business property", "Mission St Properties"), (1, OPEX, "Rent or lease – other business property", "Mission St Properties")]),
+        ("SMART & FINAL", [(1, COGS, "Purchases – food", "Smart & Final")]),
     ])
 
 
@@ -484,22 +486,22 @@ ERRORS: dict[str, list[Planted]] = {
         Planted("rule_deviation", "Decided by the PG&E rule but no longer carries the rule's category (the rule was edited later).",
                 "PGANDE WEB ONLINE PG&E", [0], expected=(OPEX, "Utilities")),
         Planted("merchant_two_categories", "Shell is service-van fuel; half the rows were typed as equipment fuel.",
-                "SHELL OIL 57444", [1, 3, 5], expected=(OPEX, "Vehicle Fuel")),
-        Planted("personal_expense", "Coffee bought in Europe during the owner's vacation (Aug 3–17): personal, not Meals.",
+                "SHELL OIL 57444", [1, 3, 5], expected=(OPEX, "Car and truck expenses")),
+        Planted("personal_expense", "Coffee bought in Europe during the owner's vacation (Aug 3–17): personal, not deductible meals.",
                 "STARBUCKS", _FOREIGN, expected=(NON_PL, "Owner Draw"), story="vacation_note"),
         Planted("sign_mismatch", "QuickBooks Payments processing FEE (money out) caught by the revenue rule: it is a bank fee.",
-                "INTUIT QB PAYMENTS FEE", expected=(OPEX, "Bank Fees")),
+                "INTUIT QB PAYMENTS FEE", expected=(OPEX, "Bank fees")),
         Planted("sign_mismatch", "A customer paid by Zelle (money IN) and it was typed as a subcontractor expense.",
-                "ZELLE PAYMENT FROM MARCUS OKAFOR", action=("manual", COGS, "Subcontractors", "Marcus Okafor"),
-                expected=(REVENUE, "Construction Revenue")),
+                "ZELLE PAYMENT FROM MARCUS OKAFOR", action=("manual", COGS, "Contract labor – subcontractors", "Marcus Okafor"),
+                expected=(REVENUE, "Gross receipts or sales")),
         Planted("unusual_amount", "$4,850 at Home Depot when it is usually $85–940: equipment? personal? a duplicate? Ask.",
                 "THE HOME DEPOT #0628", lambda r: -r[2] > 2000, action=("manual", COGS, "Materials", "Home Depot")),
         Planted("unusual_amount", "Verizon is $148.32 every month; one extra charge of $612.40 (new phones?).",
                 "VERIZON WIRELESS", lambda r: -r[2] > 300),
         Planted("personal_expense", "Netflix booked as a business subscription.",
-                "NETFLIX.COM", action=("manual", OPEX, "Dues & Subscriptions", "Netflix"), expected=(NON_PL, "Owner Draw")),
+                "NETFLIX.COM", action=("manual", OPEX, "Dues and subscriptions", "Netflix"), expected=(NON_PL, "Owner Draw")),
         Planted("personal_expense", "A Target run (household items) typed as office expense.",
-                "TARGET T-2771", action=("manual", OPEX, "Office Expense", "Target"), expected=(NON_PL, "Owner Draw")),
+                "TARGET T-2771", action=("manual", OPEX, "Office expense", "Target"), expected=(NON_PL, "Owner Draw")),
         Planted("payroll_net_only", "Payroll shows only NET pay (Gusto) and the IRS remittances: gross wages and the employer tax split are missing.",
                 "GUSTO PAYROLL NET PAY"),
         Planted("payroll_net_only", "IRS payroll-tax remittances: part employee withholding (wages), part employer tax.",
@@ -509,32 +511,34 @@ ERRORS: dict[str, list[Planted]] = {
         Planted("personal_expense", "Gym membership typed as office expense.",
                 "24 HOUR FITNESS", expected=(NON_PL, "Owner Draw")),
         Planted("merchant_two_categories", "Uline is cleaning supplies; one row was typed as office expense.",
-                "PAYPAL *ULINE", [2], expected=(COGS, "Cleaning Supplies")),
+                "PAYPAL *ULINE", [2], expected=(COGS, "Supplies – cleaning supplies")),
         Planted("sign_mismatch", "A client paid by Zelle (money IN) and it was typed as a subcontractor expense.",
-                "ZELLE PAYMENT FROM BRIGHTWAY REALTY", action=("manual", COGS, "Subcontractors", "Brightway Realty"),
-                expected=(REVENUE, "Cleaning Revenue")),
+                "ZELLE PAYMENT FROM BRIGHTWAY REALTY", action=("manual", COGS, "Contract labor – subcontractors", "Brightway Realty"),
+                expected=(REVENUE, "Gross receipts or sales")),
         Planted("unusual_amount", "T-Mobile is $95 a month; a $389 charge (a phone?).",
-                "T-MOBILE PCS SVC", lambda r: -r[2] > 200, action=("manual", OPEX, "Telephone & Internet", "T-Mobile")),
+                "T-MOBILE PCS SVC", lambda r: -r[2] > 200, action=("manual", OPEX, "Utilities", "T-Mobile")),
         Planted("personal_expense", "Clothes from Nordstrom Rack typed as uniforms.",
                 "NORDSTROM RACK", action=("manual", OPEX, "Uniforms", "Nordstrom Rack"), expected=(NON_PL, "Owner Draw")),
         Planted("personal_expense", "Groceries at Safeway typed as cleaning supplies (supplies come from Costco).",
-                "SAFEWAY #2213", action=("manual", COGS, "Cleaning Supplies", "Safeway"), expected=(NON_PL, "Owner Draw")),
-        Planted("rule_deviation", "Decided by the COSTCO rule but carries Office Expense (the rule changed later).",
-                "COSTCO WHSE", [2], action=("drift", "Office Expense"), expected=(COGS, "Cleaning Supplies")),
-        Planted("merchant_two_categories", "Shell is fuel for the van (rule: Vehicle Fuel); one row typed as Transportation.",
-                "SHELL OIL 12093", [3], action=("manual", COGS, "Transportation", "Shell"), expected=(OPEX, "Vehicle Fuel")),
+                "SAFEWAY #2213", action=("manual", COGS, "Supplies – cleaning supplies", "Safeway"), expected=(NON_PL, "Owner Draw")),
+        Planted("rule_deviation", "Decided by the COSTCO rule but carries Office expense (the rule changed later).",
+                "COSTCO WHSE", [2], action=("drift", "Office expense"), expected=(COGS, "Supplies – cleaning supplies")),
+        # 🔄 18-oct (plan de cuentas oficial): "Transportation" y "Vehicle Fuel" son hoy la MISMA cuenta (Car and
+        # truck expenses); la fila equivocada pasa a insumos de limpieza para que el error siga existiendo.
+        Planted("merchant_two_categories", "Shell is fuel for the van (rule: Car and truck expenses); one row typed as cleaning supplies.",
+                "SHELL OIL 12093", [3], action=("manual", COGS, "Supplies – cleaning supplies", "Shell"), expected=(OPEX, "Car and truck expenses")),
         Planted("unusual_amount", "$1,940 at Janitex when it is usually $140–520: a bulk order, or a mistake?",
-                "SQ *JANITEX", lambda r: -r[2] > 1000, action=("manual", COGS, "Cleaning Supplies", "Janitex Supply")),
+                "SQ *JANITEX", lambda r: -r[2] > 1000, action=("manual", COGS, "Supplies – cleaning supplies", "Janitex Supply")),
     ],
     "Casa Lupita Taqueria": [
         Planted("personal_expense", "Supermarket purchases over $50 (the bookkeeper's note): usually personal.",
                 "SAFEWAY #1711", _OVER_50, expected=(NON_PL, "Owner Draw"), story="supermarket_note"),
         Planted("personal_expense", "Supermarket purchases over $50 (the bookkeeper's note): usually personal.",
                 "WALMART SUPERCENTER", _OVER_50, expected=(NON_PL, "Owner Draw"), story="supermarket_note"),
-        Planted("merchant_two_categories", "Restaurant Depot is food purchases; one row was typed as paper & packaging.",
-                "RESTAURANT DEPOT", [9], expected=(COGS, "Food Purchases")),
-        Planted("merchant_two_categories", "Ecolab pest control typed two ways; the contract-cleaning row is the odd one.",
-                "ECOLAB", [0], expected=(OPEX, "Repairs & Maintenance")),
+        Planted("merchant_two_categories", "Restaurant Depot is food purchases; one row was typed as materials and supplies (paper & packaging).",
+                "RESTAURANT DEPOT", [9], expected=(COGS, "Purchases – food")),
+        Planted("merchant_two_categories", "Ecolab pest control typed two ways; the cleaning-services row is the odd one.",
+                "ECOLAB", [0], expected=(OPEX, "Repairs and maintenance")),
         Planted("sign_mismatch", "Square Capital LOAN payment (money out) caught by the SQUARE INC sales rule.",
                 "SQUARE INC LOAN PMT", expected=(NON_PL, "Loan Principal Payment")),
         Planted("unusual_amount", "PG&E is $410–690 a month; one $1,840 bill (past-due catch-up?).",
@@ -542,13 +546,13 @@ ERRORS: dict[str, list[Planted]] = {
         Planted("unusual_amount", "Sysco is $620–1,480 a week; one $4,920 order.",
                 "SYSCO SAN FRANCISCO", lambda r: -r[2] > 3000),
         Planted("personal_expense", "Best Buy (a TV?) typed as smallwares.",
-                "BEST BUY", action=("manual", OPEX, "Smallwares", "Best Buy"), expected=(NON_PL, "Owner Draw")),
-        Planted("personal_expense", "Movie tickets typed as marketing.",
-                "AMC METREON", action=("manual", OPEX, "Marketing", "AMC"), expected=(NON_PL, "Owner Draw")),
+                "BEST BUY", action=("manual", OPEX, "Supplies – smallwares", "Best Buy"), expected=(NON_PL, "Owner Draw")),
+        Planted("personal_expense", "Movie tickets typed as advertising.",
+                "AMC METREON", action=("manual", OPEX, "Advertising", "AMC"), expected=(NON_PL, "Owner Draw")),
         Planted("personal_expense", "Disney+ booked as a business subscription.",
-                "DISNEY PLUS", action=("manual", OPEX, "Dues & Subscriptions", "Disney+"), expected=(NON_PL, "Owner Draw")),
-        Planted("rule_deviation", "Decided by the SYSCO rule but carries Paper & Packaging (the rule changed later).",
-                "SYSCO SAN FRANCISCO", [6], action=("drift", "Paper & Packaging"), expected=(COGS, "Food Purchases")),
+                "DISNEY PLUS", action=("manual", OPEX, "Dues and subscriptions", "Disney+"), expected=(NON_PL, "Owner Draw")),
+        Planted("rule_deviation", "Decided by the SYSCO rule but carries Materials and supplies (the rule changed later).",
+                "SYSCO SAN FRANCISCO", [6], action=("drift", "Materials and supplies"), expected=(COGS, "Purchases – food")),
         Planted("payroll_net_only", "Payroll shows only NET pay (ADP) and NO tax remittance at all: gross wages and payroll taxes are missing.",
                 "ADP PAYROLL"),
     ],
@@ -610,60 +614,60 @@ def _blind_rows(b: "Book", name: str) -> None:
 ERRORS_BLIND: dict[str, list[Planted]] = {
     "Rivera HVAC LLC": [
         Planted("loan_as_revenue", "Loan money received (OnDeck) typed as job revenue: it is a liability, not income.",
-                "ONDECK CAPITAL", action=("manual", REVENUE, "Construction Revenue", "OnDeck"), expected=(NON_PL, "Loan Proceeds")),
+                "ONDECK CAPITAL", action=("manual", REVENUE, "Gross receipts or sales", "OnDeck"), expected=(NON_PL, "Loan Proceeds")),
         Planted("wrong_section", "Equipment rented for a job typed as overhead office expense; it is a direct job cost.",
-                "UNITED RENTALS", action=("manual", OPEX, "Office Expense", "United Rentals"), expected=(COGS, "Equipment Rental")),
+                "UNITED RENTALS", action=("manual", OPEX, "Office expense", "United Rentals"), expected=(COGS, "Rent or lease – job equipment")),
         Planted("unusual_amount", "The monthly bank fee is $15; one month shows $95 (overdraft or wire fees?).",
                 "MONTHLY SERVICE FEE", lambda r: -r[2] > 50),
         Planted("transfer_as_expense", "Paying the credit card typed as office expense: the purchases are already expenses (double count).",
-                "CHASE CREDIT CRD AUTOPAY", action=("manual", OPEX, "Office Expense", "Chase Card"), expected=(NON_PL, "Credit Card Payment")),
+                "CHASE CREDIT CRD AUTOPAY", action=("manual", OPEX, "Office expense", "Chase Card"), expected=(NON_PL, "Credit Card Payment")),
         Planted("personal_expense", "Sephora typed as office expense.",
-                "SEPHORA", action=("manual", OPEX, "Office Expense", "Sephora"), expected=(NON_PL, "Owner Draw")),
+                "SEPHORA", action=("manual", OPEX, "Office expense", "Sephora"), expected=(NON_PL, "Owner Draw")),
         Planted("duplicate_charge", "Grainger charged the same $318.77 twice on the same day: one is a duplicate to dispute.",
-                "GRAINGER", [1], action=("manual", COGS, "Small Tools & Equipment", "Grainger")),
-        Planted("rule_deviation", "Decided by the STATE FARM rule but carries Vehicle Expenses (the rule changed later).",
-                "STATE FARM", [1], action=("drift", "Vehicle Expenses"), expected=(OPEX, "Insurance")),
-        Planted("setup", "", "GRAINGER", [0], action=("manual_ok", COGS, "Small Tools & Equipment", "Grainger"), truth=False),
+                "GRAINGER", [1], action=("manual", OPEX, "Supplies", "Grainger")),
+        Planted("rule_deviation", "Decided by the STATE FARM rule but carries Car and truck expenses (the rule changed later).",
+                "STATE FARM", [1], action=("drift", "Car and truck expenses"), expected=(OPEX, "Insurance")),
+        Planted("setup", "", "GRAINGER", [0], action=("manual_ok", OPEX, "Supplies", "Grainger"), truth=False),
     ],
     "Sparkle Cleaning Co.": [
         Planted("merchant_two_categories", "Google Workspace is software; one month was typed as telephone & internet.",
-                "GOOGLE *WORKSPACE", [1], action=("manual", OPEX, "Telephone & Internet", "Google Workspace"), expected=(OPEX, "Software")),
+                "GOOGLE *WORKSPACE", [1], action=("manual", OPEX, "Utilities", "Google Workspace"), expected=(OPEX, "Software")),
         Planted("personal_expense", "Spotify booked as business software.",
                 "SPOTIFY", action=("manual", OPEX, "Software", "Spotify"), expected=(NON_PL, "Owner Draw")),
         Planted("transfer_as_expense", "Paying the Amex card typed as cleaning supplies (double count).",
-                "AMEX EPAYMENT", action=("manual", COGS, "Cleaning Supplies", "Amex"), expected=(NON_PL, "Credit Card Payment")),
+                "AMEX EPAYMENT", action=("manual", COGS, "Supplies – cleaning supplies", "Amex"), expected=(NON_PL, "Credit Card Payment")),
         Planted("duplicate_charge", "Bright Mops charged the same $214.60 twice on the same day.",
-                "SQ *BRIGHT MOPS", [1], action=("manual", COGS, "Cleaning Supplies", "Bright Mops")),
-        Planted("sign_mismatch", "Thumbtack lead credits (money OUT, marketing) typed as cleaning revenue.",
-                "THUMBTACK", action=("manual", REVENUE, "Cleaning Revenue", "Thumbtack"), expected=(OPEX, "Marketing")),
+                "SQ *BRIGHT MOPS", [1], action=("manual", COGS, "Supplies – cleaning supplies", "Bright Mops")),
+        Planted("sign_mismatch", "Thumbtack lead credits (money OUT, advertising) typed as cleaning revenue.",
+                "THUMBTACK", action=("manual", REVENUE, "Gross receipts or sales", "Thumbtack"), expected=(OPEX, "Advertising")),
         Planted("personal_expense", "Pet supplies typed as cleaning supplies.",
-                "PETCO", action=("manual", COGS, "Cleaning Supplies", "Petco"), expected=(NON_PL, "Owner Draw")),
-        Planted("rule_deviation", "Decided by the NEXT INSURANCE rule but carries Office Expense (the rule changed later).",
-                "NEXT INSURANCE", [1], action=("drift", "Office Expense"), expected=(OPEX, "Insurance")),
-        Planted("rule_deviation", "Decided by the bank-fee rule but carries Office Expense (the rule changed later).",
-                "MONTHLY SERVICE FEE", [2], action=("drift", "Office Expense"), expected=(OPEX, "Bank Fees")),
+                "PETCO", action=("manual", COGS, "Supplies – cleaning supplies", "Petco"), expected=(NON_PL, "Owner Draw")),
+        Planted("rule_deviation", "Decided by the NEXT INSURANCE rule but carries Office expense (the rule changed later).",
+                "NEXT INSURANCE", [1], action=("drift", "Office expense"), expected=(OPEX, "Insurance")),
+        Planted("rule_deviation", "Decided by the bank-fee rule but carries Office expense (the rule changed later).",
+                "MONTHLY SERVICE FEE", [2], action=("drift", "Office expense"), expected=(OPEX, "Bank fees")),
         Planted("setup", "", "GOOGLE *WORKSPACE", [0, 2], action=("manual_ok", OPEX, "Software", "Google Workspace"), truth=False),
-        Planted("setup", "", "SQ *BRIGHT MOPS", [0], action=("manual_ok", COGS, "Cleaning Supplies", "Bright Mops"), truth=False),
+        Planted("setup", "", "SQ *BRIGHT MOPS", [0], action=("manual_ok", COGS, "Supplies – cleaning supplies", "Bright Mops"), truth=False),
     ],
     "Casa Lupita Taqueria": [
         Planted("owner_money_as_revenue", "The owner put her own money in; it was typed as sales.",
-                "ONLINE TRANSFER FROM LUPITA ORTEGA", action=("manual", REVENUE, "Food & Beverage Sales", "Lupita Ortega"),
+                "ONLINE TRANSFER FROM LUPITA ORTEGA", action=("manual", REVENUE, "Gross receipts or sales", "Lupita Ortega"),
                 expected=(NON_PL, "Owner Contribution")),
         Planted("sign_mismatch", "Uber Eats payouts (money IN, delivery sales) typed as food purchases.",
-                "UBER EATS PAYOUT", action=("manual", COGS, "Food Purchases", "Uber Eats"), expected=(REVENUE, "Food & Beverage Sales")),
+                "UBER EATS PAYOUT", action=("manual", COGS, "Purchases – food", "Uber Eats"), expected=(REVENUE, "Gross receipts or sales")),
         Planted("duplicate_charge", "The water bill was paid twice on the same day.",
                 "SFPUC WATER", [1], action=("manual", OPEX, "Utilities", "SFPUC")),
         Planted("merchant_two_categories", "WebstaurantStore is smallwares; one order was typed as food purchases.",
-                "WEBSTAURANTSTORE", [1], action=("manual", COGS, "Food Purchases", "WebstaurantStore"), expected=(OPEX, "Smallwares")),
+                "WEBSTAURANTSTORE", [1], action=("manual", COGS, "Purchases – food", "WebstaurantStore"), expected=(OPEX, "Supplies – smallwares")),
         Planted("wrong_section", "Hobart kitchen-equipment repair typed as food purchases (COGS); it is repairs & maintenance.",
-                "HOBART SERVICE", action=("manual", COGS, "Food Purchases", "Hobart"), expected=(OPEX, "Repairs & Maintenance")),
+                "HOBART SERVICE", action=("manual", COGS, "Purchases – food", "Hobart"), expected=(OPEX, "Repairs and maintenance")),
         Planted("personal_expense", "Ulta Beauty typed as smallwares.",
-                "ULTA BEAUTY", action=("manual", OPEX, "Smallwares", "Ulta Beauty"), expected=(NON_PL, "Owner Draw")),
+                "ULTA BEAUTY", action=("manual", OPEX, "Supplies – smallwares", "Ulta Beauty"), expected=(NON_PL, "Owner Draw")),
         Planted("unusual_amount", "Comcast is $119.95 a month; one extra $642.80 charge (equipment? a past-due balance?).",
-                "COMCAST BUSINESS", lambda r: -r[2] > 300, action=("manual", OPEX, "Telephone & Internet", "Comcast")),
-        Planted("setup", "", "COMCAST BUSINESS", lambda r: -r[2] < 300, action=("manual_ok", OPEX, "Telephone & Internet", "Comcast"), truth=False),
+                "COMCAST BUSINESS", lambda r: -r[2] > 300, action=("manual", OPEX, "Utilities", "Comcast")),
+        Planted("setup", "", "COMCAST BUSINESS", lambda r: -r[2] < 300, action=("manual_ok", OPEX, "Utilities", "Comcast"), truth=False),
         Planted("setup", "", "SFPUC WATER", [0], action=("manual_ok", OPEX, "Utilities", "SFPUC"), truth=False),
-        Planted("setup", "", "WEBSTAURANTSTORE", [0, 2], action=("manual_ok", OPEX, "Smallwares", "WebstaurantStore"), truth=False),
+        Planted("setup", "", "WEBSTAURANTSTORE", [0, 2], action=("manual_ok", OPEX, "Supplies – smallwares", "WebstaurantStore"), truth=False),
     ],
 }
 
@@ -697,39 +701,39 @@ def _t(at: Optional[AccountType], category: Optional[str], status: str, why: str
 
 DEMO_TRUTH_PENDING: dict[str, dict[str, dict]] = {
     "Rivera HVAC LLC": {
-        "ACH DEBIT BAYSIDE PROPERTIES LLC RENT": _t(OPEX, "Office Rent", "known", "Shop / office rent."),
-        "CHEVRON": _t(OPEX, "Vehicle Fuel", "known", "Service-van fuel."),
+        "ACH DEBIT BAYSIDE PROPERTIES LLC RENT": _t(OPEX, "Rent or lease – other business property", "known", "Shop / office rent."),
+        "CHEVRON": _t(OPEX, "Car and truck expenses", "known", "Service-van fuel."),
         "FERGUSON HVAC SUPPLY": _t(COGS, "Materials", "known", "HVAC parts for jobs."),
         "JOHNSTONE SUPPLY": _t(COGS, "Materials", "known", "HVAC parts for jobs."),
         "THE HOME DEPOT": _t(COGS, "Materials", "known", "Job materials (one $4,850 row is a planted unusual amount)."),
-        "GUSTO PAYROLL NET PAY": _t(COGS, "Direct Labor", "known", "Technicians' net pay (the gross is not in the bank)."),
-        "IRS USATAXPYMT": _t(OTHER_EXPENSE, "Taxes & Licenses", "split",
+        "GUSTO PAYROLL NET PAY": _t(OPEX, "Wages", "known", "Technicians' net pay (the gross is not in the bank)."),
+        "IRS USATAXPYMT": _t(OPEX, "Payroll taxes", "split",
                              "Payroll-tax remittance: employee withholding (part of wages) + employer tax."),
         "MOBILE DEPOSIT REF": _t(None, None, "ambiguous", "A deposited check: probably a customer, but could be a loan or the owner."),
         "ZELLE PAYMENT TO DANIEL RIVERA": _t(NON_PL, "Owner Draw", "known", "The owner paying himself."),
     },
     "Sparkle Cleaning Co.": {
-        "ACH CREDIT OAKMONT PROPERTY MGMT": _t(REVENUE, "Cleaning Revenue", "known", "A client's monthly contract."),
-        "SQ DEP": _t(REVENUE, "Cleaning Revenue", "known", "Card sales paid out by Square."),
-        "PAYPAL *ULINE": _t(COGS, "Cleaning Supplies", "known", "Supplies."),
-        "PAYPAL *ZOROTOOLS": _t(COGS, "Small Tools & Equipment", "known", "Tools."),
+        "ACH CREDIT OAKMONT PROPERTY MGMT": _t(REVENUE, "Gross receipts or sales", "known", "A client's monthly contract."),
+        "SQ DEP": _t(REVENUE, "Gross receipts or sales", "known", "Card sales paid out by Square."),
+        "PAYPAL *ULINE": _t(COGS, "Supplies – cleaning supplies", "known", "Supplies."),
+        "PAYPAL *ZOROTOOLS": _t(OPEX, "Supplies", "known", "Tools."),
         "SQ *BAYCITY UNIFORMS": _t(OPEX, "Uniforms", "known", "Staff uniforms."),
-        "SQ *JANITEX SUPPLY": _t(COGS, "Cleaning Supplies", "known", "Janitorial supplies."),
-        "T-MOBILE PCS SVC": _t(OPEX, "Telephone & Internet", "known", "Business phone line."),
-        "TST* EL FAROLITO": _t(OPEX, "Meals", "known", "Crew lunch."),
+        "SQ *JANITEX SUPPLY": _t(COGS, "Supplies – cleaning supplies", "known", "Janitorial supplies."),
+        "T-MOBILE PCS SVC": _t(OPEX, "Utilities", "known", "Business phone line."),
+        "TST* EL FAROLITO": _t(OPEX, "Deductible meals", "known", "Crew lunch."),
         "ZELLE PAYMENT TO MARIA LOPEZ": _t(None, None, "ambiguous", "A person: subcontractor or employee? Only the client knows."),
         "ZELLE PAYMENT TO ANA GUTIERREZ": _t(None, None, "ambiguous", "A person: subcontractor or employee? Only the client knows."),
         "ZELLE PAYMENT TO JOSE MARTINEZ": _t(None, None, "ambiguous", "A person: subcontractor or employee? Only the client knows."),
     },
     "Casa Lupita Taqueria": {
-        "ACH DEBIT MISSION ST PROPERTIES RENT": _t(OPEX, "Rent", "known", "Restaurant rent."),
-        "ADP PAYROLL FEES NET PAY": _t(OPEX, "Kitchen Wages", "known", "Kitchen staff net pay (the gross and the taxes are not in the bank)."),
-        "CINTAS CORP LINEN SVC": _t(OPEX, "Linens", "known", "Linen service."),
-        "DOORDASH INC PAYMENT": _t(REVENUE, "Food & Beverage Sales", "known", "Delivery sales paid out net of DoorDash fees."),
-        "ECOLAB PEST ELIM": _t(OPEX, "Repairs & Maintenance", "known", "Pest control service."),
-        "MONTHLY SERVICE FEE": _t(OPEX, "Bank Fees", "known", "Bank fee (this book has no rule for it)."),
-        "RESTAURANT DEPOT": _t(COGS, "Food Purchases", "known", "Food for the kitchen."),
-        "SMART & FINAL": _t(COGS, "Food Purchases", "known", "Food for the kitchen."),
+        "ACH DEBIT MISSION ST PROPERTIES RENT": _t(OPEX, "Rent or lease – other business property", "known", "Restaurant rent."),
+        "ADP PAYROLL FEES NET PAY": _t(OPEX, "Wages", "known", "Kitchen staff net pay (the gross and the taxes are not in the bank)."),
+        "CINTAS CORP LINEN SVC": _t(OPEX, "Linens and laundry", "known", "Linen service."),
+        "DOORDASH INC PAYMENT": _t(REVENUE, "Gross receipts or sales", "known", "Delivery sales paid out net of DoorDash fees."),
+        "ECOLAB PEST ELIM": _t(OPEX, "Repairs and maintenance", "known", "Pest control service."),
+        "MONTHLY SERVICE FEE": _t(OPEX, "Bank fees", "known", "Bank fee (this book has no rule for it)."),
+        "RESTAURANT DEPOT": _t(COGS, "Purchases – food", "known", "Food for the kitchen."),
+        "SMART & FINAL": _t(COGS, "Purchases – food", "known", "Food for the kitchen."),
     },
 }
 

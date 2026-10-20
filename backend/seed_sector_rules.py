@@ -28,7 +28,8 @@ COGS = AccountType.COGS
 OPEX = AccountType.OPERATING_EXPENSE
 
 # Catálogo: sector -> lista de (match_text, account_type, category).
-# Las categorías deben existir en el plan del sector (categories.py).
+# Las categorías deben existir en el plan por defecto del sector (categories.py; nombres oficiales del
+# IRS desde el 18-oct).
 SECTOR_RULES: dict[str, list[tuple[str, AccountType, str]]] = {
     # CONSTRUCCIÓN (paraguas de los oficios: electricistas, plomeros, pintores, HVAC…).
     "construction": [
@@ -51,42 +52,42 @@ SECTOR_RULES: dict[str, list[tuple[str, AccountType, str]]] = {
         ("Ace Hardware", COGS, "Materials"),
         ("True Value", COGS, "Materials"),
         # --- Herramientas / equipo menor (COGS) ---
-        ("Harbor Freight", COGS, "Small Tools & Equipment"),
-        ("Northern Tool", COGS, "Small Tools & Equipment"),
+        ("Harbor Freight", OPEX, "Supplies"),
+        ("Northern Tool", OPEX, "Supplies"),
         # --- Renta de equipo (COGS) ---
-        ("Sunbelt Rentals", COGS, "Equipment Rental"),
-        ("United Rentals", COGS, "Equipment Rental"),
-        ("Herc Rentals", COGS, "Equipment Rental"),
+        ("Sunbelt Rentals", COGS, "Rent or lease – job equipment"),
+        ("United Rentals", COGS, "Rent or lease – job equipment"),
+        ("Herc Rentals", COGS, "Rent or lease – job equipment"),
         # --- Botadero / desechos (COGS) ---
-        ("Waste Management", COGS, "Dumping & Disposal"),
-        ("Republic Services", COGS, "Dumping & Disposal"),
+        ("Waste Management", COGS, "Dumping and disposal"),
+        ("Republic Services", COGS, "Dumping and disposal"),
         # --- Vehículo (OpEx): autopartes y peajes ---
-        ("AutoZone", OPEX, "Vehicle Expenses"),
-        ("O'Reilly", OPEX, "Vehicle Expenses"),
-        ("NAPA Auto", OPEX, "Vehicle Expenses"),
-        ("FasTrak", OPEX, "Vehicle Expenses"),       # peajes
+        ("AutoZone", OPEX, "Car and truck expenses"),
+        ("O'Reilly", OPEX, "Car and truck expenses"),
+        ("NAPA Auto", OPEX, "Car and truck expenses"),
+        ("FasTrak", OPEX, "Car and truck expenses"),       # peajes
         # --- Software (OpEx) ---
         ("QuickBooks", OPEX, "Software"),
         ("Intuit", OPEX, "Software"),
         ("Squarespace", OPEX, "Software"),
         ("Anthropic", OPEX, "Software"),
         # --- Teléfono e internet (OpEx) ---
-        ("Verizon", OPEX, "Telephone & Internet"),
-        ("T-Mobile", OPEX, "Telephone & Internet"),
-        ("Comcast", OPEX, "Telephone & Internet"),
-        ("Xfinity", OPEX, "Telephone & Internet"),
-        ("Spectrum", OPEX, "Telephone & Internet"),
+        ("Verizon", OPEX, "Utilities"),
+        ("T-Mobile", OPEX, "Utilities"),
+        ("Comcast", OPEX, "Utilities"),
+        ("Xfinity", OPEX, "Utilities"),
+        ("Spectrum", OPEX, "Utilities"),
     ],
 
     # LIMPIEZA (cleaning).
     "cleaning": [
         # --- Insumos de limpieza (COGS): distribuidores janitoriales / químicos ---
-        ("Ecolab", COGS, "Cleaning Supplies"),
-        ("Uline", COGS, "Cleaning Supplies"),
-        ("WAXIE", COGS, "Cleaning Supplies"),
-        ("Zep", COGS, "Cleaning Supplies"),
-        ("Grainger", COGS, "Cleaning Supplies"),
-        ("Staples", COGS, "Cleaning Supplies"),
+        ("Ecolab", COGS, "Supplies – cleaning supplies"),
+        ("Uline", COGS, "Supplies – cleaning supplies"),
+        ("WAXIE", COGS, "Supplies – cleaning supplies"),
+        ("Zep", COGS, "Supplies – cleaning supplies"),
+        ("Grainger", COGS, "Supplies – cleaning supplies"),
+        ("Staples", COGS, "Supplies – cleaning supplies"),
         # --- Uniformes (OpEx): servicios de uniformes ---
         ("Cintas", OPEX, "Uniforms"),       # mismo comercio, categoría DISTINTA por sector (vs. restaurant→Linens)
         ("UniFirst", OPEX, "Uniforms"),
@@ -97,45 +98,45 @@ SECTOR_RULES: dict[str, list[tuple[str, AccountType, str]]] = {
         ("Jobber", OPEX, "Software"),
         ("ZenMaid", OPEX, "Software"),
         # --- Teléfono e internet (OpEx) ---
-        ("Verizon", OPEX, "Telephone & Internet"),
-        ("T-Mobile", OPEX, "Telephone & Internet"),
-        ("Comcast", OPEX, "Telephone & Internet"),
-        ("Xfinity", OPEX, "Telephone & Internet"),
-        ("Spectrum", OPEX, "Telephone & Internet"),
+        ("Verizon", OPEX, "Utilities"),
+        ("T-Mobile", OPEX, "Utilities"),
+        ("Comcast", OPEX, "Utilities"),
+        ("Xfinity", OPEX, "Utilities"),
+        ("Spectrum", OPEX, "Utilities"),
     ],
 
     # RESTAURANTE (restaurant).
     "restaurant": [
         # --- Compras de comida (COGS): distribuidores de food service ---
-        ("Sysco", COGS, "Food Purchases"),
-        ("US Foods", COGS, "Food Purchases"),
-        ("Restaurant Depot", COGS, "Food Purchases"),
-        ("Gordon Food", COGS, "Food Purchases"),
-        ("Performance Food", COGS, "Food Purchases"),
-        ("Shamrock Foods", COGS, "Food Purchases"),
-        ("Cheney Brothers", COGS, "Food Purchases"),
+        ("Sysco", COGS, "Purchases – food"),
+        ("US Foods", COGS, "Purchases – food"),
+        ("Restaurant Depot", COGS, "Purchases – food"),
+        ("Gordon Food", COGS, "Purchases – food"),
+        ("Performance Food", COGS, "Purchases – food"),
+        ("Shamrock Foods", COGS, "Purchases – food"),
+        ("Cheney Brothers", COGS, "Purchases – food"),
         # --- Alcohol (COGS) ---
-        ("Southern Glazer's", COGS, "Beer/Wine/Liquor"),
-        ("Breakthru Beverage", COGS, "Beer/Wine/Liquor"),
+        ("Southern Glazer's", COGS, "Purchases – beer, wine, and liquor"),
+        ("Breakthru Beverage", COGS, "Purchases – beer, wine, and liquor"),
         # --- Bebidas (COGS) ---
-        ("Coca-Cola", COGS, "Beverages"),
-        ("Pepsi", COGS, "Beverages"),
+        ("Coca-Cola", COGS, "Purchases – beverages"),
+        ("Pepsi", COGS, "Purchases – beverages"),
         # --- Papel y empaques (COGS) ---
-        ("Uline", COGS, "Paper & Packaging"),
+        ("Uline", COGS, "Materials and supplies"),
         # --- Utensilios de cocina (OpEx) ---
-        ("WebstaurantStore", OPEX, "Smallwares"),
+        ("WebstaurantStore", OPEX, "Supplies – smallwares"),
         # --- Mantelería (OpEx): mismo comercio que en limpieza, categoría distinta ---
-        ("Cintas", OPEX, "Linens"),
-        ("Aramark", OPEX, "Linens"),
+        ("Cintas", OPEX, "Linens and laundry"),
+        ("Aramark", OPEX, "Linens and laundry"),
         # --- Software (OpEx) ---
         ("QuickBooks", OPEX, "Software"),
         ("Intuit", OPEX, "Software"),
         ("Toast", OPEX, "Software"),        # POS de restaurantes
         # --- Teléfono e internet (OpEx) ---
-        ("Verizon", OPEX, "Telephone & Internet"),
-        ("Comcast", OPEX, "Telephone & Internet"),
-        ("Xfinity", OPEX, "Telephone & Internet"),
-        ("Spectrum", OPEX, "Telephone & Internet"),
+        ("Verizon", OPEX, "Utilities"),
+        ("Comcast", OPEX, "Utilities"),
+        ("Xfinity", OPEX, "Utilities"),
+        ("Spectrum", OPEX, "Utilities"),
     ],
 }
 

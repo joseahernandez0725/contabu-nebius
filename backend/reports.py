@@ -78,8 +78,11 @@ def _category_breakdown(
 
     # Categorías PERSONALIZADAS de la empresa: aparecen SIEMPRE en el P&L (aunque estén en 0.00),
     # para que el dueño pueda estructurar/personalizar su estado de resultados a su gusto.
+    # 🔄 18-oct (Movimientos): `companycategory` es ahora el plan ENTERO del libro; las propias son las que
+    # no vienen del plan por defecto (`default_key` nulo) y no están archivadas. Así el P&L se ve igual.
     customs = session.exec(
         select(CompanyCategory).where(CompanyCategory.company_id == company_id)
+        .where(CompanyCategory.default_key.is_(None)).where(CompanyCategory.archived_at.is_(None))
     ).all()
     for c in customs:
         sec = c.account_type.value

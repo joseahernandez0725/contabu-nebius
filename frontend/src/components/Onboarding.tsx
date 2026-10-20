@@ -4,7 +4,8 @@ import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import LanguageSwitcher from "./LanguageSwitcher";
 import VerifyEmailBanner from "./VerifyEmailBanner";
-import { updateCompany } from "../api";
+import { updateCompany, type TaxForm } from "../api";
+import { DEMO_MODE } from "../demo";
 import type { Company } from "../types";
 
 // Idioma + con qué cuenta estás + salir. El onboarding se muestra a pantalla completa (sin el
@@ -55,6 +56,8 @@ export default function Onboarding({ company, onDone }: {
   const [name, setName] = useState(company.name === "My Business" ? "" : company.name);
   const [sector, setSector] = useState<string>(company.sector || "");
   const [otherTrade, setOtherTrade] = useState(company.profile?.trade ?? ""); // "other": oficio libre
+  // CÓMO TRIBUTA (Movimientos, 18-oct): con el sector decide el plan de cuentas. En el demo no se pregunta.
+  const [taxForm, setTaxForm] = useState<TaxForm>(company.tax_form ?? "schedule_c");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,6 +70,7 @@ export default function Onboarding({ company, onDone }: {
       const updated = await updateCompany({
         name: name.trim() || "My Business", sector,
         trade: sector === "other" ? otherTrade.trim() : "",
+        ...(DEMO_MODE ? {} : { tax_form: taxForm }),
       });
       onDone(updated); // libro listo → entra a la app
     } catch (e) {
@@ -152,6 +156,23 @@ export default function Onboarding({ company, onDone }: {
             </div>
           )}
         </div>
+
+        {!DEMO_MODE && (
+          <div>
+            <label className="block text-sm font-medium text-slate-800 mb-2">{t("onboarding.taxFormLabel")}</label>
+            <div role="radiogroup" className="grid grid-cols-1 gap-1.5">
+              {(["schedule_c", "1120s"] as TaxForm[]).map((f) => (
+                <button key={f} role="radio" aria-checked={taxForm === f} onClick={() => setTaxForm(f)}
+                  className={`px-3 py-2 rounded-lg border text-start text-sm transition-colors ${
+                    taxForm === f ? "border-brand-green bg-brand-green/5 text-brand-green font-medium"
+                      : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+                  {t(`chart.form.${f}`)}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500 mt-1">{t("onboarding.taxFormHelp")}</p>
+          </div>
+        )}
 
         {error && <div className="text-sm text-rose-600 text-center">{error}</div>}
 

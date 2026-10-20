@@ -17,16 +17,17 @@ from models import AccountType, Company, Plan, Transaction
 
 DEMO_NAME = "Demo Construction LLC"
 
-# (account_type, category, subcategory, amount, date)  — amount siempre positivo
+# (account_type, category, subcategory, amount, date)  — amount siempre positivo. Nombres del plan
+# oficial (18-oct); el libro recibe su plan al leerlo por primera vez (`categories.chart_rows`).
 ROWS = [
-    (AccountType.REVENUE,           "Sales",          "Client ABC",     "5000.00", date(2026, 3, 5)),
-    (AccountType.REVENUE,           "Sales",          "Client XYZ",     "3000.00", date(2026, 3, 18)),
+    (AccountType.REVENUE,           "Gross receipts or sales", "Client ABC",     "5000.00", date(2026, 3, 5)),
+    (AccountType.REVENUE,           "Gross receipts or sales", "Client XYZ",     "3000.00", date(2026, 3, 18)),
     (AccountType.COGS,              "Materials",      "Home Depot",      "342.18", date(2026, 3, 14)),
-    (AccountType.COGS,              "Subcontractors", "Joe's Framing",  "1200.00", date(2026, 3, 20)),
-    (AccountType.OPERATING_EXPENSE, "Rent",           "Office Park",     "800.00", date(2026, 3, 1)),
+    (AccountType.COGS,              "Contract labor – subcontractors", "Joe's Framing",  "1200.00", date(2026, 3, 20)),
+    (AccountType.OPERATING_EXPENSE, "Rent or lease – other business property", "Office Park",     "800.00", date(2026, 3, 1)),
     (AccountType.OPERATING_EXPENSE, "Utilities",      "City Power",      "150.00", date(2026, 3, 10)),
-    (AccountType.OTHER_EXPENSE,     "Interest",       "Bank Loan",        "75.00", date(2026, 3, 28)),
-    (AccountType.NON_PL,            "Bank Transfer",  "Savings #4471",   "500.00", date(2026, 3, 22)),
+    (AccountType.OTHER_EXPENSE,     "Interest – other", "Bank Loan",        "75.00", date(2026, 3, 28)),
+    (AccountType.NON_PL,            "Transfer",       "Savings #4471",   "500.00", date(2026, 3, 22)),
 ]
 
 

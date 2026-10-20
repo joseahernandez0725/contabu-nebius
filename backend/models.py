@@ -13,7 +13,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -104,6 +104,10 @@ class Company(SQLModel, table=True):
     user_id: Optional[int] = Field(default=None, foreign_key="user.id", index=True)
     name: str
     sector: str  # construcción / limpieza / restaurante…
+    # CÓMO TRIBUTA el libro (Movimientos, 18-oct-2026): "schedule_c" ("Sole proprietor / LLC — Schedule
+    # C") o "1120s" ("S corp / LLC — Form 1120-S"). Decide su plan de cuentas por defecto
+    # (`categories.default_plan`) y el formulario de la línea del IRS de cada categoría.
+    tax_form: str = Field(default="schedule_c")
     plan: Plan = Field(default=Plan.FREE)
     # Ventana de asentamiento (días): se retienen las transacciones recientes/pending hasta que
     # liquidan (base caja). None = usar el default del sistema. Ver docs/NOTAS IMPORTANTES.md.
@@ -265,17 +269,30 @@ class LearnedMerchant(SQLModel, table=True):
 
 
 class CompanyCategory(SQLModel, table=True):
-    """Categoría PERSONALIZADA que una empresa agrega a su plan de cuentas (P&L personalizable, v1).
+    """UNA CUENTA DEL PLAN DE CUENTAS DE UN LIBRO (Movimientos, 18-oct-2026; antes solo las propias).
 
-    Se MEZCLA con el plan base del sector (ver `categories.categories_for_company`): aparece en el
-    selector de corrección y en el desglose del P&L. v1 = solo AGREGAR (no renombrar/ocultar/reordenar).
-    El `name` es el término contable (en inglés, regla de oro); el frontend lo traduce visualmente.
+    Al elegir sector y formulario, el libro recibe SU copia del plan por defecto
+    (`categories.seed_chart`); desde ahí el bookkeeper la renombra, agrega, mueve de sección o quita
+    (en uso → se archiva). Lo que leen el motor, el selector, el validador y los agentes:
+    `categories.categories_for_company`. El `name` es el término contable (en inglés, regla de oro).
     """
+    __table_args__ = (UniqueConstraint("company_id", "name", name="uq_companycategory_company_name"),)
+
     id: Optional[int] = Field(default=None, primary_key=True)
     company_id: int = Field(foreign_key="company.id", index=True)
     account_type: AccountType  # sección del P&L a la que pertenece la categoría
-    name: str                  # nombre de la cuenta (inglés)
+    name: str                  # nombre de la cuenta (inglés), único en el libro
     created_at: datetime = Field(default_factory=_utcnow)
+    # La LÍNEA DEL IRS, con su formulario: "SchC:9", "SchC:PartV", "1120S:20", "1125A:5", "K:16d",
+    # "L:19"… (`categories.LINES`); None = ninguna (fuera del P&L). Viaja con la cuenta aunque la
+    # renombren o la muevan; se cambia a mano. Para la futura columna "IRS line" del Excel.
+    irs_line: Optional[str] = Field(default=None)
+    # Quitada estando en uso: sale del selector, pero lo ya categorizado con ella se queda.
+    archived_at: Optional[datetime] = Field(default=None)
+    position: int = Field(default=0)             # orden dentro de su sección
+    # El nombre con que vino del plan POR DEFECTO (no cambia al renombrar): lleva su texto de ayuda
+    # (`categories.HELP`). None = la creó el bookkeeper (esas salen en el P&L aunque estén en 0).
+    default_key: Optional[str] = Field(default=None)
 
 
 class SheetLabel(SQLModel, table=True):

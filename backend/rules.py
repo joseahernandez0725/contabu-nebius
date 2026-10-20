@@ -895,7 +895,7 @@ def build_import_rules(
     headers: list[str], rows: list[list[str]], keyword_col: str, category_col: str,
     account_type_col: str, sector: str, existing_keywords: list,
     subcategory_col: str = "", priority_col: str = "", from_col: str = "", to_col: str = "",
-    min_col: str = "", max_col: str = "",
+    min_col: str = "", max_col: str = "", chart: Optional[dict[str, list[str]]] = None,
 ) -> list[dict]:
     """Construye el PREVIEW del import: por cada fila del archivo del usuario (ya mapeado por la IA),
     extrae keyword + categoría, **resuelve la sección** (del archivo si la trae, si no por el plan de
@@ -905,7 +905,8 @@ def build_import_rules(
     La identidad de una regla es keyword + condiciones (`From`/`To` y `Min amount`/`Max amount` de
     nuestra exportación): `existing_keywords` trae `(keyword, valid_from, valid_to, amount_min,
     amount_max)` o el keyword solo. Una fecha o un monto ilegible marca la fila `bad_date` /
-    `bad_amount` (no se adivina una condición)."""
+    `bad_amount` (no se adivina una condición). `chart`: el plan del LIBRO (18-oct: el plan es por libro);
+    sin él, el plan por defecto del sector."""
     from categories import categories_for  # local: evita ciclo de import
     idx = {h: i for i, h in enumerate(headers)}
     ki, ci = idx.get(keyword_col), idx.get(category_col)
@@ -918,7 +919,7 @@ def build_import_rules(
     xi = idx.get(max_col) if max_col else None
     if ki is None or ci is None:
         return []
-    cat_to_type = {normalize(c): at for at, cats in categories_for(sector).items() for c in cats}
+    cat_to_type = {normalize(c): at for at, cats in (chart or categories_for(sector)).items() for c in cats}
     existing_norm = {(normalize(k[0]), *k[1:3], *(list(k[3:5]) + [None, None])[:2]) if isinstance(k, tuple)
                      else (normalize(k), None, None, None, None) for k in existing_keywords}
     out: list[dict] = []

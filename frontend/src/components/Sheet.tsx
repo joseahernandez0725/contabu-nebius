@@ -33,6 +33,7 @@ function timeAgo(iso: string, lang: string): string {
 
 const SHEET_EDITORS = { ...categoryEditors, ...textEditors };
 import Pivot from "./Pivot";
+import { emptySpot, restoreSpot, trackScroll, type GridSpot } from "./gridMemory";
 import RulesSheet, { type RulesCommands } from "./RulesSheet";
 
 /**
@@ -433,8 +434,17 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   const onEditRef = useRef(onEdit);
   useEffect(() => { onEditRef.current = onEdit; }, [onEdit]);
 
+  // DÓNDE QUEDÓ LA HOJA (Jose, 19-oct): el desplazamiento se anota aquí mientras se usa y se pone igual al
+  // volver de Reglas o del Pivote (`gridMemory.ts`). La fila enfocada ya la recuerda `focus`.
+  const sheetSpot = useRef<GridSpot>(emptySpot());
+  const rulesSpot = useRef<GridSpot>(emptySpot());   // la de Reglas, que sí se desmonta: se le presta
+  const restoringSheet = useRef(false);
+  const [gridMounts, setGridMounts] = useState(0);
+  const lastGridEl = useRef<HTMLElement | null>(null);
+
   const attachGrid = useCallback((el: HTMLElement | null) => {
     const prev = gridRef.current as any;
+    if (prev?.__contabuScroll) { prev.__contabuScroll(); delete prev.__contabuScroll; }
     if (prev?.__contabuHandler) {
       prev.removeEventListener("afteredit", prev.__contabuHandler);
       delete prev.__contabuHandler;
@@ -454,6 +464,14 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     }
     gridRef.current = el;
     if (!el) return;
+    // El wrapper de React vuelve a llamar a este `ref` en cada render (null y luego el MISMO elemento): solo
+    // un elemento que no habíamos visto es una grilla recién montada (si no, el contador entra en bucle).
+    if (el !== lastGridEl.current) {
+      lastGridEl.current = el;
+      restoringSheet.current = true;   // recién montada, en 0: no anotar hasta ponerla donde estaba
+      setGridMounts((n) => n + 1);
+    }
+    (el as any).__contabuScroll = trackScroll(el, sheetSpot, () => restoringSheet.current);
     const handler = (e: Event) => void onEditRef.current(e as CustomEvent);
     (el as any).__contabuHandler = handler;
     el.addEventListener("afteredit", handler);
@@ -919,6 +937,31 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     return () => { alive = false; };
   }, [goTo, tab, visible, pinDesc]);
 
+  // VOLVER A DONDE ESTABA: cada vez que la grilla se monta (al volver de Reglas o del Pivote), la celda
+  // enfocada y el desplazamiento de antes. Si otra pantalla mandó a una fila exacta (`focusTx` → `goTo`),
+  // gana ese pedido: no se restaura nada.
+  useEffect(() => {
+    if (!gridMounts) return;
+    const spot = sheetSpot.current;
+    if (focusTx || goTo != null || (spot.x === 0 && spot.y === 0 && focus == null)) {
+      restoringSheet.current = false;
+      return;
+    }
+    let alive = true;
+    restoringSheet.current = true;
+    const remembered = focus;
+    const pinned = pinDesc ? ["date", "description_extra"] : [];
+    const cols = (columns as any[]).map((c) => c.prop);
+    void restoreSpot(() => gridRef.current, { ...spot, id: remembered?.id ?? null, prop: remembered?.prop ?? null },
+      async (grid: any, y) => {
+        const prop = remembered?.prop ?? "date";
+        const isPin = pinned.includes(prop);
+        const x = Math.max(0, isPin ? pinned.indexOf(prop) : cols.filter((c) => !pinned.includes(c)).indexOf(prop));
+        await grid.setCellsFocus?.({ x, y }, { x, y }, isPin ? "colPinStart" : "rgCol", "rgRow");
+      }, () => alive).finally(() => { if (alive) restoringSheet.current = false; });
+    return () => { alive = false; };
+  }, [gridMounts]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // CTRL+F / CMD+F dentro de la hoja: enfoca NUESTRO buscador en vez del del navegador (como Excel).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1357,7 +1400,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
                     border: tab === "sheet" ? "1px solid #e3ded2" : "0",
                     borderRadius: 10, overflow: "hidden" }}>
         {tab === "rules"
-          ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)}
+          ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)} memory={rulesSpot}
               toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands}
               focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} showPriority={showPriority} />
           : tab === "pivot"

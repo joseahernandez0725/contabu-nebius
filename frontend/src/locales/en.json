@@ -195,7 +195,9 @@
     "saving": "Setting up…",
     "otherTradeLabel": "What does your business do?",
     "otherTradePlaceholder": "e.g. mobile car wash, tailoring…",
-    "signedInAs": "Signed in as"
+    "signedInAs": "Signed in as",
+    "taxFormLabel": "How does this business file taxes?",
+    "taxFormHelp": "It decides the default chart of accounts. You can change it later in Settings."
   },
   "settings": {
     "title": "Settings",
@@ -1319,7 +1321,87 @@
       "people_one": "person with access",
       "people_other": "people with access",
       "ownAccounts_one": "account of your own",
-      "ownAccounts_other": "accounts of your own"
+      "ownAccounts_other": "accounts of your own",
+      "taxForm": "how it files taxes"
+    }
+  },
+  "chart": {
+    "title": "Chart of accounts",
+    "lead": "This book's own accounts, each with its IRS line. Rename, add, move or remove: an account's transactions and rules follow it, and the change stays in each transaction's history.",
+    "loading": "Loading the chart of accounts…",
+    "form": {
+      "schedule_c": "Sole proprietor / LLC — Schedule C",
+      "1120s": "S corp / LLC — Form 1120-S"
+    },
+    "formShort": {
+      "schedule_c": "Schedule C",
+      "1120s": "Form 1120-S"
+    },
+    "formLabel": "How this book files taxes",
+    "formHelp": "Each option brings its own default chart of accounts and IRS lines.",
+    "formConfirm": "Switch this book to “{{form}}”? The new chart's accounts are added, unused ones from the current chart are removed, and the ones in use stay so you can rename, merge or remove them.",
+    "custom": "yours",
+    "locked": "The transfer detector writes this account: it can't be renamed, moved or removed.",
+    "line": "IRS line",
+    "noLine": "No line",
+    "name": "Account name",
+    "section": "Section",
+    "namePlaceholder": "Account name (in English)",
+    "txCount_one": "{{count}} transaction",
+    "txCount_other": "{{count}} transactions",
+    "ruleCount_one": "{{count}} rule",
+    "ruleCount_other": "{{count}} rules",
+    "unused": "unused",
+    "edit": "Edit",
+    "save": "Save",
+    "cancel": "Cancel",
+    "remove": "Remove",
+    "archive": "Archive",
+    "restore": "Restore",
+    "add": "+ Add account",
+    "addButton": "Add",
+    "addHelp": "Goes in {{section}}. The line suggested is where the form lists what has no line of its own; change it if another one fits.",
+    "archived_one": "Archived ({{count}})",
+    "archived_other": "Archived ({{count}})",
+    "archivedHelp": "Out of the category picker; what's already categorized with them stays.",
+    "confirmRename": "Rename “{{from}}” to “{{to}}”? Its {{tx}} transactions and {{rules}} rules change with it.",
+    "confirmMove": "Move “{{name}}” from {{from}} to {{section}}? Its {{tx}} transactions and {{rules}} rules move with it.",
+    "confirmMerge": "“{{to}}” already exists. Merge “{{from}}” into it? Its transactions and rules go to “{{to}}” and “{{from}}” leaves the chart.",
+    "confirmArchive": "“{{name}}” is in use: it will be archived (out of the picker; what's already categorized stays).",
+    "confirmDelete": "Remove “{{name}}” from the chart? Nothing uses it.",
+    "archivedOk": "“{{name}}” was archived.",
+    "moved_one": "{{count}} transaction updated.",
+    "moved_other": "{{count}} transactions updated.",
+    "merged_one": "“{{from}}” merged into “{{to}}”: {{count}} transaction moved.",
+    "merged_other": "“{{from}}” merged into “{{to}}”: {{count}} transactions moved.",
+    "err": {
+      "exists": "That account already exists in this chart.",
+      "locked": "This account can't be changed: the transfer detector uses it.",
+      "bad_line": "That line doesn't belong to this book's form.",
+      "empty_name": "Write a name first.",
+      "bad_name": "The name is too long or has a “:”.",
+      "not_found": "That account no longer exists. Reload the page.",
+      "error": "Something went wrong. Try again."
+    },
+    "help": {
+      "car_truck": "With actual expenses it includes the vehicles' fuel, oil, repairs, insurance and registration (plates).",
+      "insurance_sc": "The business's insurance. Employees' health insurance goes in Employee benefit programs; the owner's is not on Schedule C (it is Owner Draw).",
+      "insurance_1120s": "The business's insurance. Employees' health insurance goes in Employee benefit programs; the owner's goes in Compensation of officers.",
+      "employee_benefits": "Health insurance and other benefits for the employees (not the owner's).",
+      "payroll_wages_sc": "What reaches the employees in the bank: the NET pay, by check or direct deposit. The form asks for the GROSS: at year end, the payroll report (941 or W-3) adds the employee withholding here. If the payroll service charges net pay and taxes in ONE debit, it all goes here and is split at year end (ContaBu doesn't split a transaction). What the owner takes out doesn't go here (line 26: \"Do not include amounts paid to yourself\"): that is Owner Draw.",
+      "payroll_wages": "What reaches the employees in the bank: the NET pay, by check or direct deposit. The form asks for the GROSS: at year end, the payroll report (941 or W-3) adds the employee withholding here. If the payroll service charges net pay and taxes in ONE debit, it all goes here and is split at year end (ContaBu doesn't split a transaction).",
+      "payroll_officers": "The owner's salary and their health insurance, which the IRS counts as wages on their W-2. What reaches the owner in the bank: the NET pay, by check or direct deposit. The form asks for the GROSS: at year end, the payroll report (941 or W-3) adds the withholding here. If the payroll service charges net pay and taxes in ONE debit, it all goes here and is split at year end (ContaBu doesn't split a transaction).",
+      "payroll_taxes": "Payroll tax deposits to the IRS and the state. They carry the employee withholding together with the employer's share; the form only takes the employer's share: at year end, the withholding moves to wages with the payroll report.",
+      "materials": "What stays in the job. On Schedule C it goes on line 22 (Supplies), or Part III line 38 if the preparer uses it.",
+      "equipment_purchase": "Equipment or a vehicle over $2,500 (the IRS de minimis): not an expense of the year, it is depreciated on Form 4562."
+    },
+    "lineFmt": {
+      "line": "Line {{n}} · {{label}}",
+      "partV": "Part V · {{label}}",
+      "partIII": "Part III, line {{n}} · {{label}}",
+      "f1125a": "1125-A, line {{n}} · {{label}}",
+      "schK": "Schedule K, {{n}} · {{label}}",
+      "schL": "Schedule L, {{n}} · {{label}}"
     }
   }
 }

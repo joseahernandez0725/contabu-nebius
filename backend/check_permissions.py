@@ -106,6 +106,10 @@ BODIES: dict[tuple[str, str], dict] = {
     ("PATCH", "/api/companies/{company_id}/rules/{rule_id}"): {"category": "Materials"},
     ("POST", "/api/companies/{company_id}/custom-categories"): {
         "account_type": "OPERATING_EXPENSE", "name": "Inventada"},
+    # El plan de cuentas del libro (Movimientos, 18-oct). El PATCH apunta a la categoría 999999: un 404
+    # también prueba el rechazo.
+    ("POST", "/api/companies/{company_id}/chart"): {"account_type": "OPERATING_EXPENSE", "name": "Permcheck"},
+    ("PATCH", "/api/companies/{company_id}/chart/{category_id}"): {"name": "Permcheck"},
     ("POST", "/api/companies/{company_id}/labels"): {"name": "mía", "color": "#ff0000"},
     ("PUT", "/api/transactions/{transaction_id}/labels"): {"label_ids": []},
     ("POST", "/api/companies/{company_id}/cell-formats"): {

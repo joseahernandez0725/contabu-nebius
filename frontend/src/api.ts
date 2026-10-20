@@ -121,7 +121,10 @@ export async function getCompany(): Promise<Company> {
 
 // Edita el perfil de la empresa (nombre/sector). Lo usa el onboarding y el renombrar.
 // `trade`: a qué se dedica el negocio cuando el sector es "other" (texto libre; "" lo borra).
-export async function updateCompany(payload: { name?: string; sector?: string; trade?: string }): Promise<Company> {
+// `tax_form` (18-oct, Movimientos): cómo tributa el libro; decide su plan de cuentas por defecto.
+export async function updateCompany(payload: {
+  name?: string; sector?: string; trade?: string; tax_form?: TaxForm;
+}): Promise<Company> {
   const res = await fetch(`${API}/api/companies/${cid()}`, {
     method: "PATCH",
     headers: { ...(await authHeaders()), "Content-Type": "application/json" },
@@ -257,7 +260,7 @@ export async function applyCellFormat(payload: {
   return res.json();
 }
 
-// Plan de cuentas del sector: { account_type: [categorías] }.
+// Plan de cuentas DEL LIBRO (las categorías activas): { account_type: [categorías] }.
 export type ChartOfAccounts = Record<string, string[]>;
 export async function getCategories(): Promise<ChartOfAccounts> {
   const res = await fetch(`${API}/api/companies/${cid()}/categories`, { headers: await authHeaders() });
@@ -265,17 +268,11 @@ export async function getCategories(): Promise<ChartOfAccounts> {
   return res.json();
 }
 
-// --- Categorías personalizadas (P&L personalizable v1) ---
+// --- Agregar una categoría AL VUELO (desde la celda de la Hoja o el diálogo de una regla) ---
 export interface CustomCategory {
   id: number;
   account_type: string;
   name: string;
-}
-
-export async function getCustomCategories(): Promise<CustomCategory[]> {
-  const res = await fetch(`${API}/api/companies/${cid()}/custom-categories`, { headers: await authHeaders() });
-  if (!res.ok) throw new Error("No se pudieron cargar las categorías personalizadas");
-  return res.json();
 }
 
 export async function addCustomCategory(account_type: string, name: string): Promise<CustomCategory> {
@@ -291,12 +288,76 @@ export async function addCustomCategory(account_type: string, name: string): Pro
   return res.json();
 }
 
-export async function deleteCustomCategory(id: number): Promise<void> {
-  const res = await fetch(`${API}/api/companies/${cid()}/custom-categories/${id}`, {
+// ── MOVIMIENTOS — EL PLAN DE CUENTAS DEL LIBRO (18-oct): el editor de Ajustes ─────────────────────
+// Cada libro tiene SU copia del plan por defecto (Schedule C del sector, o el general del 1120-S) y el
+// bookkeeper la edita: renombrar (o fusionar), agregar, mover de sección, la línea del IRS, quitar.
+export type TaxForm = "schedule_c" | "1120s";
+
+export interface ChartAccount {
+  id: number;
+  name: string;
+  account_type: string;
+  irs_line: string | null;     // "SchC:9", "1120S:20", "K:16d"…; null = ninguna
+  archived: boolean;           // quitada estando en uso: fuera del selector, lo ya categorizado se queda
+  locked: boolean;             // la escribe el detector de transferencias: no se renombra ni se quita
+  help: string | null;         // clave de `chart.help.*`
+  custom: boolean;             // la creó el bookkeeper (no viene del plan por defecto)
+  tx_count: number;
+  rule_count: number;
+}
+
+export interface ChartData {
+  tax_form: TaxForm;
+  lines: { code: string; label: string }[];   // las líneas del formulario del libro (nombre del IRS)
+  suggested: Record<string, string | null>;    // la línea que se sugiere al agregar, por sección
+  accounts: ChartAccount[];
+}
+
+async function chartError(res: Response): Promise<Error> {
+  const body = await res.json().catch(() => ({}));
+  const d = body?.detail;
+  const err = new Error(typeof d === "object" && d?.code ? d.code : "error") as Error & { detail?: unknown };
+  err.detail = d;
+  return err;
+}
+
+export async function getChart(): Promise<ChartData> {
+  const res = await fetch(`${API}/api/companies/${cid()}/chart`, { headers: await authHeaders() });
+  if (!res.ok) throw await chartError(res);
+  return res.json();
+}
+
+export async function createChartAccount(body: { name: string; account_type: string; irs_line: string | null }): Promise<ChartAccount> {
+  const res = await fetch(`${API}/api/companies/${cid()}/chart`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await chartError(res);
+  return res.json();
+}
+
+// `merge`: renombrar a un nombre que ya existe = fusionar con esa categoría. `irs_line: ""` = sin línea.
+export async function updateChartAccount(id: number, body: {
+  name?: string; account_type?: string; irs_line?: string; archived?: boolean; merge?: boolean;
+}): Promise<ChartAccount & { moved?: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/chart/${id}`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await chartError(res);
+  return res.json();
+}
+
+// Quita una categoría: si algo la usa se ARCHIVA ({archived}), si no se borra ({deleted}).
+export async function deleteChartAccount(id: number): Promise<{ archived?: number; deleted?: number }> {
+  const res = await fetch(`${API}/api/companies/${cid()}/chart/${id}`, {
     method: "DELETE",
     headers: await authHeaders(),
   });
-  if (!res.ok) throw new Error("No se pudo eliminar la categoría");
+  if (!res.ok) throw await chartError(res);
+  return res.json();
 }
 
 // --- Tabla de reglas editable (comercio → categoría) ---

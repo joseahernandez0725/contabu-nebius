@@ -8,6 +8,7 @@ tocarla. El `company_id` de la URL ya NO se confía a ciegas.
 """
 
 import json
+from collections import Counter
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import os
@@ -17,6 +18,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlmodel import Session, delete, select
 
 from ai import RuleColumnMapping, map_rule_columns
@@ -26,10 +28,11 @@ from billing import apply_session, create_checkout_session, handle_event
 # INTENCIÓN de cada endpoint: leer · escribir como consola · escribir como cliente · ser dueño.
 from auth import (current_user, effective_role, owned_company, owner_company, owned_transaction,
                   client_writable_company, console_company, user_firm)
-from categories import categories_for, categories_for_company
+from categories import (help_for, LINES, LOCKED, TAX_FORMS, categories_for_company, chart_rows, line_form, seed_chart,
+                        suggested_line, switch_plan)
 from company_profile import format_profile_facts
 from corrections import (VIA_FOLLOW_RULE, VIA_MANUAL, VIA_RULE_DELETED, VIA_RULE_PRECEDENCE, VIA_RULE_UPDATE,
-                         last_change, record_change,
+                         VIA_CHART_MOVE, VIA_CHART_RENAME, last_change, record_change,
                          snapshot, undo_change)
 from db import get_session
 import demo  # FASE 13 — despliegue de demo (no hace nada si DEMO_MODE está apagado)
@@ -37,7 +40,7 @@ import book_notes  # FASE 11 — las notas del libro (Auditoría / IA)
 from ingestion import ingest_csv, mask_account, parse_spreadsheet
 from models import (
     AccountType, CategoryRule, Company, CompanyCategory, CompanyMember, PnlReport, Role, RuleScope,
-    Transaction, User,
+    Transaction, User, ProposalDismissal,
     Firm, FirmMember, FirmRole,
     SheetLabel,
     TransactionLabel,
@@ -100,6 +103,9 @@ class CompanyProfile(BaseModel):
     # (`PATCH /profile`, eliminado el 2-oct); es un dato del ALTA y la IA lo recibe como hecho
     # (`format_profile_facts` → "The owner describes the business as …").
     trade: Optional[str] = None
+    # CÓMO TRIBUTA (Movimientos, 18-oct): "schedule_c" | "1120s". Se elige con el sector y se cambia en
+    # Ajustes; decide el plan de cuentas por defecto. En el demo no se pregunta (todo es Schedule C).
+    tax_form: Optional[str] = None
 
 
 class CompanyCreate(BaseModel):
@@ -119,7 +125,7 @@ class MemberRoleUpdate(BaseModel):
 
 
 class CustomCategoryCreate(BaseModel):
-    """Nueva categoría personalizada que la empresa agrega a su plan de cuentas (P&L personalizable)."""
+    """Una categoría que se agrega AL VUELO al plan del libro (desde la celda o el diálogo de una regla)."""
     account_type: AccountType  # sección del P&L
     name: str                  # nombre de la cuenta (en inglés)
 
@@ -710,10 +716,17 @@ def update_company(
     Solo el OWNER (es un ajuste de la empresa)."""
     company = owner_company(company_id, user, session)
     data = payload.model_dump(exclude_unset=True)
+    had_sector, old_sector, old_form = bool(company.sector), company.sector, company.tax_form
     if data.get("name"):
         company.name = data["name"].strip()
     if data.get("sector"):
         company.sector = data["sector"].strip().lower()
+    if data.get("tax_form"):
+        if data["tax_form"] not in TAX_FORMS:
+            raise HTTPException(status_code=422, detail={"code": "bad_tax_form"})
+        if demo.DEMO_MODE and data["tax_form"] != "schedule_c":
+            raise HTTPException(status_code=403, detail={"code": "demo_schedule_c"})  # el demo es Schedule C
+        company.tax_form = data["tax_form"]
     if "trade" in data:
         profile = dict(company.profile or {})   # copia: un JSON mutado en sitio no se guarda
         trade = (data["trade"] or "").strip()[:120]
@@ -723,6 +736,13 @@ def update_company(
             profile.pop("trade", None)
         company.profile = profile
     session.add(company)
+    session.flush()
+    # EL PLAN DE CUENTAS DEL LIBRO (18-oct): al elegir el sector (el alta) recibe su copia del plan por
+    # defecto; si después cambia de formulario o de sector, pasa al plan nuevo sin perder lo que está en uso.
+    if company.sector and not had_sector:
+        seed_chart(session, company)
+    elif had_sector and (company.sector != old_sector or company.tax_form != old_form):
+        switch_plan(session, company)
     session.commit()
     session.refresh(company)
     return company
@@ -853,7 +873,7 @@ def get_categories(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Plan de cuentas EFECTIVO de la empresa: base del sector + categorías personalizadas.
+    """Plan de cuentas EFECTIVO del libro (`{sección: [categorías activas]}`, 18-oct: el plan es por libro).
     Lo usa el frontend para el selector de categoría (y derivar el account_type)."""
     # FASE 13 (decisión de Jose, 30-sep): el dueño del negocio NO ve el libro en construcción —
     # cambia todo el año. Lo ve cuando el bookkeeper se lo ENVÍA. → solo la oficina (no CLIENT).
@@ -861,17 +881,247 @@ def get_categories(
     return categories_for_company(session, company_id, company.sector)
 
 
-@app.get("/api/companies/{company_id}/custom-categories")
-def list_custom_categories(
+# ==================================================================================================
+# MOVIMIENTOS — EL PLAN DE CUENTAS DEL LIBRO (18-oct-2026). Cada libro tiene SU copia del plan por
+# defecto (`categories.py`) y el bookkeeper la edita en Ajustes: renombrar (o fusionar con otra),
+# agregar, mover de sección, cambiar la línea del IRS y quitar (en uso → se archiva). Renombrar y mover
+# arrastran los movimientos y las reglas de esa categoría, y queda en el historial de cada movimiento.
+# ==================================================================================================
+
+class ChartCreate(BaseModel):
+    """Una categoría nueva del plan. El nombre es libre (en inglés); la sección y la línea las pide el editor."""
+    account_type: AccountType
+    name: str
+    irs_line: Optional[str] = None   # None = la que se sugiere para la sección (`suggested_line`)
+
+
+class ChartUpdate(BaseModel):
+    name: Optional[str] = None
+    account_type: Optional[AccountType] = None
+    irs_line: Optional[str] = None   # "" = sin línea
+    archived: Optional[bool] = None
+    merge: bool = False              # renombrar a un nombre que YA existe = fusionar con esa categoría
+
+
+def _chart_usage(session: Session, company_id: int) -> tuple[Counter, Counter]:
+    """Cuántos movimientos y cuántas reglas usan cada categoría (SQL: GROUP BY)."""
+    txs = Counter(dict(session.exec(
+        select(Transaction.category, func.count(Transaction.id)).where(Transaction.company_id == company_id)
+        .where(Transaction.category.is_not(None)).group_by(Transaction.category)).all()))
+    rules = Counter(dict(session.exec(
+        select(CategoryRule.category, func.count(CategoryRule.id)).where(CategoryRule.company_id == company_id)
+        .group_by(CategoryRule.category)).all()))
+    return txs, rules
+
+
+def _is_locked(cat: CompanyCategory) -> bool:
+    """Las que escribe el detector de transferencias (`rules.classify_transfer`): no se renombran, no se
+    mueven ni se quitan."""
+    return cat.name in LOCKED or (cat.default_key or "") in LOCKED
+
+
+def _chart_out(cat: CompanyCategory, txs: Counter, rules: Counter, form: str = "schedule_c") -> dict:
+    return {"id": cat.id, "name": cat.name, "account_type": cat.account_type.value, "irs_line": cat.irs_line,
+            "archived": cat.archived_at is not None, "locked": _is_locked(cat),
+            "help": help_for(cat.default_key, form), "custom": cat.default_key is None,
+            "tx_count": txs.get(cat.name, 0), "rule_count": rules.get(cat.name, 0)}
+
+
+def _chart_category(session: Session, company_id: int, cat_id: int) -> CompanyCategory:
+    cat = session.get(CompanyCategory, cat_id)
+    if cat is None or cat.company_id != company_id:
+        raise HTTPException(status_code=404, detail={"code": "not_found"})
+    return cat
+
+
+def _chart_line(company: Company, line: Optional[str]) -> Optional[str]:
+    """Una línea del IRS válida PARA EL FORMULARIO DEL LIBRO (o ninguna)."""
+    line = (line or "").strip() or None
+    if line is not None and line_form(line) != (company.tax_form or "schedule_c"):
+        raise HTTPException(status_code=422, detail={"code": "bad_line"})
+    return line
+
+
+def _chart_name(name: Optional[str]) -> str:
+    name = " ".join((name or "").split())
+    if not name:
+        raise HTTPException(status_code=422, detail={"code": "empty_name"})
+    if len(name) > 80 or ":" in name:   # ":" separa el espacio de nombres de las traducciones
+        raise HTTPException(status_code=422, detail={"code": "bad_name"})
+    return name
+
+
+def _same_name(session: Session, company_id: int, name: str, but: Optional[int] = None) -> Optional[CompanyCategory]:
+    for c in session.exec(select(CompanyCategory).where(CompanyCategory.company_id == company_id)).all():
+        if c.id != but and c.name.lower() == name.lower():
+            return c
+    return None
+
+
+def _next_position(session: Session, company_id: int, section: AccountType) -> int:
+    top = session.exec(select(func.max(CompanyCategory.position)).where(CompanyCategory.company_id == company_id)
+                       .where(CompanyCategory.account_type == section)).one()
+    return (top if top is not None else -1) + 1
+
+
+def _relabel(session: Session, company_id: int, user_id: Optional[int], old: str, old_section: AccountType,
+             new: str, new_section: AccountType, via: str) -> int:
+    """Lleva los movimientos, las reglas y el historial de la categoría `old` a `new` / `new_section`.
+    Un movimiento cambia de sección solo si estaba en la de la categoría (uno que ya estaba en otra es un
+    error aparte: no se tapa). La HISTORIA pasa a las etiquetas nuevas (el ④ aprende de ella y debe
+    proponer cuentas que existen), y cada movimiento recibe su fila del cambio (`via`): queda en su
+    historial. Lo escrito a mano sigue siendo a mano. Devuelve cuántos movimientos cambiaron."""
+    o_sec, n_sec = old_section.value, new_section.value
+    for side in ("before", "after"):
+        cat_col = getattr(CategorizationChange, f"category_{side}")
+        for ch in session.exec(select(CategorizationChange).where(CategorizationChange.company_id == company_id)
+                               .where(cat_col == old)).all():
+            setattr(ch, f"category_{side}", new)
+            if getattr(ch, f"account_type_{side}") == o_sec:
+                setattr(ch, f"account_type_{side}", n_sec)
+            session.add(ch)
+    for d in session.exec(select(ProposalDismissal).where(ProposalDismissal.company_id == company_id)
+                          .where(ProposalDismissal.category == old)).all():
+        d.category = new
+        if d.account_type == o_sec:
+            d.account_type = n_sec
+        session.add(d)
+    for r in session.exec(select(CategoryRule).where(CategoryRule.company_id == company_id)
+                          .where(CategoryRule.category == old)).all():
+        r.category = new
+        if r.account_type == old_section:
+            r.account_type = new_section
+        session.add(r)
+    session.flush()
+    changed = 0
+    for tx in session.exec(select(Transaction).where(Transaction.company_id == company_id)
+                           .where(Transaction.category == old)).all():
+        before = snapshot(tx)
+        tx.category = new
+        if tx.account_type == old_section:
+            tx.account_type = new_section
+        session.add(tx)
+        changed += record_change(session, tx, before, via=via, user_id=user_id) is not None
+    return changed
+
+
+@app.get("/api/companies/{company_id}/chart")
+def get_chart(
     company_id: int,
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Categorías personalizadas que la empresa agregó a su plan de cuentas (con id, para borrarlas)."""
-    console_company(company_id, user, session)
-    return session.exec(
-        select(CompanyCategory).where(CompanyCategory.company_id == company_id)
-    ).all()
+    """El plan del libro para el editor de Ajustes: cada categoría con su sección, su línea del IRS, si está
+    archivada o bloqueada, su ayuda y cuántos movimientos y reglas la usan. Más las líneas del formulario
+    del libro y la que se sugiere por sección."""
+    company = console_company(company_id, user, session)
+    rows = chart_rows(session, company_id)
+    session.commit()   # por si el libro recibió aquí su copia del plan
+    txs, rules = _chart_usage(session, company_id)
+    form = company.tax_form or "schedule_c"
+    return {"tax_form": form,
+            "lines": [{"code": c, "label": lbl} for c, lbl in LINES[form]],
+            "suggested": {s.value: suggested_line(form, s.value) for s in AccountType},
+            "accounts": [_chart_out(c, txs, rules, form) for c in rows]}
+
+
+@app.post("/api/companies/{company_id}/chart")
+def create_chart_category(
+    company_id: int,
+    payload: ChartCreate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Agrega una categoría al plan del libro, con su sección y su línea (por defecto, la sugerida)."""
+    company = owned_company(company_id, user, session, write=True)
+    chart_rows(session, company_id)
+    name = _chart_name(payload.name)
+    other = _same_name(session, company_id, name)
+    if other is not None:
+        raise HTTPException(status_code=409, detail={"code": "exists", "id": other.id, "name": other.name})
+    line = (_chart_line(company, payload.irs_line) if payload.irs_line is not None
+            else suggested_line(company.tax_form or "schedule_c", payload.account_type.value))
+    cat = CompanyCategory(company_id=company_id, account_type=payload.account_type, name=name, irs_line=line,
+                          position=_next_position(session, company_id, payload.account_type))
+    session.add(cat)
+    session.commit()
+    session.refresh(cat)
+    return _chart_out(cat, Counter(), Counter())
+
+
+@app.patch("/api/companies/{company_id}/chart/{category_id}")
+def update_chart_category(
+    company_id: int,
+    category_id: int,
+    payload: ChartUpdate,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Renombra (o fusiona con otra, con `merge`), mueve de sección, cambia la línea o archiva/restaura una
+    categoría. Renombrar y mover arrastran sus movimientos y sus reglas (`_relabel`)."""
+    company = owned_company(company_id, user, session, write=True)
+    cat = _chart_category(session, company_id, category_id)
+    data = payload.model_dump(exclude_unset=True)
+    touches = {"name", "account_type", "archived"} & data.keys()
+    if _is_locked(cat) and (touches - {"name"} or (data.get("name") and _chart_name(data["name"]) != cat.name)):
+        raise HTTPException(status_code=409, detail={"code": "locked"})
+    moved = 0
+    if "irs_line" in data:
+        cat.irs_line = _chart_line(company, data["irs_line"])
+    if data.get("name"):
+        name = _chart_name(data["name"])
+        other = _same_name(session, company_id, name, but=cat.id)
+        if other is not None:
+            if not data.get("merge"):
+                raise HTTPException(status_code=409, detail={"code": "exists", "id": other.id, "name": other.name,
+                                                             "account_type": other.account_type.value})
+            # FUSIONAR: todo lo de esta pasa a la otra (con su sección) y esta sale del plan.
+            moved = _relabel(session, company_id, user.id, cat.name, cat.account_type, other.name,
+                             other.account_type, VIA_CHART_RENAME)
+            session.delete(cat)
+            session.commit()
+            txs, rules = _chart_usage(session, company_id)
+            return {**_chart_out(other, txs, rules, company.tax_form), "merged_from": category_id, "moved": moved}
+        if name != cat.name:
+            moved += _relabel(session, company_id, user.id, cat.name, cat.account_type, name, cat.account_type,
+                              VIA_CHART_RENAME)
+            cat.name = name
+    if data.get("account_type") and data["account_type"] != cat.account_type:
+        new_sec = data["account_type"]
+        moved += _relabel(session, company_id, user.id, cat.name, cat.account_type, cat.name, new_sec, VIA_CHART_MOVE)
+        cat.account_type = new_sec
+        cat.position = _next_position(session, company_id, new_sec)
+    if "archived" in data:
+        cat.archived_at = (cat.archived_at or datetime.now(timezone.utc).replace(tzinfo=None)) if data["archived"] else None
+    session.add(cat)
+    session.commit()
+    session.refresh(cat)
+    txs, rules = _chart_usage(session, company_id)
+    return {**_chart_out(cat, txs, rules, company.tax_form), "moved": moved}
+
+
+@app.delete("/api/companies/{company_id}/chart/{category_id}")
+def delete_chart_category(
+    company_id: int,
+    category_id: int,
+    user: User = Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """Quita una categoría del plan. Si algún movimiento o regla la usa, se ARCHIVA (sale del selector, lo
+    ya categorizado se queda); si no, se borra."""
+    owned_company(company_id, user, session, write=True)
+    cat = _chart_category(session, company_id, category_id)
+    if _is_locked(cat):
+        raise HTTPException(status_code=409, detail={"code": "locked"})
+    txs, rules = _chart_usage(session, company_id)
+    if txs.get(cat.name) or rules.get(cat.name):
+        cat.archived_at = cat.archived_at or datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(cat)
+        session.commit()
+        return {"archived": category_id}
+    session.delete(cat)
+    session.commit()
+    return {"deleted": category_id}
 
 
 @app.post("/api/companies/{company_id}/custom-categories")
@@ -881,48 +1131,28 @@ def add_custom_category(
     user: User = Depends(current_user),
     session: Session = Depends(get_session),
 ):
-    """Agrega una categoría personalizada (P&L personalizable v1). Idempotente: si ya existe esa
-    categoría (mismo nombre y sección, o ya está en el plan base), no la duplica."""
+    """Agregar una categoría AL VUELO (desde la celda de la Hoja o el diálogo de una regla). Idempotente:
+    si ya existe en esa sección, la devuelve (y si estaba archivada, la restaura). Su línea, la sugerida."""
     company = owned_company(company_id, user, session, write=True)
-    name = payload.name.strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="El nombre de la categoría no puede estar vacío.")
-
-    # No duplicar si ya existe en el plan base del sector o en las personalizadas.
-    base = categories_for(company.sector).get(payload.account_type.value, [])
-    if any(name.lower() == c.lower() for c in base):
-        raise HTTPException(status_code=409, detail="Esa categoría ya existe en el plan base.")
-    existing = session.exec(
-        select(CompanyCategory)
-        .where(CompanyCategory.company_id == company_id)
-        .where(CompanyCategory.account_type == payload.account_type)
-    ).all()
-    for c in existing:
-        if c.name.lower() == name.lower():
-            return c  # ya existe → idempotente
-
-    cat = CompanyCategory(company_id=company_id, account_type=payload.account_type, name=name)
+    chart_rows(session, company_id)
+    name = _chart_name(payload.name)
+    other = _same_name(session, company_id, name)
+    if other is not None:
+        if other.account_type != payload.account_type:
+            raise HTTPException(status_code=409, detail="Esa categoría ya existe en otra sección del plan.")
+        if other.archived_at is not None:
+            other.archived_at = None
+            session.add(other)
+            session.commit()
+            session.refresh(other)
+        return other
+    cat = CompanyCategory(company_id=company_id, account_type=payload.account_type, name=name,
+                          irs_line=suggested_line(company.tax_form or "schedule_c", payload.account_type.value),
+                          position=_next_position(session, company_id, payload.account_type))
     session.add(cat)
     session.commit()
     session.refresh(cat)
     return cat
-
-
-@app.delete("/api/companies/{company_id}/custom-categories/{category_id}")
-def delete_custom_category(
-    company_id: int,
-    category_id: int,
-    user: User = Depends(current_user),
-    session: Session = Depends(get_session),
-):
-    """Elimina una categoría personalizada. No afecta transacciones ya categorizadas con ese nombre."""
-    owned_company(company_id, user, session, write=True)
-    cat = session.get(CompanyCategory, category_id)
-    if cat is None or cat.company_id != company_id:
-        raise HTTPException(status_code=404, detail="Categoría no encontrada.")
-    session.delete(cat)
-    session.commit()
-    return {"deleted": category_id}
 
 
 # --- Tabla de reglas editable (comercio → categoría) — el "reglamento" que la firma cura ---
@@ -1122,9 +1352,19 @@ def update_rule(
 ):
     """Edita una regla y la re-aplica a las transacciones existentes del comercio (cambia el
     reglamento → los libros se ajustan al instante). Devuelve la regla y cuántas alineó."""
-    owned_company(company_id, user, session, write=True)
+    company = owned_company(company_id, user, session, write=True)
     rule = _owned_company_rule(company_id, rule_id, session)
     data = payload.model_dump(exclude_unset=True)
+    if data.get("category") or data.get("account_type"):
+        # La categoría tiene que estar en el plan del LIBRO y en su sección (18-oct: el plan es por libro).
+        chart = categories_for_company(session, company_id, company.sector)
+        cat = data.get("category") or rule.category
+        at = data.get("account_type") or rule.account_type
+        if cat not in (chart.get(at.value if at else "") or []):
+            home = next((s for s, cats in chart.items() if cat in cats), None)
+            if home is None or "account_type" in data:
+                raise HTTPException(status_code=422, detail="categoría fuera del plan de cuentas")
+            data["account_type"] = AccountType(home)
     if "subcategory" in data:  # "" desde la UI = limpiar (volver al match_text)
         data["subcategory"] = (data["subcategory"] or "").strip() or None
     if "priority" in data:
@@ -1995,7 +2235,7 @@ async def import_rules_preview(
     preview = build_import_rules(
         headers, rows, mapping.keyword_column, mapping.category_column,
         mapping.account_type_column, sector, existing, mapping.subcategory_column, priority_col,
-        from_col, to_col, min_col, max_col,
+        from_col, to_col, min_col, max_col, chart=categories_for_company(session, company_id),
     )
     return {
         "mapping": {

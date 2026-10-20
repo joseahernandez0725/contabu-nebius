@@ -6,6 +6,7 @@ import {
   type Rule, type RuleStyle, type ChartOfAccounts,
 } from "../api";
 import RuleFormula from "./RuleFormula";
+import { restoreSpot, trackScroll, type GridSpot } from "./gridMemory";
 import {
   CATEGORY_EDITOR, categoryEditors, sectionOfCategory, setEditorChart,
 } from "./CategoryEditor";
@@ -136,7 +137,7 @@ export type RulesCommands = {
 };
 
 export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, formulaBar = true, onCommands,
-  focusRule, onFocusRuleDone, showPriority = false }: {
+  focusRule, onFocusRuleDone, showPriority = false, memory }: {
   /** Descripción de una transacción con la que arrancar la regla (viene de la hoja). */
   seedKeyword?: string | null;
   onSeedUsed?: () => void;
@@ -150,9 +151,14 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   /** La columna con el NÚMERO de prioridad (menú Ver). Escondida por defecto (Jose, 14-oct): quién gana
    *  se decide en el choque, con "que gane esta". */
   showPriority?: boolean;
+  /** DÓNDE QUEDÓ (Jose, 19-oct): lo guarda la Hoja, que no se desmonta al cambiar de pestaña. Al volver a
+   *  Reglas, el desplazamiento y la celda enfocada de antes (`gridMemory.ts`). */
+  memory?: { current: GridSpot };
 } = {}) {
   const { t } = useTranslation();
   const [rules, setRules] = useState<Rule[] | null>(null);
+  // Un pedido de otra parte (ir a una regla, crear una desde una fila) gana sobre "volver a donde estaba".
+  const skipRestore = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   // Formulario de regla nueva. Antes era un `window.prompt` de UN campo que mandaba una categoría
@@ -185,6 +191,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   useEffect(() => {
     // "" = regla EN BLANCO (el botón "Crear regla" de la Hoja sin fila seleccionada).
     if (seedKeyword != null) {
+      skipRestore.current = true;   // la regla nueva manda: no volver a donde estaba
       setDraft({ match_text: seedKeyword.trim(), category: "", subcategory: "" });
       onSeedUsed?.();
     }
@@ -545,13 +552,25 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       return `.${c} .rgCell, .${c} .rgCell *{${rr.join(";")}}`;
     }).join("\n");
   }, [rules]);
+  const restoring = useRef(false);
+  const [gridMounts, setGridMounts] = useState(0);
+  const lastEl = useRef<HTMLElement | null>(null);
   const attach = useCallback((el: HTMLElement | null) => {
     const prev = gridRef.current as any;
+    if (prev?.__scroll) { prev.__scroll(); delete prev.__scroll; }
     if (prev?.__h) { prev.removeEventListener("afteredit", prev.__h); delete prev.__h; }
     if (prev?.__f) { prev.removeEventListener("afterfocus", prev.__f); delete prev.__f; }
     if (prev?.__s) { prev.removeEventListener("afterfocus", prev.__s); prev.removeEventListener("setrange", prev.__s); delete prev.__s; }
     gridRef.current = el;
     if (!el) return;
+    if (memory) {
+      if (el !== lastEl.current) {   // el `ref` se repite (null y el MISMO elemento) en cada render
+        lastEl.current = el;
+        restoring.current = true;   // recién montada, en 0: no anotar hasta ponerla donde estaba
+        setGridMounts((n) => n + 1);
+      }
+      (el as any).__scroll = trackScroll(el, memory, () => restoring.current);
+    }
     const h = (ev: Event) => void onEditRef.current(ev as CustomEvent);
     (el as any).__h = h;
     el.addEventListener("afteredit", h);
@@ -559,6 +578,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       const d = (ev as CustomEvent).detail ?? {};
       if (d.model?.id == null || d.column?.prop == null) return;
       setFocus({ id: d.model.id, prop: String(d.column.prop), row: (d.rowIndex ?? 0) + 1 });
+      if (memory && !restoring.current) memory.current = { ...memory.current, id: d.model.id, prop: String(d.column.prop) };
     };
     (el as any).__f = f;
     el.addEventListener("afterfocus", f);
@@ -574,7 +594,27 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     (el as any).__s = sel;
     el.addEventListener("afterfocus", sel);
     el.addEventListener("setrange", sel);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // VOLVER A DONDE ESTABA (19-oct): al montarse la grilla, la celda y el desplazamiento de antes. "Ir a la
+  // regla" desde la Hoja (`focusRule`) o una regla nueva desde una fila (`seedKeyword`) ganan: no se restaura.
+  useEffect(() => {
+    if (!gridMounts || !memory) return;
+    const spot = memory.current;
+    if (skipRestore.current || focusRule || seedKeyword != null || (spot.x === 0 && spot.y === 0 && spot.id == null)) {
+      skipRestore.current = false;
+      restoring.current = false;
+      return;
+    }
+    let alive = true;
+    restoring.current = true;
+    void restoreSpot(() => gridRef.current as any, spot, async (grid: any, y) => {
+      const cols: any[] = (await grid.getColumns?.()) ?? [];
+      const x = Math.max(0, cols.findIndex((c) => c?.prop === spot.prop));
+      await grid.setCellsFocus?.({ x, y }, { x, y });
+    }, () => alive).finally(() => { if (alive) restoring.current = false; });
+    return () => { alive = false; };
+  }, [gridMounts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   useUndoShortcut(hostRef, () => void undo());
@@ -938,6 +978,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   // "IR A LA REGLA" desde la Hoja: cuando las reglas llegan, se selecciona esa fila y se desplaza ahí.
   useEffect(() => {
     if (!focusRule || !rules) return;
+    skipRestore.current = true;   // "Ir a la regla" manda sobre "donde estaba"
     onFocusRuleDone?.();
     if (!selectRule(focusRule.id)) {
       setError(t("rules.goMissing", { defaultValue: "The rule that decided this row no longer exists. Its transactions went back to the other rules or are Pending." }));

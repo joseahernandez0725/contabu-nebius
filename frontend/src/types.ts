@@ -63,6 +63,7 @@ export interface Company {
   id: number;
   name: string;
   sector: string;
+  tax_form?: "schedule_c" | "1120s"; // cómo tributa el libro (Movimientos, 18-oct): decide su plan de cuentas
   plan: string;
   settlement_buffer_days: number | null; // días de retención; null = default del sistema
   subscription_status?: string | null; // "active" · "canceled" · null = plan gratis
