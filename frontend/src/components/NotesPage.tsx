@@ -77,10 +77,12 @@ export function useNoteText() {
 
 // ── La página ────────────────────────────────────────────────────────────────────────────────────
 
-// "+ Nueva nota" desde la tarjeta del inicio: la página abre con el editor vacío. Una marca de módulo (como
-// `openDemoTour`) para que el montaje en `Dashboard.tsx` (de Firm) siga siendo de una línea.
-let newOnOpen = false;
-export function openNewNoteNext() { newOnOpen = true; }
+// "+ Nueva nota" desde la tarjeta del inicio, o una nota recién creada en `NoteQuickAdd` (19-oct): la
+// página abre con el editor vacío o con ESA nota ya elegida. Una marca de módulo (como `openDemoTour`)
+// para que el montaje en `Dashboard.tsx` (de Firm) siga siendo de una línea.
+let selOnOpen: Sel = null;
+export function openNewNoteNext() { selOnOpen = "new"; }
+export function openNoteNext(id: number) { selOnOpen = id; }
 
 export default function NotesPage({ onOpenSheet, onProposeRules }: {
   onOpenSheet?: (txId: number) => void;          // "Ver en Bookkeeping" → la fila exacta (App.openInSheet)
@@ -91,8 +93,8 @@ export default function NotesPage({ onOpenSheet, onProposeRules }: {
   const [notes, setNotes] = useState<BookNote[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Se lee en el inicializador y se limpia en un efecto (en modo estricto el inicializador corre dos veces).
-  const [sel, setSel] = useState<Sel>(() => (newOnOpen ? "new" : null));
-  useEffect(() => { newOnOpen = false; }, []);
+  const [sel, setSel] = useState<Sel>(() => selOnOpen);
+  useEffect(() => { selOnOpen = null; }, []);
 
   const errText = useCallback((e: unknown) => e instanceof BookNoteError
     ? t(`notes.error.${e.code}`, { defaultValue: t(`agents.error.${e.code}`, { defaultValue: t("notes.error.notes_error") }) })

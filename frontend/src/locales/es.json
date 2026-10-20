@@ -732,6 +732,16 @@
     },
     "noRulesForNote": "El redactor no propuso reglas para esta nota."
   },
+  "notesQuick": {
+    "title": "Nota rápida",
+    "close": "Cerrar",
+    "saved": "Nota guardada.",
+    "savedDont": "Nota guardada. El código la silenciará en la próxima revisión.",
+    "willRead": "La IA la leerá en la próxima revisión.",
+    "done": "Listo",
+    "openInNotes": "Abrir en Notas →",
+    "error": "No se pudo guardar la nota. Intenta de nuevo."
+  },
   "agents": {
     "title": "Equipo de agentes · Nemotron",
     "subtitle": "El redactor propone filas para la fórmula de este libro a partir de tus notas y correcciones; el revisor juzga los hallazgos del auditor. Nada cambia hasta que apruebas.",

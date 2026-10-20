@@ -389,6 +389,16 @@
     },
     "noRulesForNote": "The drafter proposed no rules for this note."
   },
+  "notesQuick": {
+    "title": "Quick note",
+    "close": "Close",
+    "saved": "Note saved.",
+    "savedDont": "Note saved. The code will silence it on the next review.",
+    "willRead": "The AI will read it on the next review.",
+    "done": "Done",
+    "openInNotes": "Open in Notes →",
+    "error": "Couldn't save the note. Try again."
+  },
   "agents": {
     "title": "Agent team · Nemotron",
     "subtitle": "The drafter proposes rows for this book's formula from your notes and corrections; the reviewer judges the auditor's findings. Nothing changes until you approve.",
