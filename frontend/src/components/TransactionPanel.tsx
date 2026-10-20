@@ -22,8 +22,20 @@ import {
 // 🔄 19-oct: "Nota de este movimiento" SÍ se edita aquí (`NoteEditor`), justo debajo del encabezado —
 // la Hoja quitó su columna "Note" (Movimientos). Se guarda sola al salir del campo o con Ctrl+Enter. Un
 // visor (rol VIEWER) la ve, no la edita (mismo candado que `Settings.tsx`: `role !== "VIEWER"`).
+//
+// 🔄 19-oct (ronda de uso): el monto se mudó al encabezado (junto al comercio y la fecha; ya no vive
+// aparte) · fuera la "Línea del banco" — ya se ve en la Hoja · "Lo que encontraron los agentes" sube,
+// antes de Categoría, con más aire: es lo más importante del panel · Categoría se comprime a una línea
+// (ƒ/✎/⇄ + la cuenta); el "por qué" (de dónde salió + la fórmula) se pliega, se abre con un clic.
 
 export const LEVEL_DOT: Record<FlagLevel, string> = { problem: DOT.problem, review: DOT.review, info: DOT.info };
+
+// El ícono de la línea comprimida de Categoría (19-oct): de dónde salió la categoría, de un vistazo.
+// "pending" y "other" no tienen ícono propio (no hay categoría que mostrar, o la fuente es rara).
+const PROV_ICON: Partial<Record<TxInsight["provenance"]["kind"], string>> = { rule: "ƒ", manual: "✎", transfer: "⇄" };
+const PROV_ICON_LABEL: Partial<Record<TxInsight["provenance"]["kind"], string>> = {
+  rule: "panel.prov.rule", manual: "panel.prov.manual", transfer: "panel.prov.transfer",
+};
 
 export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, onOpenAudit, onChanged }: {
   txId: number;
@@ -38,7 +50,6 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
   const { label, fmtDate, webLabel, detectorSentence } = useAuditText();
   const [data, setData] = useState<TxInsight | null>(null);
   const [error, setError] = useState(false);
-  const [rawOpen, setRawOpen] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   // Candado de "Nota de este movimiento" (19-oct): visor (rol VIEWER) la ve, no la edita. Mismo
   // criterio que `Settings.tsx` (`canEdit = role !== "VIEWER"`); se pide una sola vez, no por movimiento.
@@ -54,7 +65,6 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
       .catch(() => { if (alive) setError(true); });
     return () => { alive = false; };
   }, [txId, refreshKey]);
-  useEffect(() => { setRawOpen(false); }, [txId]);
 
   async function markOk(findingId: number) {
     setBusy(findingId);
@@ -76,13 +86,14 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
     // `preventDefault` en mouseup: si no, RevoGrid toma el clic como "afuera" y suelta la celda que se
     // estaba editando (regla de la hoja, `.claude/rules/hoja.md`). Así el teclado sigue en la hoja.
     <div onMouseUp={(e) => e.preventDefault()} onTouchEnd={(e) => e.preventDefault()}
-         className="h-full w-[460px] max-w-[45vw] shrink-0">
+         className="h-full w-1/4 min-w-[320px] shrink-0">
       <DetailCard onClose={onClose} closeLabel={t("panel.close")} className="h-full overflow-y-auto space-y-2.5">
         {!x && !error && <DetailEmpty text={t("panel.loading")} />}
         {error && !x && <DetailEmpty text={t("panel.error")} />}
         {x && tx && (
           <>
-            {/* 1. EL MOVIMIENTO */}
+            {/* 1. EL MOVIMIENTO, con el monto en el encabezado (19-oct: antes vivía aparte, ahora junto
+                al comercio y la fecha). */}
             <DetailHeader
               // Sin hallazgos, una fila sin categoría sigue siendo trabajo: se dice "Pendiente", no "nada que revisar".
               dot={x.level ? LEVEL_DOT[x.level] : !tx.category ? DOT.pending : DOT.ok}
@@ -90,6 +101,14 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               kickerTone={x.level === "problem" ? "text-rose-700" : x.level === "review" || (!x.level && !tx.category) ? "text-amber-800" : "text-slate-600"}
               title={x.merchant}
               sub={`${fmtDate(tx.date)}${tx.account ? ` · ${tx.account}` : ""}`}
+              amount={
+                <div className={`text-end ${tx.is_inflow ? "text-emerald-700" : "text-slate-900"}`}>
+                  <div className="text-lg font-bold tabular-nums leading-tight">
+                    {tx.is_inflow ? "+" : "−"}{money(Math.abs(tx.amount))}
+                  </div>
+                  <div className="text-[10px] font-normal text-slate-400">{t(tx.is_inflow ? "panel.in" : "panel.out")}</div>
+                </div>
+              }
             />
 
             {/* 2. LA NOTA DE ESTE MOVIMIENTO (19-oct, Firm, arriba por pedido de Jose): editable, distinta
@@ -99,45 +118,27 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               <NoteEditor txId={tx.id} note={tx.note} canEdit={canEditNote} onSaved={onChanged} />
             </DetailSection>
 
-            <div className={`text-xl font-semibold tabular-nums ${tx.is_inflow ? "text-emerald-700" : "text-slate-900"}`}>
-              {tx.is_inflow ? "+" : "−"}{money(Math.abs(tx.amount))}
-              <span className="ms-2 text-xs font-normal text-slate-500">{t(tx.is_inflow ? "panel.in" : "panel.out")}</span>
-            </div>
-            <div className="text-xs">
-              <button onClick={() => setRawOpen(!rawOpen)} className="text-slate-500 hover:text-slate-800">
-                <span className="text-slate-400">{rawOpen ? "▾" : "▸"}</span> {t("panel.bankLine")}
-              </button>
-              {rawOpen && <div className="mt-0.5 ps-3 font-mono break-all text-[11px] text-slate-500">{tx.description}</div>}
-              {tx.description_extra && (
-                <div className="mt-0.5 text-slate-500"><span className="text-slate-400">{t("panel.yourText")}:</span> {tx.description_extra}</div>
-              )}
-            </div>
-            {tx.bank_removed_at && (
-              <p className="text-xs text-rose-800 bg-rose-50 rounded-lg px-2 py-1">{t("panel.bankRemoved")}</p>
+            {/* Fuera la "Línea del banco" (19-oct): ya se ve en la Hoja. Lo que queda es solo lo que
+                NO se ve ahí: el texto que agregó el bookkeeper al importar y el aviso si el banco retiró
+                el movimiento después de registrarlo. */}
+            {(tx.description_extra || tx.bank_removed_at) && (
+              <div className="text-xs space-y-1">
+                {tx.description_extra && (
+                  <div className="text-slate-500"><span className="text-slate-400">{t("panel.yourText")}:</span> {tx.description_extra}</div>
+                )}
+                {tx.bank_removed_at && (
+                  <p className="text-rose-800 bg-rose-50 rounded-lg px-2 py-1">{t("panel.bankRemoved")}</p>
+                )}
+              </div>
             )}
 
-            {/* 3. LA CATEGORÍA Y DE DÓNDE SALIÓ */}
-            <DetailSection title={t("panel.category")}>
-              {tx.category && tx.account_type ? (
-                <div className="text-sm text-slate-900">
-                  {label(`${tx.account_type}/${tx.category}`)}
-                  {tx.subcategory && <span className="text-slate-500"> · {tx.subcategory}</span>}
-                </div>
-              ) : (
-                <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-800 ring-1 ring-inset ring-rose-200">
-                  {t("agents.pending")}
-                </span>
-              )}
-              <Provenance x={x} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
-              {/* Por qué (14-oct, Movimientos): la fórmula de ESTA fila — las reglas que la mencionan, en orden. */}
-              <RuleTrace txId={tx.id} refreshKey={refreshKey} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
-            </DetailSection>
-
-            {/* 4. LO QUE ENCONTRARON LOS AGENTES */}
-            <DetailSection title={t("panel.agents")}>
+            {/* 3. LO QUE ENCONTRARON LOS AGENTES (19-oct: sube antes de Categoría) — es lo más
+                importante del panel, se ve primero y con más aire que las demás secciones. */}
+            <section className="border-t border-slate-100 pt-3 space-y-2.5">
+              <h4 className="text-sm font-bold text-slate-900">{t("panel.agents")}</h4>
               {x.findings.length === 0 && <p className="text-xs text-slate-400">{t("panel.noFindings")}</p>}
               {x.findings.map((f) => (
-                <div key={f.id} className="rounded-lg border border-slate-100 p-2 space-y-1.5">
+                <div key={f.id} className="rounded-lg border border-slate-100 p-3 space-y-2">
                   <div className="flex items-center gap-1.5 text-xs">
                     <span className={`w-2 h-2 rounded-full ${LEVEL_DOT[f.level]}`} />
                     <span className="font-semibold text-slate-800">{t(`auditView.type.${f.type}`, { defaultValue: f.type })}</span>
@@ -161,6 +162,41 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
               ))}
               {/* La evidencia del ② sobre ESTE comercio, aunque no haya hallazgo (tipo de negocio + enlace). */}
               {x.web && !x.findings.some((f) => f.web) && <WebChip w={x.web} webLabel={webLabel} />}
+            </section>
+
+            {/* 4. LA CATEGORÍA, comprimida en una línea (19-oct): el ícono dice de dónde salió (ƒ de una
+                regla · ✎ a mano · ⇄ transferencia), la cuenta y su sección. El "por qué" (de dónde
+                exactamente y la fórmula que la toca) se pliega; se abre con un clic. */}
+            <DetailSection title={t("panel.category")}>
+              <div className="flex items-center gap-1.5 text-sm text-slate-900">
+                {tx.category && tx.account_type ? (
+                  <>
+                    {PROV_ICON[x.provenance.kind] && (
+                      <span className="shrink-0 font-bold italic text-emerald-700" title={t(PROV_ICON_LABEL[x.provenance.kind]!)}>
+                        {PROV_ICON[x.provenance.kind]}
+                      </span>
+                    )}
+                    <span className="truncate">
+                      {label(`${tx.account_type}/${tx.category}`)}
+                      {tx.subcategory && <span className="text-slate-500"> · {tx.subcategory}</span>}
+                    </span>
+                  </>
+                ) : (
+                  <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-800 ring-1 ring-inset ring-rose-200">
+                    {t("agents.pending")}
+                  </span>
+                )}
+              </div>
+              <details className="text-xs">
+                <summary className="cursor-pointer list-none text-slate-500 hover:text-slate-800">
+                  <span className="text-slate-400">▸</span> {t("panel.why")}
+                </summary>
+                <div className="mt-1.5 space-y-1.5">
+                  <Provenance x={x} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
+                  {/* Por qué (14-oct, Movimientos): la fórmula de ESTA fila — las reglas que la mencionan, en orden. */}
+                  <RuleTrace txId={tx.id} refreshKey={refreshKey} onGoRule={onGoRule} label={label} fmtDate={fmtDate} />
+                </div>
+              </details>
             </DetailSection>
 
             {/* 5. LAS NOTAS DEL LIBRO QUE LE APLICAN */}

@@ -220,7 +220,8 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
         </div>
       )}
 
-      <div className="grid gap-3 lg:grid-cols-2 items-start">
+      {/* El P&L al 60 %, la columna de atención al 40 % (19-oct, Jose). */}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
         {/* 3. EL P&L DEL AÑO EN CURSO — lo que al final recibe el cliente, en su modo COMPACTO (Entregables,
             18-oct): secciones plegadas a su total y lo Pendiente siempre a la vista. */}
         <div className="relative bg-white rounded-xl border border-slate-200 p-5">

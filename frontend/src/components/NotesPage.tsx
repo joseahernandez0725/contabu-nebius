@@ -121,7 +121,7 @@ export default function NotesPage({ onOpenSheet, onProposeRules }: {
       {loadError && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{loadError}</p>}
 
       <ListDetail
-        wide="detail"
+        wide="split"
         selKey={sel ?? undefined}
         list={
           <ListCard header={

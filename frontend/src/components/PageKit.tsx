@@ -200,9 +200,10 @@ export const DetailCard = forwardRef<HTMLDivElement, {
   );
 });
 
-/** Encabezado del detalle: puntito + qué es (renglón chico) y el título. */
-export function DetailHeader({ dot, kicker, kickerTone = "text-slate-600", title, sub }: {
-  dot?: string; kicker?: ReactNode; kickerTone?: string; title: ReactNode; sub?: ReactNode;
+/** Encabezado del detalle: puntito + qué es (renglón chico), el título y, si lo hay, un VALOR a la
+ *  derecha del título (el panel de la transacción pone ahí su monto, 19-oct). */
+export function DetailHeader({ dot, kicker, kickerTone = "text-slate-600", title, sub, amount }: {
+  dot?: string; kicker?: ReactNode; kickerTone?: string; title: ReactNode; sub?: ReactNode; amount?: ReactNode;
 }) {
   return (
     <div className="pe-7">
@@ -212,7 +213,10 @@ export function DetailHeader({ dot, kicker, kickerTone = "text-slate-600", title
           <span>{kicker}</span>
         </div>
       )}
-      <h3 className="text-sm font-semibold text-slate-900 mt-0.5">{title}</h3>
+      <div className="flex items-start justify-between gap-2 mt-0.5">
+        <h3 className="min-w-0 truncate text-sm font-semibold text-slate-900">{title}</h3>
+        {amount && <div className="shrink-0">{amount}</div>}
+      </div>
       {sub && <p className="text-xs text-slate-500">{sub}</p>}
     </div>
   );
