@@ -33,10 +33,15 @@ function DemoIntro({ onNavigate, book }: { onNavigate: (v: View) => void; book: 
     setHidden(true);
     try { localStorage.setItem(KEY_INTRO_HIDDEN, "1"); } catch { /* modo privado */ }
   };
-  const tries: { key: string; go: View; text: string }[] = [
-    { key: "try1", go: "audit", text: t("page.summary.demo.try1", { audit: t("nav.audit"), review: t("auditView.reviewBook") }) },
-    { key: "try2", go: "transactions", text: t("page.summary.demo.try2", { transactions: t("nav.transactions") }) },
-    { key: "try3", go: "upload", text: t("page.summary.demo.try3", { banks: t("nav.upload") }) },
+  // El punto 1 no navega: ya estamos en el inicio, solo hace scroll hasta el P&L (20-oct, 5 puntos en
+  // vez de 3, pedido de Jose antes del demo).
+  const scrollToPnl = () => document.getElementById("demo-pnl")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const tries: { key: string; onClick: () => void; text: string }[] = [
+    { key: "try1", onClick: scrollToPnl, text: t("page.summary.demo.try1") },
+    { key: "try2", onClick: () => onNavigate("audit"), text: t("page.summary.demo.try2") },
+    { key: "try3", onClick: () => onNavigate("notes"), text: t("page.summary.demo.try3") },
+    { key: "try4", onClick: () => onNavigate("transactions"), text: t("page.summary.demo.try4") },
+    { key: "try5", onClick: () => onNavigate("settings"), text: t("page.summary.demo.try5") },
   ];
   return (
     <section className="bg-white rounded-xl border border-emerald-200 px-4 py-3 text-sm">
@@ -54,13 +59,17 @@ function DemoIntro({ onNavigate, book }: { onNavigate: (v: View) => void; book: 
                   className="p-1 rounded text-slate-400 hover:text-slate-700">✕</button>
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">{t("page.summary.demo.tryLabel")}</span>
-        {tries.map((x, i) => (
-          <button key={x.key} onClick={() => onNavigate(x.go)} className="text-start text-emerald-800 hover:underline">
-            {i + 1}. {x.text} →
-          </button>
-        ))}
+      <div className="mt-2 space-y-1">
+        <span className="block text-xs font-semibold uppercase tracking-wide text-slate-400">{t("page.summary.demo.tryLabel")}</span>
+        <ol className="space-y-0.5">
+          {tries.map((x, i) => (
+            <li key={x.key}>
+              <button onClick={x.onClick} className="text-start text-xs leading-snug text-emerald-800 hover:underline">
+                {i + 1}. {x.text} →
+              </button>
+            </li>
+          ))}
+        </ol>
       </div>
     </section>
   );
@@ -223,8 +232,9 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
       {/* El P&L al 60 %, la columna de atención al 40 % (19-oct, Jose). */}
       <div className="grid gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
         {/* 3. EL P&L DEL AÑO EN CURSO — lo que al final recibe el cliente, en su modo COMPACTO (Entregables,
-            18-oct): secciones plegadas a su total y lo Pendiente siempre a la vista. */}
-        <div className="relative bg-white rounded-xl border border-slate-200 p-5">
+            18-oct): secciones plegadas a su total y lo Pendiente siempre a la vista. `id`: el punto 1 de
+            "Qué mirar" del demo hace scroll hasta aquí en vez de navegar (20-oct). */}
+        <div id="demo-pnl" className="relative bg-white rounded-xl border border-slate-200 p-5">
           <button onClick={() => onNavigate("pnl")} className="absolute top-5 end-5 text-xs text-emerald-800 font-medium hover:underline">
             {t("dashboard.seePnl", { defaultValue: "See full P&L →" })}
           </button>

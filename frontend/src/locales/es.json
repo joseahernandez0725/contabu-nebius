@@ -1469,13 +1469,15 @@
       "pendingOutside": "{{count}} de ellos fuera de este período",
       "demo": {
         "title": "ContaBu — bookkeeping nativo de IA para el bookkeeper",
-        "lead": "Agentes sobre NVIDIA Nemotron (Nebius Token Factory) auditan el libro, verifican comercios en internet y proponen reglas. Nunca tocan un número ni ponen una categoría: el bookkeeper aprueba, un motor determinista aplica las reglas y cada total sale de SQL. La arquitectura de los grandes, para el bookkeeper pequeño.",
+        "lead": "Agentes sobre NVIDIA Nemotron (Nebius Token Factory) auditan el libro, verifican comercios en internet y proponen reglas. Nunca ponen una categoría ni tocan un número: el código encuentra, la IA juzga y el bookkeeper decide.",
         "viewing": "Estás viendo",
         "bookNote": "uno de los 3 libros de clientes de ejemplo (datos sintéticos, jul–sep 2026).",
-        "tryLabel": "Prueba",
-        "try1": "{{audit}} → {{review}}: los agentes trabajan en pasos a la vista",
-        "try2": "{{transactions}}: elige una fila y mira por qué tiene su categoría",
-        "try3": "{{banks}}: vincula un banco de prueba (Plaid sandbox)",
+        "tryLabel": "Qué mirar",
+        "try1": "Resumen — el P&L del año, sumado por SQL. Lo que no tiene categoría se declara como Pendiente, nunca se esconde.",
+        "try2": "Auditoría → Revisar el libro — mira al equipo de IA trabajar agente por agente: qué modelo de Nemotron, qué hizo, cuánto costó.",
+        "try3": "Notas — escribe una nota en palabras (\"el dueño estuvo de vacaciones del 3 al 17 de agosto\") y mira qué entendió la IA y qué movimientos marcó.",
+        "try4": "Movimientos — cada categoría sale de una regla (ƒ) o se escribió a mano (✎). Elige una fila para ver por qué, y qué encontraron los agentes.",
+        "try5": "Ajustes → Plan de cuentas — cada cuenta lleva su línea del Schedule C del IRS.",
         "tour": "Recorrido guiado",
         "hide": "Ocultar"
       }

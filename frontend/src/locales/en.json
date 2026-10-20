@@ -1340,13 +1340,15 @@
       "pendingOutside": "{{count}} of them outside this period",
       "demo": {
         "title": "ContaBu — AI-native bookkeeping for the bookkeeper",
-        "lead": "Agents on NVIDIA Nemotron (Nebius Token Factory) audit the book, check merchants on the web and propose rules. They never touch a number or set a category: the bookkeeper approves, a deterministic engine applies the rules, and every total comes from SQL. The architecture large companies use, for the small bookkeeper.",
+        "lead": "AI agents on NVIDIA Nemotron (Nebius Token Factory) audit the book, check merchants on the web and propose rules. They never set a category or touch a number: the code finds, the AI judges, the bookkeeper decides.",
         "viewing": "You're looking at",
         "bookNote": "one of 3 sample client books (synthetic data, Jul–Sep 2026).",
-        "tryLabel": "Try",
-        "try1": "{{audit}} → {{review}}: the agents work in visible steps",
-        "try2": "{{transactions}}: select a row to see why it has its category",
-        "try3": "{{banks}}: link a test bank (Plaid sandbox)",
+        "tryLabel": "What to look at",
+        "try1": "Summary — the year-to-date P&L, totaled by SQL. Anything without a category is declared as Pending, never hidden.",
+        "try2": "Audit → Review the book — watch the AI team work agent by agent: which Nemotron model, what it did, what it cost.",
+        "try3": "Notes — write a note in plain words (\"the owner was on vacation Aug 3–17\") and see what the AI understood and which transactions it flagged.",
+        "try4": "Transactions — every category comes from a rule (ƒ) or was written by hand (✎). Select a row to see why, and what the agents found.",
+        "try5": "Settings → Chart of accounts — every account carries its IRS Schedule C line.",
         "tour": "Guided tour",
         "hide": "Hide"
       }
