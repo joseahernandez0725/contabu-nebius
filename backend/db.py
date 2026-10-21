@@ -24,7 +24,11 @@ if not DATABASE_URL:
 # `echo` imprime el SQL ejecutado (útil para aprender). En producción debe ir APAGADO
 # (deuda técnica #10): se controla por entorno, default OFF. Para verlo en local: SQL_ECHO=true.
 SQL_ECHO = os.getenv("SQL_ECHO", "").lower() in {"1", "true", "yes"}
-engine = create_engine(DATABASE_URL, echo=SQL_ECHO)
+# `pool_pre_ping`: antes de prestar una conexión del pool, la prueba y, si está muerta, abre otra.
+# El Neon del demo se duerme a los 5 min sin uso y CIERRA las conexiones; sin esto, la primera petición
+# después de una pausa recibía una conexión muerta → 500 en /api/me → el navegador lo muestra como
+# error de CORS y el visitante ve "Sign-in failed" (20-oct, 12 errores así desde el despliegue).
+engine = create_engine(DATABASE_URL, echo=SQL_ECHO, pool_pre_ping=True)
 
 
 def get_session():
