@@ -29,6 +29,13 @@ diario de búsquedas de la oficina (`AGENT_DAILY_SEARCHES`).
 - **En la revisión, solo lo que la auditoría marcó** (`verify_flagged`): los comercios de los hallazgos
   abiertos (lo que vio el código, una nota o "¿personal?", y lo que el ① llamó problema o inseguro; no lo
   que llamó legítimo, ni las observaciones). Ya no todos los comercios del libro.
+- **🔄 20-oct (Jose, tras la prueba de campo): también los comercios PENDIENTES más frecuentes**
+  (`pending_candidates`): los `PENDING_TOP_N` con más movimientos Pendientes (2+), agrupados con la MISMA
+  huella que el ⑤ y el ④ (`personal_use.merchant_key`). Sin esto, en un libro nuevo (sin notas ni
+  correcciones) el ④ nunca podía proponer una regla para lo Pendiente: su control `no_evidence` pide
+  evidencia de internet, y lo Pendiente nunca se marcaba, así que nunca se buscaba. Primero lo marcado, luego
+  lo Pendiente, con el mismo tope de búsquedas nuevas por revisión. En el demo (`DEMO_MODE`), lo Pendiente
+  sale SOLO de la memoria de la oficina (la evidencia sembrada): ni un crédito de más por visitante.
 - **Primero "basic" (1 crédito); si la confianza no sale alta, "advanced" (2 créditos) UNA vez**, y se
   queda la de la avanzada (16-oct; hasta entonces, la mejor de las dos, y en un empate ganaba la básica). Se guarda cuál se usó (`MerchantLookup.search_depth`).
 - Las garantías de arriba no cambian: el filtro de personas corre igual antes de cada búsqueda.
@@ -55,7 +62,13 @@ load_dotenv()
 
 TAVILY_URL = "https://api.tavily.com/search"
 MIN_RELEVANCE = 0.2   # por debajo, un resultado de Tavily no cuenta como evidencia
-MAX_SEARCHES_PER_RUN = 12
+MAX_SEARCHES_PER_RUN = 12   # comercios NUEVOS (fuera de la memoria) por revisión: lo marcado + lo Pendiente
+# Lo Pendiente que se busca en la revisión (20-oct): los N comercios con más movimientos Pendientes. ✅ Libro real
+# (conteo del chat central): 143 Pendientes de 2026 en ~29 llaves; los 10 más frecuentes cubren ~97 (68 %). Con 2+
+# movimientos: el ④ solo propone una regla para un Pendiente recurrente.
+PENDING_TOP_N = 10
+PENDING_MIN_ROWS = 2
+_DEMO = os.getenv("DEMO_MODE", "").lower() in {"1", "true", "yes"}
 
 # ── La lista cerrada de tipos de negocio y sus palabras ─────────────────────────────────────────
 # Las palabras se buscan como palabras completas en el título y el fragmento de cada resultado. El
@@ -216,6 +229,42 @@ def candidates(txs: list[Transaction]) -> list[Candidate]:
     return out
 
 
+def is_pending(t: Transaction) -> bool:
+    return not t.category or t.account_type is None
+
+
+def pending_candidates(txs: list[Transaction], *, top: int = PENDING_TOP_N,
+                       min_rows: int = PENDING_MIN_ROWS) -> list[Candidate]:
+    """Los comercios PENDIENTES más frecuentes del libro (20-oct): agrupados con `personal_use.merchant_key` —la
+    huella del ⑤ y del ④, no una copia: si Movimientos arregla `rules.merchant_signature`, esto mejora solo— y,
+    por comercio, UNA búsqueda: la frase que comparten la mayoría de sus movimientos. Pasan por el MISMO filtro
+    que todo lo demás (`candidates`): un cheque o un pago a persona no tienen llave; una transferencia, lo que
+    entra o un cargo del banco se saltan. Solo cuentan los que se pueden buscar: un Pendiente que no es comercio
+    no le quita lugar a uno que sí. Tampoco se buscan los pagos de impuestos (IRS, EFTPS…): internet no dice si
+    fue retención de nómina, impuesto del empleador o un estimado — eso lo sabe el bookkeeper, como un cheque (✅
+    20-oct, demo: el IRS volvía "bank_financial, baja" por 3 créditos y entraba al ④ como dato inútil)."""
+    import personal_use
+    from book_review import _PAYROLL_TAX_RE
+    full = {(t.description or "").strip().upper() for t in txs}
+    by_fp = {c.fingerprint: c for c in candidates(txs)}
+    groups: dict[str, list[Transaction]] = {}
+    for t in txs:
+        if is_pending(t) and not _PAYROLL_TAX_RE.search((t.description or "").upper()) \
+                and (k := personal_use.merchant_key(t)):
+            groups.setdefault(k, []).append(t)
+    out, seen = [], set()
+    for _k, group in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if len(group) < min_rows or len(out) >= top:
+            break
+        fp = Counter(query_for(t.description, full).upper() for t in group).most_common(1)[0][0]
+        c = by_fp.get(fp)
+        if c is None or c.skip or fp in seen:
+            continue
+        seen.add(fp)
+        out.append(c)
+    return out
+
+
 # ── 2. La búsqueda (Tavily) y la clasificación (determinista) ───────────────────────────────────
 
 def classify(results: list[dict], query: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
@@ -303,6 +352,8 @@ class VerifyResult:
     credits: int
     outcome: str = "ok"
     finding_ids: list = field(default_factory=list)   # hallazgos con evidencia nueva (ida y vuelta, 14-oct)
+    flagged: int = 0    # 20-oct: cuántos comercios entraron por lo marcado…
+    pending: int = 0    # …y cuántos por ser de los Pendientes más frecuentes
 
 
 _RANK = {"high": 3, "medium": 2, "low": 1, None: 0}
@@ -375,7 +426,8 @@ def _lookup(session: Session, company: Company, c: Candidate, cache: dict, *, us
 
 
 def _run(session: Session, company: Company, chosen: list[Candidate], *, user_id: Optional[int], limit: int,
-         record: bool, skipped: Optional[Counter] = None) -> VerifyResult:
+         record: bool, skipped: Optional[Counter] = None, memory_only: frozenset = frozenset()) -> VerifyResult:
+    """`memory_only`: huellas que se usan SOLO si están en la memoria de la oficina (nunca una búsqueda nueva)."""
     cache = cached(session, company)
     items, skipped = [], skipped if skipped is not None else Counter()
     searched = from_cache = credits = 0
@@ -383,6 +435,9 @@ def _run(session: Session, company: Company, chosen: list[Candidate], *, user_id
     for c in chosen:
         if c.skip:
             skipped[c.skip] += 1
+            continue
+        if c.fingerprint in memory_only and c.fingerprint not in cache:
+            skipped["memory_only"] += 1
             continue
         if c.fingerprint not in cache and searched >= limit:
             skipped["limit"] += 1
@@ -440,15 +495,32 @@ def flagged_candidates(session: Session, company: Company, txs: list[Transaction
     return [c for c in candidates(txs) if c.fingerprint in wanted], wanted
 
 
+def review_candidates(session: Session, company: Company, txs: list[Transaction], *,
+                      demo: Optional[bool] = None) -> tuple[list[Candidate], list[Candidate], frozenset]:
+    """Lo que busca la revisión, en orden: lo MARCADO por la auditoría y después los Pendientes más frecuentes que
+    no estaban ya marcados (20-oct). Devuelve (marcados, pendientes, solo-de-memoria): en el demo, lo Pendiente
+    sale solo de la memoria de la oficina."""
+    flagged, _wanted = flagged_candidates(session, company, txs)
+    have = {c.fingerprint for c in flagged}
+    pending = [c for c in pending_candidates(txs) if c.fingerprint not in have]
+    memory_only = frozenset(c.fingerprint for c in pending) if (_DEMO if demo is None else demo) else frozenset()
+    return flagged, pending, memory_only
+
+
 def verify_flagged(session: Session, company: Company, *, user_id: Optional[int] = None,
                    limit: int = MAX_SEARCHES_PER_RUN, record: bool = True) -> VerifyResult:
-    """En la revisión: busca SOLO los comercios de los hallazgos abiertos (memoria de la oficina primero).
+    """En la revisión: los comercios de los hallazgos abiertos y, desde el 20-oct, los Pendientes más frecuentes
+    (`review_candidates`); la memoria de la oficina primero, y el mismo tope de búsquedas nuevas para todos.
     `finding_ids`: los hallazgos cuyo comercio tiene evidencia NUEVA de esta corrida (para la ida y vuelta:
     el ① los vuelve a juzgar)."""
     txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
-    chosen, _wanted = flagged_candidates(session, company, txs)
+    flagged, pending, memory_only = review_candidates(session, company, txs)
     before = set(cached(session, company))
-    res = _run(session, company, chosen, user_id=user_id, limit=limit, record=record)
+    res = _run(session, company, flagged + pending, user_id=user_id, limit=limit, record=record,
+               memory_only=memory_only)
+    pending_fps = {c.fingerprint for c in pending}
+    res.pending = sum(1 for i in res.items if i["fingerprint"] in pending_fps)
+    res.flagged = len(res.items) - res.pending
     # "Evidencia nueva" = un tipo de negocio con confianza alta o media (la baja no la usa ningún agente).
     fresh = {i["fingerprint"] for i in res.items if i["fingerprint"] not in before and i.get("business_type")
              and i.get("confidence") in ("high", "medium")}

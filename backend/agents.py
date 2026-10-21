@@ -393,8 +393,43 @@ class DraftResult:
     proposals: list[Proposal]
     rejected: list[dict]
     usage: Optional[nemotron.Usage]     # el total de las llamadas
-    outcome: str = "ok"
+    outcome: str = "ok"                 # 20-oct: "nothing_qualifies" = ningún comercio califica, no se llamó al modelo
     calls: int = 0
+
+    @property
+    def rejection_counts(self) -> dict[str, int]:
+        """Por motivo, cuántas filas rechazó el validador (el PRIMER control que la para, como en `draft`)."""
+        return dict(Counter(r["errors"][0] for r in self.rejected if r.get("errors")).most_common())
+
+
+def draft_grounds(view: BookView, *, focus: Optional[list[Transaction]] = None) -> list[str]:
+    """(20-oct, prueba de campo) ¿Hay ALGO de donde pueda salir una fila que pase los controles de `draft`? Lo
+    cuenta el código, sin llamar a nadie. Son los mismos respaldos que exigen esos controles:
+    - "note": una nota sin periodo (las de periodo tienen su llamada corta aparte);
+    - "corrections": un comercio que el bookkeeper corrigió a mano 2+ veces hacia el mismo destino, sin conflicto;
+    - "web": un comercio Pendiente recurrente (2+) con evidencia de internet alta o media (el ②).
+    Vacío = ninguna fila podría pasar (sería `no_evidence`/`weak_evidence`): el ④ no llama al modelo. Con `focus`
+    (una regla para UN comercio), solo cuenta lo de ese comercio."""
+    out = []
+    if any(n["kind"] != "dont_report" and not (n["valid_from"] or n["valid_to"]) for n in view.notes):
+        out.append("note")
+    if focus:
+        ids = {t.id for t in focus}
+        if sum(1 for tx_id, _target in view.change_info.values() if tx_id in ids) >= 2:
+            out.append("corrections")
+        if any(view.web.get(t.id) is not None and view.web[t.id].confidence in ("high", "medium") for t in focus):
+            out.append("web")
+        return out
+    per_dest: Counter = Counter()
+    for c in view.corrections:
+        if not c["conflict"]:
+            per_dest[(c["merchant"], c["ended_as"])] += c["transactions"]
+    if any(n >= 2 for n in per_dest.values()):
+        out.append("corrections")
+    if any(m.get("web", {}).get("confidence") in ("high", "medium") and m["decided_by"].get("pending", 0) >= 2
+           for m in view.merchants):
+        out.append("web")
+    return out
 
 
 def history_test(view: BookView, row: formula.FormulaRow) -> dict:
@@ -492,8 +527,14 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
         keyword = _huella(focus[0], view.names)[1]
         user += (f"\n\nFOCUS: the bookkeeper asked for a row for ONE merchant only: \"{keyword}\" "
                  f"({len(focus)} pending transactions). Propose at most one row, for that merchant only.")
-    if only_note is None or not (only_note.get("valid_from") or only_note.get("valid_to")):
+    # (b) 20-oct: la llamada general solo si algo puede respaldar una fila (`draft_grounds`). Sin nota, sin
+    # correcciones y sin evidencia de internet sobre lo Pendiente, todas sus filas caían en `no_evidence` (✅ libro
+    # real, 20-oct: 8 de 8) y se pagaba la llamada por nada. Una nota pedida (`note_id`) es respaldo por sí misma.
+    grounded = only_note is not None or bool(draft_grounds(view, focus=focus or None))
+    if grounded and (only_note is None or not (only_note.get("valid_from") or only_note.get("valid_to"))):
         calls.append((_DRAFT_SYSTEM.replace("{lang}", language).replace("{max_rows}", str(MAX_ROWS)), user))
+    if not calls:
+        return DraftResult(proposals=[], rejected=[], usage=None, outcome="nothing_qualifies", calls=0)
 
     note_text = {n.id: n.text for n in book_notes.list_notes(session, company.id)}
     raw_rows, usages, outcome = [], [], "ok"
@@ -522,37 +563,44 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
 
     proposals, rejected = [], []
     seen: set = set()
+    # (d) 20-oct: el motivo de cada rechazo, guardado por llamada en `agentcall.rejections` (antes se perdía: para
+    # saber por qué el libro real dio 0 de 8 hubo que reproducir la corrida).
+    def reject(i: int, raw, errors: list[str]) -> None:
+        rejected.append({"raw": raw, "errors": errors})
+        call = row_call[i] if i < len(row_call) else None
+        if call is not None and errors:
+            call.rejections = {**(call.rejections or {}), errors[0]: (call.rejections or {}).get(errors[0], 0) + 1}
     for i, raw in enumerate(raw_rows[:MAX_ROWS * 3]):
         candidate, errors = _from_model(raw, view)
         if errors:
-            rejected.append({"raw": raw, "errors": errors})
+            reject(i, raw, errors)
             continue
         checked = formula.check_row(candidate, view.ctx)
         if not checked.ok:
-            rejected.append({"raw": raw, "errors": checked.errors})
+            reject(i, raw, checked.errors)
             continue
         key = (checked.row.keyword.upper(), checked.row.valid_from, checked.row.valid_to)
         if key in seen:
-            rejected.append({"raw": raw, "errors": ["repeated_in_proposal"]})
+            reject(i, raw, ["repeated_in_proposal"])
             continue
         if key + (checked.row.category,) in dismissed_keys:
-            rejected.append({"raw": raw, "errors": ["dismissed_before"]})   # ya lo descartaste
+            reject(i, raw, ["dismissed_before"])   # ya lo descartaste
             continue
         if only_note is not None and only_note["id"] not in checked.row.from_notes:
-            rejected.append({"raw": raw, "errors": ["outside_note"]})
+            reject(i, raw, ["outside_note"])
             continue
         if focus:
             rule = formula.to_rule(checked.row, company.id)
             if not any(formula.match_rule([rule], formula.matchable_text(t.description, t.description_extra),
                                           t.date, t.amount) for t in focus):
-                rejected.append({"raw": raw, "errors": ["outside_focus"]})
+                reject(i, raw, ["outside_focus"])
                 continue
         test = history_test(view, checked.row)
         # Una fila que no cambia NADA no se le muestra al bookkeeper (Jose, 8-oct). En la medición sí se
         # puntúa: una fila puede no tocar el pasado (lo escrito a mano manda) y acertar el futuro.
         # (Las re-alineadas no cuentan: el motor las arregla con CUALQUIER aprobación, no con esta fila.)
         if cutoff is None and test["changes"] == 0:
-            rejected.append({"raw": raw, "errors": ["no_effect"]})
+            reject(i, raw, ["no_effect"])
             continue
         # Una regla para pagos a PERSONAS sin nota ni corrección que la respalde es una adivinanza: solo
         # el cliente sabe qué fue ese Zelle (✅ 8-oct: el ④ propuso "PAYMENT TO DANIEL RIVERA → Owner Draw").
@@ -571,25 +619,32 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
         target = f"{checked.row.account_type.value}/{checked.row.category}"
         backing = {view.change_info[c][0] for c in checked.row.from_changes
                    if c in view.change_info and view.change_info[c][0] in hit_ids and view.change_info[c][1] == target}
-        if checked.row.from_changes and not checked.row.from_notes and len(backing) < 2:
-            rejected.append({"raw": raw, "errors": ["unrelated_evidence" if not backing else "weak_evidence"]})
+        # 20-oct (2): una nota CON periodo solo respalda una fila CON ventana de fechas (las que salen de su llamada
+        # corta). Citada por una fila sin ventana no es respaldo: ✅ examen del demo, 2 de 12 corridas, "IRS → Payroll
+        # taxes" (una fila mezclada) pasó citando la nota de las vacaciones. Lo demás del control no cambia (deuda #28:
+        # que una nota sin periodo hable de ESE comercio sigue sin comprobarse).
+        windowed = checked.row.valid_from is not None or checked.row.valid_to is not None
+        has_period = {n["id"]: bool(n["valid_from"] or n["valid_to"]) for n in view.notes}
+        note_backed = any(windowed or not has_period.get(n, False) for n in checked.row.from_notes)
+        if checked.row.from_changes and not note_backed and len(backing) < 2:
+            reject(i, raw, ["unrelated_evidence" if not backing else "weak_evidence"])
             continue
-        no_history = not checked.row.from_notes and not checked.row.from_changes
+        no_history = not note_backed and not checked.row.from_changes
         if hit and all(p2p_counterparty(t.description) for t in hit) and no_history:
-            rejected.append({"raw": raw, "errors": ["person_without_evidence"]})
+            reject(i, raw, ["person_without_evidence"])
             continue
         # Una fila sin nota ni corrección tuya ES una adivinanza del sector: solo pasa con evidencia de
         # internet (② con confianza alta o media) sobre ese comercio (✅ 13-oct: 4 de las 5 filas que la
         # medición daba como mal cambiadas eran esto: GUSTO, ULINE, Restaurant Depot, Ecolab).
         web_ok = any(view.web.get(t.id) is not None and view.web[t.id].confidence in ("high", "medium") for t in hit)
         if no_history and not web_ok:
-            rejected.append({"raw": raw, "errors": ["no_evidence"]})
+            reject(i, raw, ["no_evidence"])
             continue
         # Una fila que CONTRADICE lo que el bookkeeper escribió a mano no se le muestra: lo escrito a mano
         # manda. Se garantiza aquí porque el prompt no basta (✅ 7-oct: Nano propuso SHELL → Vehicle Fuel
         # aunque las correcciones de Shell estaban en conflicto).
         if test["disagrees_with_corrections"]:
-            rejected.append({"raw": raw, "errors": ["contradicts_corrections"]})
+            reject(i, raw, ["contradicts_corrections"])
             continue
         seen.add(key)
         if row_call[i] is not None:
@@ -980,15 +1035,22 @@ def _estimate(session: Session, company: Company, action: str, *, note_id: Optio
             # no tiene en memoria (la auditoría de este mismo botón decidirá cuáles).
             fps = {merchant_verifier.query_for(t.description, {(x.description or "").strip().upper() for x in view.ctx.txs}).upper()
                    for ts in personal_use.candidates(view.ctx.txs).values() for t in ts}
-            pool = [c for c in merchant_verifier.candidates(view.ctx.txs) if c.fingerprint in fps]
+            pend = [c for c in merchant_verifier.pending_candidates(view.ctx.txs) if c.fingerprint not in fps]
+            pool = [c for c in merchant_verifier.candidates(view.ctx.txs) if c.fingerprint in fps] + pend
+            memory_only = frozenset(c.fingerprint for c in pend) if merchant_verifier._DEMO else frozenset()
         else:
-            pool, _ = merchant_verifier.flagged_candidates(session, company, view.ctx.txs)
+            flagged, pending, memory_only = merchant_verifier.review_candidates(session, company, view.ctx.txs)
+            pool = flagged + pending
+        # 20-oct: lo marcado + los Pendientes más frecuentes (en el demo, lo Pendiente solo de memoria: 0 búsquedas).
         searches += min(merchant_verifier.MAX_SEARCHES_PER_RUN,
-                        sum(1 for c in pool if not c.skip and c.fingerprint not in cache))
+                        sum(1 for c in pool if not c.skip and c.fingerprint not in cache and c.fingerprint not in memory_only))
         calls += 1 if searches else 0          # la ida y vuelta: el ① vuelve a juzgar esos hallazgos
     if action in ("draft", "review_book"):
-        calls += 1 + sum(1 for n in view.notes if n["kind"] == "keep_in_mind"
-                         and any(m["only_seen_in_period"] for m in n.get("merchants_inside_period", [])))
+        # (b) 20-oct: "Redactar" solo llama si algo respalda una fila; en "Revisar el libro" se cuenta igual (la
+        # verificación de ese mismo botón puede traer la evidencia que falta): es el tope honesto.
+        general = action == "review_book" or bool(draft_grounds(view))
+        calls += int(general) + sum(1 for n in view.notes if n["kind"] == "keep_in_mind"
+                                    and any(m["only_seen_in_period"] for m in n.get("merchants_inside_period", [])))
     if action == "note":
         calls += 1
     if action == "search" and transaction_id is not None:

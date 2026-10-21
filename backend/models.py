@@ -553,6 +553,8 @@ class AgentCall(SQLModel, table=True):
     items_out: int = Field(default=0)
     items_valid: int = Field(default=0)
     credits: int = Field(default=0)   # créditos de Tavily (agente ② verificador); 0 en Nemotron
+    # 20-oct: el ④ redactor guarda por motivo cuántas filas rechazó el validador ({"no_evidence": 8}); nulo en lo demás.
+    rejections: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_utcnow, index=True)
 
 

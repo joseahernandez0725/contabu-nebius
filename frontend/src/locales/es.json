@@ -884,9 +884,9 @@
       "reviewing_one": "Revisando {{count}} hallazgo…",
       "reviewing_other": "Revisando {{count}} hallazgos…",
       "drafting": "Redactando filas de la fórmula…",
-      "searching_one": "{{count}} comercio marcado como posible gasto personal: buscándolo en internet…",
-      "searching_other": "{{count}} comercios marcados como posible gasto personal: buscándolos en internet…",
-      "searched": "{{searched}} buscados · {{cached}} de la memoria de la oficina · {{credits}} créditos · {{rejudged}} hallazgos juzgados de nuevo"
+      "searching_one": "Buscando {{count}} comercio en internet: los marcados como posible gasto personal y los Pendientes más frecuentes…",
+      "searching_other": "Buscando {{count}} comercios en internet: los marcados como posible gasto personal y los Pendientes más frecuentes…",
+      "searched": "{{searched}} buscados · {{cached}} de la memoria de la oficina · {{pending}} de ellos Pendientes · {{credits}} créditos · {{rejudged}} hallazgos juzgados de nuevo"
     },
     "tab": {
       "findings": "Hallazgos",
@@ -959,6 +959,22 @@
     },
     "personHint": "Pago a una persona: solo el cliente sabe qué fue. Pregúntale antes de categorizar.",
     "noRuleForMerchant": "El redactor no encontró una regla que valga la pena para {{merchant}}.",
+    "draftWhy": {
+      "title": "Esta vez no hay reglas para proponer",
+      "nothing": "Ningún comercio tiene todavía con qué respaldar una regla: ni una nota, ni un comercio que corregiste a mano dos veces, ni un Pendiente verificado en internet. El redactor no llamó a la IA.",
+      "rejected_one": "El redactor escribió {{count}} regla y no pasó los controles:",
+      "rejected_other": "El redactor escribió {{count}} reglas y ninguna pasó los controles:",
+      "line": "{{count}} × {{reason}}",
+      "reason": {
+        "evidence": "sin evidencia (ni nota, ni corrección a mano, ni verificación en internet)",
+        "contradicts": "contradicen lo que corregiste a mano",
+        "noEffect": "no cambiarían ningún movimiento",
+        "repeated": "repiten una regla que ya tienes o que descartaste",
+        "outside": "fuera de lo que pediste",
+        "invalid": "no válidas (formato o plan de cuentas)"
+      },
+      "todo": "Lo que ayuda: escribe una nota sobre el comercio, categoriza a mano 2 de sus movimientos o búscalo en internet (“Buscar este comercio” en el panel del movimiento). Luego corre “Redactar reglas” otra vez."
+    },
     "proposal": "Fila propuesta para la fórmula",
     "yourCorrections_one": "{{count}} corrección tuya",
     "yourCorrections_other": "{{count}} correcciones tuyas",
@@ -1014,7 +1030,7 @@
       "neverRun": "El equipo todavía no trabajó en este libro.",
       "step": {
         "audit": "El código revisa el libro y luego tres agentes leen el resultado. Sin buscar en internet ni redactar.",
-        "verify": "Busca solo los comercios marcados como posible gasto personal, primero en la memoria de la oficina; luego esos hallazgos se vuelven a juzgar con esa evidencia.",
+        "verify": "Busca los comercios marcados como posible gasto personal y los Pendientes más frecuentes, primero en la memoria de la oficina; luego esos hallazgos se vuelven a juzgar con esa evidencia, y el redactor de reglas puede usarla.",
         "draft": "Propone reglas a partir de tus notas y tus correcciones. Nada cambia hasta que apruebes."
       },
       "code": "Código · sin IA",
@@ -1027,7 +1043,7 @@
         "note_checker": "Solo corre si hay una nota nueva o cambiada.",
         "personal_judge": "Solo corre con comercios que todavía no juzgó en este libro.",
         "reviewer": "Solo corre si hay hallazgos que juzgar.",
-        "verifier": "Solo busca los comercios que la auditoría marcó; primero, la memoria de la oficina.",
+        "verifier": "Busca lo que la auditoría marcó y los comercios Pendientes más frecuentes; primero, la memoria de la oficina.",
         "drafter": "Corre con “Redactar reglas” o “Revisar el libro”."
       },
       "did": {

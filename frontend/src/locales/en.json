@@ -541,9 +541,9 @@
       "reviewing_one": "Reviewing {{count}} finding…",
       "reviewing_other": "Reviewing {{count}} findings…",
       "drafting": "Drafting formula rows…",
-      "searching_one": "{{count}} merchant flagged as possibly personal: looking it up online…",
-      "searching_other": "{{count}} merchants flagged as possibly personal: looking them up online…",
-      "searched": "{{searched}} searched · {{cached}} from the office's memory · {{credits}} credits · {{rejudged}} findings judged again"
+      "searching_one": "Looking {{count}} merchant up online: the ones flagged as possibly personal and the most frequent Pending ones…",
+      "searching_other": "Looking {{count}} merchants up online: the ones flagged as possibly personal and the most frequent Pending ones…",
+      "searched": "{{searched}} searched · {{cached}} from the office's memory · {{pending}} of them Pending · {{credits}} credits · {{rejudged}} findings judged again"
     },
     "tab": {
       "findings": "Findings",
@@ -616,6 +616,22 @@
     },
     "personHint": "Payment to a person: only the client knows what it was. Ask them before categorizing.",
     "noRuleForMerchant": "The drafter found no rule worth proposing for {{merchant}}.",
+    "draftWhy": {
+      "title": "No rule to propose this time",
+      "nothing": "No merchant has anything to back a rule yet: no note, no merchant you corrected by hand twice, and no Pending merchant verified online. The drafter did not call the AI.",
+      "rejected_one": "The drafter wrote {{count}} rule and it did not pass the checks:",
+      "rejected_other": "The drafter wrote {{count}} rules and none passed the checks:",
+      "line": "{{count}} × {{reason}}",
+      "reason": {
+        "evidence": "without evidence (no note, no hand correction, nothing verified online)",
+        "contradicts": "contradict what you corrected by hand",
+        "noEffect": "would not change any transaction",
+        "repeated": "repeat a rule you have or dismissed",
+        "outside": "outside what you asked for",
+        "invalid": "invalid (format or chart of accounts)"
+      },
+      "todo": "What helps: write a note about the merchant, categorize 2 of its transactions by hand, or look it up online (“Search this merchant” in the transaction panel). Then run “Draft rules” again."
+    },
     "proposal": "Proposed formula row",
     "yourCorrections_one": "{{count}} correction of yours",
     "yourCorrections_other": "{{count}} corrections of yours",
@@ -671,7 +687,7 @@
       "neverRun": "The team hasn't worked on this book yet.",
       "step": {
         "audit": "Code checks the book, then three agents read the result. No web searches, no drafting.",
-        "verify": "Searches only the merchants flagged as possibly personal, the office's memory first; then those findings are judged again with that evidence.",
+        "verify": "Searches the merchants flagged as possibly personal and the most frequent Pending ones, the office's memory first; then those findings are judged again with that evidence, and the rule drafter can use it.",
         "draft": "Proposes rules from your notes and your corrections. Nothing changes until you approve."
       },
       "code": "Code · no AI",
@@ -684,7 +700,7 @@
         "note_checker": "Only runs when a note is new or changed.",
         "personal_judge": "Only runs for merchants it hasn't judged in this book.",
         "reviewer": "Only runs when there are findings to judge.",
-        "verifier": "Only searches merchants the audit flagged; the office's memory first.",
+        "verifier": "Searches what the audit flagged and the most frequent Pending merchants; the office's memory first.",
         "drafter": "Runs with “Draft rules” or “Review the book”."
       },
       "did": {

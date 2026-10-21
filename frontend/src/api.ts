@@ -994,6 +994,7 @@ export interface AgentEstimate {
 export interface VerifyResponse {
   outcome: string; items: MerchantCheck[]; searched: number; from_cache: number;
   skipped: Record<string, number>; credits: number;
+  flagged?: number; pending?: number;   // 20-oct: cuántos por lo marcado y cuántos de los Pendientes más frecuentes
   rejudge: { rejudged: number; outcome: string } | null; spent?: AgentSpent;
 }
 
@@ -1004,8 +1005,10 @@ export interface SearchMerchantResponse {
 }
 
 export interface DraftResponse {
-  outcome: string; calls: number; proposals: FormulaProposal[];
+  outcome: string;   // 20-oct: "nothing_qualifies" = ningún comercio tenía respaldo y no se llamó al modelo
+  calls: number; proposals: FormulaProposal[];
   rejected: { keyword: string | null; errors: string[] }[]; usage: AgentUsage | null; spent?: AgentSpent;
+  rejection_counts?: Record<string, number>;   // por motivo (el primer control que paró cada fila)
 }
 
 export interface AgentReview {
@@ -1083,7 +1086,7 @@ export interface TeamAgent {
   model: { key: string; label: string; reasoning: boolean };
   last_seconds_ago: number | null;
   run: { calls: number; ok: number; items_out: number; items_valid: number; latency_ms: number;
-         cost_usd: number; credits: number } | null;
+         cost_usd: number; credits: number; rejections?: Record<string, number> } | null;
 }
 export interface AgentTeam {
   max_id: number;   // la última llamada del libro: pásala como `sinceId` para ver solo lo de la acción que empieza

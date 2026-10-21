@@ -4,7 +4,7 @@ import {
   AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentTeam, getAgentUsage, getAuditBoard, getBookNotes, getCategories, money,
   resolveFinding, runAudit, runFormulaDrafter, runMerchantVerifier, updateTransaction,
   type AgentEstimate, type AgentSpent, type AgentTeam, type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts,
-  type DismissReason, type FormulaProposal, type PendingGroup, type TeamAgent, type TeamAgentKey, type TxSummary,
+  type DismissReason, type DraftResponse, type FormulaProposal, type PendingGroup, type TeamAgent, type TeamAgentKey, type TxSummary,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
 import { DEMO_MODE } from "../demo";
@@ -82,6 +82,8 @@ export default function AuditWorkspace({
   const [chart, setChart] = useState<ChartOfAccounts>({});
   const [proposals, setProposals] = useState<FormulaProposal[]>([]);
   const [rejected, setRejected] = useState(0);
+  // 20-oct (prueba de campo): cuando el ④ deja 0 propuestas, POR QUÉ y qué hacer (antes solo "0 pasaron").
+  const [draftWhy, setDraftWhy] = useState<DraftWhyData | null>(null);
   const [tab, setTab] = useState<Tab>("findings");
   const [sel, setSel] = useState<Sel>(null);
   // En pantalla angosta el detalle queda DEBAJO de la cola: al elegir algo, `ListDetail` baja hasta él.
@@ -200,7 +202,7 @@ export default function AuditWorkspace({
         setStepNote(t("auditView.step.searching", { count: e?.searches ?? 0 }));
         const r = await runMerchantVerifier(lang);
         addSpent(r.spent);
-        setStepNote(t("auditView.step.searched", { searched: r.searched, cached: r.from_cache, credits: r.credits,
+        setStepNote(t("auditView.step.searched", { searched: r.searched, cached: r.from_cache, credits: r.credits, pending: r.pending ?? 0,
                                                    rejudged: r.rejudge?.rejudged ?? 0 }));
       } else {
         setStepNote(t("auditView.step.drafting"));
@@ -208,6 +210,7 @@ export default function AuditWorkspace({
         addSpent(r.spent);
         setProposals(r.proposals);
         setRejected(r.rejected.length);
+        setDraftWhy(draftWhyOf(r));
         setDecided({});
       }
       setSteps((s) => ({ ...s, [step]: "done" }));
@@ -230,6 +233,7 @@ export default function AuditWorkspace({
     if (runLock.current) return false;
     runLock.current = true;
     setLaunching(true);
+    setDraftWhy(null);
     return true;
   }
   function releaseRun() {
@@ -304,7 +308,7 @@ export default function AuditWorkspace({
         setTab("proposals");
         setSel({ kind: "proposal", idx: 0 });
       } else {
-        setError(t("auditView.noRuleForMerchant", { merchant: g.merchant }));
+        setDraftWhy(draftWhyOf(r, g.merchant));
       }
       refreshUsage();
     } catch (e) { setError(errText(e)); } finally { setBusy(false); releaseRun(); }
@@ -404,6 +408,7 @@ export default function AuditWorkspace({
                  detailed={DEMO_MODE || teamOpen} canCollapse={!DEMO_MODE} onToggle={toggleTeam} ago={ago} estimateText={estimateText} />
 
       {error && <p className="text-sm text-rose-700 bg-rose-50 rounded-lg px-3 py-2">{error}</p>}
+      {draftWhy && !running && <DraftWhy d={draftWhy} onClose={() => setDraftWhy(null)} />}
 
       {/* 2. LAS NOTAS, en su página (ronda 2): aquí una línea con el enlace. */}
       {noteCount && (
@@ -674,6 +679,56 @@ function TeamPanel({ team, exact, steps, running, launching, stepNote, est, disa
   );
 }
 
+/** Por qué el ④ no dejó propuestas (20-oct). Los motivos del validador, agrupados como los lee el bookkeeper. */
+type DraftWhyData = { nothing: boolean; total: number; counts: Record<string, number>; merchant?: string };
+const WHY_GROUP: Record<string, string> = {
+  no_evidence: "evidence", weak_evidence: "evidence", unrelated_evidence: "evidence", person_without_evidence: "evidence",
+  contradicts_corrections: "contradicts", no_effect: "noEffect", matches_nothing: "noEffect",
+  duplicate_rule: "repeated", repeated_in_proposal: "repeated", dismissed_before: "repeated",
+  outside_note: "outside", outside_focus: "outside",
+};
+
+/** `null` si hubo propuestas. Con un backend anterior al 20-oct (sin `rejection_counts`), los cuenta de `rejected`. */
+function draftWhyOf(r: DraftResponse, merchant?: string): DraftWhyData | null {
+  if (r.proposals.length) return null;
+  const counts = r.rejection_counts ?? r.rejected.reduce<Record<string, number>>((acc, x) => {
+    const k = x.errors[0]; if (k) acc[k] = (acc[k] ?? 0) + 1; return acc;
+  }, {});
+  return { nothing: r.outcome === "nothing_qualifies", total: r.rejected.length, counts, merchant };
+}
+
+function DraftWhy({ d, onClose }: { d: DraftWhyData; onClose: () => void }) {
+  const { t } = useTranslation();
+  const groups: Record<string, number> = {};
+  for (const [code, n] of Object.entries(d.counts)) {
+    const g = WHY_GROUP[code] ?? "invalid";
+    groups[g] = (groups[g] ?? 0) + n;
+  }
+  const sorted = Object.entries(groups).sort((a, b) => b[1] - a[1]);
+  // "Qué hacer" solo cuando lo que falta es respaldo (nada calificaba, o hubo filas sin evidencia).
+  const showTodo = d.nothing || (groups.evidence ?? 0) > 0 || d.total === 0;
+  return (
+    <div className="text-sm text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-1">
+      <div className="flex items-start gap-2">
+        <p className="font-medium flex-1">
+          {d.merchant ? t("auditView.noRuleForMerchant", { merchant: d.merchant }) : t("auditView.draftWhy.title")}
+        </p>
+        <button onClick={onClose} className="text-amber-700 hover:text-amber-900 text-xs" aria-label="×">×</button>
+      </div>
+      {d.nothing ? <p className="text-xs">{t("auditView.draftWhy.nothing")}</p>
+        : d.total > 0 && (
+          <>
+            <p className="text-xs">{t("auditView.draftWhy.rejected", { count: d.total })}</p>
+            <ul className="text-xs list-disc ps-5">
+              {sorted.map(([g, n]) => <li key={g}>{t("auditView.draftWhy.line", { count: n, reason: t(`auditView.draftWhy.reason.${g}`) })}</li>)}
+            </ul>
+          </>
+        )}
+      {showTodo && <p className="text-xs">{t("auditView.draftWhy.todo")}</p>}
+    </div>
+  );
+}
+
 /** Un integrante: su nombre por lo que hace, su modelo y lo que hizo (o que no corrió, y por qué puede pasar). */
 function TeamMember({ m, a, loaded, state, ago }: {
   m: Member; a?: TeamAgent; loaded: boolean; state: StepState; ago: (secs: number) => string;
@@ -692,6 +747,9 @@ function TeamMember({ m, a, loaded, state, ago }: {
     line = [
       t(`auditView.team.did.${m}`, { count: did }),
       ...(m === "drafter" ? [t("auditView.team.passed", { count: x.items_valid })] : []),
+      // 20-oct: si alguna no pasó, el motivo principal (guardado en `agentcall.rejections`).
+      ...(m === "drafter" && x.rejections ? Object.entries(x.rejections).slice(0, 1).map(([code, n]) =>
+        t("auditView.draftWhy.line", { count: n, reason: t(`auditView.draftWhy.reason.${WHY_GROUP[code] ?? "invalid"}`) })) : []),
       ...(m === "verifier" ? [] : [t("auditView.team.calls", { count: x.calls })]),
       ...(x.ok < x.calls ? [t("auditView.team.failed", { count: x.calls - x.ok })] : []),
       t("auditView.team.seconds", { s: (x.latency_ms / 1000).toFixed(1) }),

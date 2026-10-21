@@ -178,6 +178,14 @@ _MODEL_KEY = {"note_checker": "notes", "personal_judge": "personal", "reviewer":
 RUN_GAP_S = 180
 
 
+def _sum_counts(dicts) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for d in dicts:
+        for k, n in (d or {}).items():
+            out[k] = out.get(k, 0) + int(n)
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]))
+
+
 def team(session: Session, company: Company, since_id: Optional[int] = None) -> dict:
     import agent_models
     from sqlalchemy import text
@@ -219,6 +227,8 @@ def team(session: Session, company: Company, since_id: Optional[int] = None) -> 
                 "latency_ms": sum(r.latency_ms for r in mine),
                 "cost_usd": round(sum(r.cost_usd or 0.0 for r in mine), 6),
                 "credits": sum(r.credits or 0 for r in mine),
+                # 20-oct: el ④ guarda por motivo cuántas filas rechazó el validador (`rejections`).
+                "rejections": _sum_counts(r.rejections for r in mine),
             } if mine else None,
         })
     return {

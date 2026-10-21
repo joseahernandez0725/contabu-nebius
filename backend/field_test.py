@@ -12,7 +12,16 @@ script saca lo que hace falta para medir esa corrida, sin tocar la base:
   (1–2 llamadas REALES a Nebius) dentro de una transacción que se DESHACE al final, como `measure.py`:
   no registra la llamada, no guarda nada. El motivo de cada rechazo (el primero que la para, igual que
   `agents.draft`) y un diagnóstico de lo que cazaría cada fila, al archivo privado; en pantalla, solo
-  los conteos.
+  los conteos. 🔄 20-oct (2): `--verify live` corre antes el paso Verificar (lo marcado + los Pendientes más
+  frecuentes; Tavily de verdad, créditos reales) y GUARDA la evidencia en el archivo privado; `--verify saved`
+  la reusa como oráculo (0 créditos), así la remedición se repite con la misma evidencia.
+- `grade` (20-oct (2), DISEÑADO PARA CORRERSE CUANDO JOSE TERMINE DE CATEGORIZAR): califica el ④ contra lo que
+  decidió un bookkeeper real. Dentro de la transacción que se deshace, devuelve el libro al "antes" (`--since` = la
+  hora del respaldo): cada movimiento que cambió desde entonces vuelve a como estaba en su PRIMER cambio
+  posterior (el historial `categorizationchange` guarda el antes y el después, también lo que hizo una regla), se
+  borran esos cambios del historial (el ④ no puede aprender de la respuesta), las reglas y las notas creadas
+  después. Luego Verificar (evidencia guardada) → el ④ → el motor real decide cada movimiento que estaba Pendiente
+  y Jose categorizó, y se compara con lo que Jose puso.
 
 🔴 Datos reales: TODO lo que escribe va a `backend/private/field_test/` (git lo ignora) con permisos
 600. La pantalla solo muestra conteos y códigos de motivo: nunca descripciones, montos ni comercios.
@@ -20,6 +29,9 @@ script saca lo que hace falta para medir esa corrida, sin tocar la base:
 Lee la base de `DATABASE_URL` (la del libro real está en `.env.real`):
     DATABASE_URL=$(grep ^DATABASE_URL .env.real | cut -d= -f2-) .venv/bin/python field_test.py label --company 1
     DATABASE_URL=$(grep ^DATABASE_URL .env.real | cut -d= -f2-) .venv/bin/python field_test.py drafter --company 1
+    … field_test.py drafter --company 1 --verify live      (Tavily de verdad; guarda la evidencia)
+    … field_test.py drafter --company 1 --verify saved     (la misma evidencia, 0 créditos)
+    … field_test.py grade --company 1 --since "2026-10-20 08:00" --verify saved   (hora del respaldo, en el reloj de la base)
 """
 
 import argparse
@@ -167,13 +179,49 @@ def _diagnose(view, raw) -> dict:
     }
 
 
-def drafter(session: Session, company: Company, day: str, lang: str) -> int:
+def _oracle_path(company: Company) -> Path:
+    return OUT_DIR / f"web_evidencia_libro{company.id}.json"
+
+
+def run_verify(session: Session, company: Company, mode: str) -> dict:
+    """El paso Verificar como en "Revisar el libro" (lo marcado + los Pendientes más frecuentes), SIN registrar:
+    `live` = Tavily de verdad y la evidencia queda guardada en privado; `saved` = esa evidencia como oráculo."""
+    import merchant_verifier
+    if mode == "saved":
+        merchant_verifier.ORACLE = {r["fingerprint"]: r for r in json.load(open(_oracle_path(company), encoding="utf-8"))}
+    merchant_verifier.SENT_QUERIES.clear()
+    before = set(merchant_verifier.cached(session, company))
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    _flagged, pend, _memory = merchant_verifier.review_candidates(session, company, txs)
+    pending_fps = {c.fingerprint for c in pend}
+    res = merchant_verifier.verify_flagged(session, company, record=False)
+    persons = merchant_verifier.protected_names(txs)
+    if mode == "live":
+        new = [m for fp, m in merchant_verifier.cached(session, company).items() if fp not in before]
+        with _private_open(_oracle_path(company)) as fh:
+            json.dump([{"fingerprint": m.fingerprint, "business_type": m.business_type, "confidence": m.confidence,
+                        "source_url": m.source_url, "results_count": m.results_count, "search_depth": m.search_depth}
+                       for m in new], fh, ensure_ascii=False, indent=2)
+    return {"merchants": len(res.items), "flagged": res.flagged, "pending": res.pending, "searched": res.searched,
+            "from_cache": res.from_cache, "credits": res.credits if mode == "live" else 0,
+            "by_confidence": dict(Counter(i.get("confidence") or "none" for i in res.items)),
+            "pending_high_or_medium": sum(1 for i in res.items if i["fingerprint"] in pending_fps
+                                          and i.get("confidence") in ("high", "medium")),
+            "skipped": dict(res.skipped),
+            "queries_with_protected_name": sum(1 for q in merchant_verifier.SENT_QUERIES
+                                               if any(p.upper() in q.upper() for p in persons))}
+
+
+def drafter(session: Session, company: Company, day: str, lang: str, verify: str = "none") -> int:
     import agents
     import nemotron
     # Como `measure.py --audit`: lo que el código guarde (la sincronización de hallazgos) queda en la
     # transacción, que se deshace al final. `record=False`: la llamada no entra a `agentcall` ni al cupo.
     session.commit = session.flush  # type: ignore[method-assign]
     nemotron.SENT.clear()
+    web = run_verify(session, company, verify) if verify != "none" else None
+    if web:
+        print(f"  verificar ({verify}): {web}")
     res = agents.draft(session, company, lang=lang, record=False)
     view = agents.build_view(session, company)
     detail = []
@@ -184,9 +232,9 @@ def drafter(session: Session, company: Company, day: str, lang: str) -> int:
         **p.row.model_dump(mode="json", exclude={"from_changes"}), "from_corrections": []})} for p in res.proposals]
     from merchant_verifier import protected_names
     privacy = agents.privacy_scan(list(nemotron.SENT), view.ctx.txs, protected_names(view.ctx.txs))
-    path = OUT_DIR / f"drafter_rechazos_{day}.json"
+    path = OUT_DIR / f"drafter_rechazos_{day}{'' if verify == 'none' else '_verify_' + verify}.json"
     with _private_open(path) as fh:
-        json.dump({"fecha": day, "libro": company.id, "lang": lang, "outcome": res.outcome, "calls": res.calls,
+        json.dump({"fecha": day, "libro": company.id, "lang": lang, "verify": web, "outcome": res.outcome, "calls": res.calls,
                    "usage": None if res.usage is None else {
                        "model": res.usage.model, "prompt_tokens": res.usage.prompt_tokens,
                        "completion_tokens": res.usage.completion_tokens, "cost_usd": res.usage.cost_usd},
@@ -210,15 +258,115 @@ def drafter(session: Session, company: Company, day: str, lang: str) -> int:
         print(f"    quién decide hoy lo que cazan: "
               f"{dict(sum((Counter(d['hits_by_source']) for d in diag), Counter()))}")
     print(f"  privacidad de lo enviado: {privacy}")
+    if res.proposals:
+        test = Counter()
+        for p in res.proposals:
+            test["changes"] += p.test["changes"]
+            test["with_web"] += bool(p.web)
+            test["from_notes"] += bool(p.row.from_notes)
+            test["from_corrections"] += bool(p.row.from_changes)
+        print(f"  propuestas que pasan: {len(res.proposals)} · categorizarían {test['changes']} movimientos · "
+              f"respaldo: web {test['with_web']} · notas {test['from_notes']} · correcciones {test['from_corrections']}")
+    return 0
+
+
+# ── grade: el ④ contra lo que decidió un bookkeeper real ───────────────────────────────────────────
+
+def rewind(session: Session, company: Company, since) -> dict:
+    """Devuelve el libro a como estaba en `since`, DENTRO de la transacción (que se deshace). Devuelve la clave de
+    respuestas: movimiento → (sección, categoría) que puso el bookkeeper, para los que estaban Pendientes."""
+    from models import BookNote, CategorizationChange, CategoryRule
+    from models import AccountType
+    changes = session.exec(select(CategorizationChange).where(
+        CategorizationChange.company_id == company.id, CategorizationChange.changed_at >= since)
+        .order_by(CategorizationChange.changed_at, CategorizationChange.id)).all()
+    first: dict[int, CategorizationChange] = {}
+    for ch in changes:
+        first.setdefault(ch.transaction_id, ch)
+    key, reverted = {}, Counter()
+    for tx_id, ch in first.items():
+        t = session.get(Transaction, tx_id)
+        if t is None:
+            continue
+        final = (t.account_type.value if t.account_type else None, t.category)
+        was_pending = not ch.category_before or not ch.account_type_before
+        if was_pending and final[0] and final[1]:
+            key[t.id] = final
+            reverted[f"pending_then_{t.source or 'pending'}"] += 1
+        else:
+            reverted["was_categorized"] += 1
+        t.account_type = AccountType(ch.account_type_before) if ch.account_type_before else None
+        t.category, t.subcategory = ch.category_before, ch.subcategory_before
+        t.source, t.matched_rule_id = ch.source_before, ch.matched_rule_id_before
+        session.add(t)
+    for ch in changes:
+        session.delete(ch)                   # el ④ no aprende de la respuesta
+    rules = session.exec(select(CategoryRule).where(CategoryRule.company_id == company.id,
+                                                    CategoryRule.created_at >= since)).all()
+    for r in rules:
+        session.delete(r)
+    notes = session.exec(select(BookNote).where(BookNote.company_id == company.id, BookNote.created_at >= since)).all()
+    for n in notes:
+        session.delete(n)
+    session.flush()
+    return {"key": key, "reverted": dict(reverted), "changes_removed": len(changes), "rules_removed": len(rules),
+            "notes_removed": len(notes)}
+
+
+def grade(session: Session, company: Company, day: str, since, verify: str, lang: str) -> int:
+    import agents
+    import formula
+    import nemotron
+    session.commit = session.flush  # type: ignore[method-assign]
+    nemotron.SENT.clear()
+    from sqlalchemy import text
+    print(f"  reloj de la base ahora: {session.connection().execute(text('SELECT LOCALTIMESTAMP')).scalar()}")
+    back = rewind(session, company, since)
+    key = back["key"]
+    print(f"  al 'antes' ({since}): {back['reverted']} · cambios del historial quitados: {back['changes_removed']} · "
+          f"reglas quitadas: {back['rules_removed']} · notas quitadas: {back['notes_removed']} · "
+          f"clave de respuestas: {len(key)} movimientos que estaban Pendientes")
+    web = run_verify(session, company, verify) if verify != "none" else None
+    if web:
+        print(f"  verificar ({verify}): {web}")
+    res = agents.draft(session, company, lang=lang, record=False)
+    ctx = formula.BookContext(session, company)
+    rules = formula.with_rows(ctx.rules, [p.row for p in res.proposals], company.id)
+    c, detail = Counter(), []
+    for t in ctx.txs:
+        if t.id not in key:
+            continue
+        d = formula.decide(rules, t)
+        if d.source != "rule":
+            c["left_pending"] += 1
+            continue
+        ok = (d.account_type, d.category) == key[t.id]
+        c["right" if ok else "wrong"] += 1
+        detail.append({"tx": t.id, "agent": [d.account_type, d.category], "bookkeeper": list(key[t.id]), "ok": ok})
+    decided = c["right"] + c["wrong"]
+    path = OUT_DIR / f"grade_{day}.json"
+    with _private_open(path) as fh:
+        json.dump({"since": str(since), "rewind": {k: v for k, v in back.items() if k != "key"}, "verify": web,
+                   "outcome": res.outcome, "proposals": [agents.proposal_dict(p) for p in res.proposals],
+                   "rejection_counts": res.rejection_counts, "detail": detail}, fh, ensure_ascii=False, indent=2,
+                  default=str)
+    print(f"Escrito {path.relative_to(Path(__file__).resolve().parent)} (permisos 600) · nada guardado en la base")
+    print(f"  ④: {len(res.proposals)} filas pasan · rechazos: {res.rejection_counts} · resultado: {res.outcome}")
+    print(f"  contra el bookkeeper: decide {decided}/{len(key)} (cobertura) · acierta {c['right']}/{decided} (precisión) · "
+          f"quedan Pendientes {c['left_pending']}")
     return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=("label", "drafter"))
+    ap.add_argument("what", choices=("label", "drafter", "grade"))
     ap.add_argument("--company", type=int, required=True, help="id del libro")
     ap.add_argument("--date", default=date.today().isoformat(), help="fecha para el nombre del archivo")
     ap.add_argument("--lang", default="es", help="drafter: idioma de las explicaciones (no cambia el validador)")
+    ap.add_argument("--verify", choices=("none", "live", "saved"), default="none",
+                    help="drafter/grade: correr antes el paso Verificar (live = Tavily de verdad; saved = la evidencia guardada)")
+    ap.add_argument("--since", help="grade: la hora del respaldo en el reloj de la BASE ('AAAA-MM-DD HH:MM'): las fechas sin zona del "
+                         "historial quedan en la hora de la sesión de Postgres (ver agent_calls.team), compárala con SELECT LOCALTIMESTAMP")
     args = ap.parse_args()
     from db import engine
     with Session(engine) as session:
@@ -229,7 +377,12 @@ def main() -> int:
                 return 1
             if args.what == "label":
                 return label(session, company, args.date)
-            return drafter(session, company, args.date, args.lang)
+            if args.what == "grade":
+                if not args.since:
+                    ap.error("grade necesita --since (la hora del respaldo)")
+                from datetime import datetime
+                return grade(session, company, args.date, datetime.fromisoformat(args.since), args.verify, args.lang)
+            return drafter(session, company, args.date, args.lang, args.verify)
         finally:
             session.rollback()   # `label` solo lee; `drafter` deshace todo lo que el código haya escrito
 

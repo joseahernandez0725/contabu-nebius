@@ -1944,6 +1944,9 @@ def run_formula_drafter(company_id: int, payload: AgentRunIn, user: User = Depen
             "proposals": [agents.proposal_dict(p) for p in res.proposals],
             "rejected": [{"keyword": r["raw"].get("keyword") if isinstance(r["raw"], dict) else None,
                           "errors": r["errors"]} for r in res.rejected],
+            # 20-oct: por qué no pasaron (la pantalla lo dice cuando pasan 0); "nothing_qualifies" en `outcome` =
+            # ningún comercio tenía respaldo y no se llamó al modelo.
+            "rejection_counts": res.rejection_counts,
             "usage": agent_calls.usage_dict(res.usage)}
 
 
@@ -2010,6 +2013,7 @@ def run_merchant_verifier(company_id: int, payload: Optional[VerifyIn] = None, u
         raise HTTPException(status_code=503, detail={"code": "search_unavailable"})
     return {"outcome": res.outcome, "items": res.items, "searched": res.searched,
             "from_cache": res.from_cache, "skipped": dict(res.skipped), "credits": res.credits,
+            "flagged": res.flagged, "pending": res.pending,   # 20-oct: de dónde salió cada comercio
             "rejudge": again, "spent": agent_calls.spent(session, company, since)}
 
 
