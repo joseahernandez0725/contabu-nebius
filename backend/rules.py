@@ -98,7 +98,8 @@ _MERCHANT_NOISE = {
 def merchant_signature(description: Optional[str], tokens: int = 2) -> str:
     """Firma del COMERCIO: agrupa transacciones del mismo comercio pese al ruido del banco
     (número de tienda `#1234`, ref#, fechas, cuentas enmascaradas `XXXX2961`, prefijos de procesador
-    `SQ*`/`TST*`). Dos descripciones del mismo comercio → la **misma firma**. `''` si no hay señal.
+    `SQ*`/`TST*`, números de pedido/referencia pegados a una sola letra — `X9999`, `9X9XX9X`).
+    Dos descripciones del mismo comercio → la **misma firma**. `''` si no hay señal.
 
     Devuelve hasta `tokens` palabras significativas concatenadas (sin espacios). Sirve para (1) agrupar
     transacciones por comercio y (2) detectar si una regla ya lo cubre (dedup / keyword muerto).
@@ -117,8 +118,16 @@ def merchant_signature(description: Optional[str], tokens: int = 2) -> str:
     words = re.sub(r"[^A-Z0-9]+", " ", text).split()
     if words and words[0] in _PROCESSOR_PREFIXES:         # quitar prefijo de procesador
         words = words[1:]
+    # 20-oct-2026: un número de pedido/referencia que mezcla letras y dígitos ("X9999", "9X9XX9X")
+    # pasaba el filtro de abajo porque trae al menos una letra. `_is_code` (ya usado por
+    # `suggest_keyword`) lo descarta igual que cualquier otro código — ver prueba de campo,
+    # FASE 11.A.md 20-oct. Aquí no hay guiones (ya se quitaron arriba), así que para `_is_code`
+    # "tener un dígito" y "ser código" es casi lo mismo — `len(w) >= 4` es el candado para no
+    # perder una marca real corta con dígito (3M, A1, 7UP): los códigos medidos en el libro real
+    # tienen 5+ caracteres.
     sig = [w for w in words
-           if any(c.isalpha() for c in w) and len(w) >= 2 and w not in _MERCHANT_NOISE]
+           if any(c.isalpha() for c in w) and len(w) >= 2 and w not in _MERCHANT_NOISE
+           and not (len(w) >= 4 and _is_code(w))]
     return "".join(sig[:tokens])
 
 
