@@ -165,7 +165,6 @@ function App() {
         auditCount={auditCount}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
-        drawerOnly={view === "transactions"}
       />
 
       <div className="flex-1 min-w-0 flex flex-col">
@@ -173,9 +172,9 @@ function App() {
           <button
             onClick={() => setMenuOpen(true)}
             aria-label={t("shell.menu")}
-            // En Movimientos la barra no tiene riel fijo (pedido de Jose, 20-oct): el botón se ve
-            // también en escritorio, porque es la ÚNICA forma de abrirla ahí.
-            className={`p-1.5 -ms-1.5 rounded-lg text-slate-500 hover:bg-slate-100 ${view === "transactions" ? "" : "md:hidden"}`}
+            // 22-oct: el riel angosto vive en TODAS las páginas de escritorio (antes solo fuera de
+            // Movimientos); el ☰ vuelve a ser solo para el cajón de celular.
+            className="p-1.5 -ms-1.5 rounded-lg text-slate-500 hover:bg-slate-100 md:hidden"
           >
             <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M4 7h16M4 12h16M4 17h16" />

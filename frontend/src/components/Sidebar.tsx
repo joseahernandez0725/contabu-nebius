@@ -14,13 +14,13 @@ export type View = "dashboard" | "transactions" | "notes" | "audit" | "upload" |
 //   · ESTE LIBRO → la empresa que está abierta ahora (la capa `Company`)
 //   · OFICINA    → herramientas para TODOS los clientes (la capa `Firm`) — escondida hasta que exista
 //
-// En escritorio vive COMPRIMIDA (solo íconos, 64 px) y se EXPANDE al acercar el mouse (pedido de
-// Jose, 30-sep). Se abre ENCIMA del contenido, no lo empuja: si lo empujara, la hoja se redibujaría
-// cada vez que el mouse pasa por el borde. El contenido siempre empieza a 64 px.
-//
-// `drawerOnly` (20-oct, pedido de Jose): SOLO en Movimientos, la barra no reserva espacio ni se abre
-// al pasar el mouse (la Hoja tiene los números de fila pegados al borde izquierdo: se abriría solo).
-// Se vuelve un cajón como el de celular, pero también en escritorio — lo abre el botón ☰ de App.tsx.
+// En escritorio vive COMPRIMIDA (solo íconos redondos, 48px — 22-oct, antes 64px) y se EXPANDE al
+// acercar el mouse, como siempre (30-sep → 20-oct, vuelto el 22-oct tras una vuelta atrás: un riel
+// angosto ESTÁTICO con etiquetas flotantes por ícono resultó peor que expandirse con los nombres
+// completos, que es lo que ya conocía Jose). Se abre ENCIMA del contenido, no lo empuja: si lo
+// empujara, la hoja se redibujaría cada vez que el mouse pasa por el borde. El contenido siempre
+// empieza a 48px — igual en TODAS las páginas de escritorio (ya no hay un modo "solo cajón" por
+// página; eso se probó el 20-oct y se dejó el 22-oct). En celular, el cajón de siempre.
 
 const ic = (d: ReactNode) => (
   <svg viewBox="0 0 24 24" className="size-[18px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -39,6 +39,8 @@ const BOOK_ICONS: Record<View, ReactNode> = {
   settings: ic(<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></>),
 };
 
+const LOGOUT_ICON = ic(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></>);
+
 // La sección OFICINA (Clientes, Usuarios, Calendario, Solicitudes, Nómina) se ESCONDIÓ el 3-oct: eran
 // marcadores "Pronto" y el demo del concurso no puede llevar a páginas vacías (docs/DEMO Y ENTREGA.md).
 // No se construyen antes del 30-oct. Cuando exista la primera, vuelve aquí con su sección.
@@ -48,7 +50,8 @@ const BOOK_ICONS: Record<View, ReactNode> = {
 const BOOK_ORDER: View[] = ["dashboard", "upload", "transactions", "notes", "audit", "pnl", "settings"];
 
 // Retardos del hover: abrir con una pausa corta evita que la barra salte cuando el mouse solo CRUZA
-// el borde camino a otra cosa; cerrar con otra pausa evita que se cierre por un temblor del mouse.
+// el borde camino a otra cosa (p. ej., hacia los números de fila de la Hoja); cerrar con otra pausa
+// evita que se cierre por un temblor del mouse.
 const OPEN_DELAY_MS = 120;
 const CLOSE_DELAY_MS = 220;
 
@@ -62,7 +65,7 @@ function initials(name: string | undefined): string {
 }
 
 export default function Sidebar({
-  view, onNavigate, company, companies, onSwitch, onAdd, reviewCount, auditCount, open, onClose, drawerOnly = false,
+  view, onNavigate, company, companies, onSwitch, onAdd, reviewCount, auditCount, open, onClose,
 }: {
   view: View;
   onNavigate: (v: View) => void;
@@ -72,17 +75,16 @@ export default function Sidebar({
   onAdd: () => void;
   reviewCount: number;   // pendientes de confirmar (badge rojo)
   auditCount: number;    // hallazgos del auditor (badge ámbar)
-  open: boolean;         // en celular siempre, y en Movimientos (drawerOnly) también en escritorio: la barra entra como cajón
+  open: boolean;         // en celular, el cajón
   onClose: () => void;
-  drawerOnly?: boolean;  // Movimientos (20-oct): sin riel fijo ni apertura con el mouse — solo el cajón, con el botón ☰
 }) {
   const { t } = useTranslation();
   const [hover, setHover] = useState(false);
   const timer = useRef<number | null>(null);
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
 
-  // Esc cierra el cajón (celular, y Movimientos en escritorio). El riel con hover no necesita esto:
-  // se cierra solo al alejar el mouse.
+  // Esc cierra el cajón de celular. El riel con hover no necesita esto: se cierra solo al alejar el
+  // mouse o perder el foco.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -96,7 +98,9 @@ export default function Sidebar({
   };
 
   // `expanded` decide si se pintan los TEXTOS. Comprimida no se pinta ninguno: así nada se desborda
-  // de los 64 px ni crea una zona invisible que abra la barra al pasar el mouse por el contenido.
+  // de los 48 px ni crea una zona invisible que abra la barra al pasar el mouse por el contenido. Los
+  // íconos de página son siempre un círculo (22-oct): comprimida, es lo único que se ve; expandida,
+  // el nombre lo acompaña.
   const body = (expanded: boolean) => (
     <div className="h-full flex flex-col bg-white">
       {/* Marca: mismo alto que la barra de arriba (h-14). El logo no se mueve al expandir. */}
@@ -125,7 +129,7 @@ export default function Sidebar({
             )}
           </div>
         ) : (
-          <div title={company?.name} className="size-8 shrink-0 rounded-lg bg-brand-green/10 text-brand-green text-[11px] font-bold flex items-center justify-center">
+          <div title={company?.name} className="size-8 shrink-0 rounded-full bg-brand-green/10 text-brand-green text-[11px] font-bold flex items-center justify-center">
             {initials(company?.name)}
           </div>
         )}
@@ -142,15 +146,17 @@ export default function Sidebar({
                 key={v}
                 onClick={() => { onNavigate(v); onClose(); }}
                 aria-label={viewLabel(t, v)}
-                className={`w-full h-9 flex items-center gap-2.5 ps-[15px] pe-2.5 rounded-lg text-sm text-start transition-colors ${
-                  active ? "bg-brand-green/10 text-brand-green font-semibold" : "text-slate-600 hover:bg-slate-50"
-                }`}
+                className={`w-full h-9 flex items-center gap-2.5 rounded-lg text-sm text-start transition-colors ${
+                  expanded ? "ps-[7px] pe-2.5" : "justify-center"
+                } ${expanded && active ? "text-brand-green font-semibold" : expanded ? "text-slate-600 hover:bg-slate-50" : ""}`}
               >
-                <span className="relative">
+                <span className={`relative size-8 shrink-0 rounded-full flex items-center justify-center transition-colors ${
+                  active ? "bg-brand-green/10 text-brand-green" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}>
                   {BOOK_ICONS[v]}
                   {/* Comprimida: un punto en el ícono avisa que hay algo, sin espacio para el número. */}
                   {!expanded && (audit > 0 || review > 0) && (
-                    <span className={`absolute -top-1 -end-1 size-2 rounded-full ring-2 ring-white ${review > 0 ? "bg-rose-500" : "bg-amber-500"}`} />
+                    <span className={`absolute -top-0.5 -end-0.5 size-2 rounded-full ring-2 ring-white ${review > 0 ? "bg-rose-500" : "bg-amber-500"}`} />
                   )}
                 </span>
                 {expanded && <span className="flex-1 truncate whitespace-nowrap">{viewLabel(t, v)}</span>}
@@ -173,11 +179,13 @@ export default function Sidebar({
           onClick={() => signOut(auth)}
           aria-label={t("login.logout")}
           title={t("login.logout")}
-          className={`flex items-center gap-1.5 text-sm text-slate-500 hover:text-rose-500 py-1 rounded-lg whitespace-nowrap ${
-            expanded ? "ms-auto px-2" : "ps-[11px]"
+          className={`flex items-center gap-1.5 text-sm text-slate-500 hover:text-rose-500 rounded-lg whitespace-nowrap ${
+            expanded ? "ms-auto px-2 py-1" : ""
           }`}
         >
-          {ic(<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></>)}
+          <span className="relative size-8 shrink-0 rounded-full flex items-center justify-center hover:bg-slate-100 hover:text-rose-500">
+            {LOGOUT_ICON}
+          </span>
           {expanded && t("login.logout")}
         </button>
       </div>
@@ -186,30 +194,26 @@ export default function Sidebar({
 
   return (
     <>
-      {/* ESCRITORIO: un hueco fijo de 64 px en el flujo (el contenido nunca se mueve) y, encima, la
-          barra fija que se ensancha a 240 px al acercar el mouse — o al llegar con el teclado.
-          En `drawerOnly` (Movimientos) no se reserva espacio: la Hoja usa todo el ancho, y la barra
-          solo existe como cajón (abajo), igual que en celular. */}
-      {!drawerOnly && (
-        <div className="hidden md:block w-16 shrink-0">
-          <aside
-            onMouseEnter={() => later(true, OPEN_DELAY_MS)}
-            onMouseLeave={() => later(false, CLOSE_DELAY_MS)}
-            onFocus={() => later(true, 0)}
-            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) later(false, 0); }}
-            className={`fixed inset-y-0 start-0 z-30 border-e border-slate-200 bg-white transition-[width,box-shadow] duration-200 ease-out ${
-              hover ? "w-60 shadow-xl" : "w-16"
-            }`}
-          >
-            {body(hover)}
-          </aside>
-        </div>
-      )}
+      {/* ESCRITORIO: un hueco fijo de 48 px en el flujo (el contenido nunca se mueve) y, encima, la
+          barra fija que se ensancha a 240 px al acercar el mouse — o al llegar con el teclado. Igual
+          en todas las páginas. */}
+      <div className="hidden md:block w-12 shrink-0">
+        <aside
+          onMouseEnter={() => later(true, OPEN_DELAY_MS)}
+          onMouseLeave={() => later(false, CLOSE_DELAY_MS)}
+          onFocus={() => later(true, 0)}
+          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) later(false, 0); }}
+          className={`fixed inset-y-0 start-0 z-30 border-e border-slate-200 bg-white transition-[width,box-shadow] duration-200 ease-out ${
+            hover ? "w-60 shadow-xl" : "w-12"
+          }`}
+        >
+          {body(hover)}
+        </aside>
+      </div>
 
-      {/* CAJÓN: en celular siempre (no hay mouse que acercar) y, en `drawerOnly`, también en
-          escritorio — ahí lo abre el botón ☰ de App.tsx, nunca el mouse. */}
+      {/* CAJÓN: solo en celular (no hay mouse que acercar). */}
       {open && (
-        <div className={`${drawerOnly ? "" : "md:hidden"} fixed inset-0 z-40`}>
+        <div className="md:hidden fixed inset-0 z-40">
           <div className="absolute inset-0 bg-slate-900/30" onClick={onClose} />
           <aside className="absolute inset-y-0 start-0 w-64 shadow-xl">{body(true)}</aside>
         </div>
