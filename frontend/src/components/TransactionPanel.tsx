@@ -86,8 +86,17 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
     // `preventDefault` en mouseup: si no, RevoGrid toma el clic como "afuera" y suelta la celda que se
     // estaba editando (regla de la hoja, `.claude/rules/hoja.md`). Así el teclado sigue en la hoja.
     <div onMouseUp={(e) => e.preventDefault()} onTouchEnd={(e) => e.preventDefault()}
-         className="h-full w-1/4 min-w-[320px] shrink-0">
-      <DetailCard onClose={onClose} closeLabel={t("panel.close")} className="h-full overflow-y-auto space-y-2.5">
+         className="relative h-full w-1/4 min-w-[320px] shrink-0">
+      {/* 21-oct (2), pedido de Movimientos (📬 Buzón): el botón de RECOGER se mudó afuera de
+          DetailCard — montado sobre el borde izquierdo del panel, centrado en su alto (ya no es la ×
+          de la esquina). DetailCard ya no recibe `onClose`: su × interno no se dibuja. */}
+      <button onClick={onClose} aria-label={t("panel.collapse")} title={t("panel.collapse")}
+        className="absolute left-0 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 size-[30px] rounded-full
+                   bg-white border border-slate-200 shadow flex items-center justify-center
+                   text-slate-500 hover:text-slate-800 hover:bg-slate-50">
+        <span aria-hidden="true">›</span>
+      </button>
+      <DetailCard className="h-full overflow-y-auto space-y-2.5">
         {!x && !error && <DetailEmpty text={t("panel.loading")} />}
         {error && !x && <DetailEmpty text={t("panel.error")} />}
         {x && tx && (

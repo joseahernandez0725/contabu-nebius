@@ -1126,7 +1126,7 @@
       "chart": "Chart of accounts…",
       "language": "Language",
       "shortcuts": "Keyboard shortcuts",
-      "shortcutsText": "Type on a cell — starts editing right away (no Enter needed)\nEnter / F2 / double-click — edit the cell\nArrows while typing — save and move\nTab — save and move right\nTab on a gray suggestion — use it\n→ at the end of a gray suggestion — fill it in and keep typing\nDelete at the end of a gray suggestion — drop it\nEscape — cancel the edit\nCtrl+C / Ctrl+V — copy / paste (also a range)\nDelete — clear the selected cells\nDrag the corner of a cell — fill (like Excel)\nCtrl+Z — undo\nRight-click — more options for the cell",
+      "shortcutsText": "Type on a cell — starts editing right away (no Enter needed)\nEnter / F2 / double-click — edit the cell\nArrows while typing — save and move\nTab — save and move right\nTab on a gray suggestion — use it\n→ at the end of a gray suggestion — fill it in and keep typing\nDelete at the end of a gray suggestion — drop it\nEscape — cancel the edit\nCtrl+C / Ctrl+V — copy / paste (also a range)\nDelete — clear the selected cells\nDrag the corner of a cell — fill (like Excel)\nCtrl+Z — undo\nRight-click — more options for the cell\nCtrl+. — open or collapse the details panel",
       "newBookNote": "New book note…"
     },
     "undoFormat_one": "format {{count}} row",
@@ -1243,7 +1243,8 @@
     }
   },
   "panel": {
-    "close": "Close (Esc)",
+    "collapse": "Collapse (Esc)",
+    "expand": "Open details panel",
     "loading": "Loading…",
     "error": "Couldn't load this transaction.",
     "level": {
@@ -1296,7 +1297,7 @@
       "bank_modified": "the bank changed it",
       "rule_deleted": "its rule was deleted"
     },
-    "showOnSelect": "Open the details panel on select",
+    "showOnSelect": "Details panel open",
     "flagTitle": {
       "problem": "Problem — select the row to see it",
       "review": "Needs a look — select the row to see it",

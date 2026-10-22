@@ -209,13 +209,16 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   // BARRA DE FÓRMULAS (2-oct, pedido de Jose): la celda enfocada — id de la fila, columna y número
   // de fila visible — para mostrar su contenido COMPLETO arriba de la hoja, como en Excel.
   const [focus, setFocus] = useState<{ id: number; prop: string; row: number } | null>(null);
-  // EL PANEL LATERAL (13-oct, Firm): sigue a la fila enfocada. × o Esc lo cierran para ESA fila; al
-  // elegir otra, se abre de nuevo. En Ver se puede apagar del todo (para editar a lo ancho).
+  // EL PANEL LATERAL (13-oct, Firm; 21-oct: se RECOGE en vez de desaparecer). Sigue a la fila
+  // enfocada. × o Esc lo recogen (una franja angosta a la derecha, con un botón para volver a
+  // abrirlo); Ctrl+\ alterna. "contabu.detailsPanel" es el mismo pref que el menú Ver — true =
+  // abierto, false = recogido — así el menú y el botón de la franja dicen siempre lo mismo.
   const [flags, setFlags] = useState<Record<number, FlagLevel>>({});
   const [flagsKey, setFlagsKey] = useState(0);
-  const [panelOnSelect, setPanelOnSelect] = usePref("contabu.detailsPanel", true);
-  const [panelClosedFor, setPanelClosedFor] = useState<number | null>(null);
-  // Al llegar desde Auditoría, el panel se abre para ESA fila aunque en Ver esté apagado.
+  const [panelOpen, setPanelOpen] = usePref("contabu.detailsPanel", true);
+  // Al llegar desde Auditoría (o clic derecho → Nota…, el 📝, una coincidencia de la búsqueda en la
+  // nota): el panel se abre para ESA fila aunque esté recogido. Se limpia solo al cambiar de fila
+  // (deja de matchear `focus.id`) o al recoger el panel (`collapsePanel`).
   const [panelForcedFor, setPanelForcedFor] = useState<number | null>(null);
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [tab, setTab] = useState<"sheet" | "pivot" | "rules">("sheet");
@@ -708,12 +711,11 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   const [manualDescSize, setManualDescSize] = useState<number | null>(null);
   const descSize = manualDescSize ?? (BASE_DESC_SIZE + flexExtra);
 
-  // ABRIR EL PANEL EN UNA FILA aunque en Ver esté apagado (clic derecho → "Nota…", el 📝, una
+  // ABRIR EL PANEL EN UNA FILA aunque esté recogido (clic derecho → "Nota…", el 📝, una
   // coincidencia de la búsqueda que está solo en la nota): es donde se lee y se escribe la nota (19-oct).
   const openPanelFor = useCallback((id: number, prop: string, y: number) => {
     setFocus({ id, prop, row: y + 1 });
     setSelected([id]);
-    setPanelClosedFor(null);
     setPanelForcedFor(id);
   }, []);
   const openPanelRef = useRef(openPanelFor);
@@ -878,24 +880,45 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     return { ref: `${col.name} · ${focus.row}`, text };
   }, [focus, visible, columns, t]);
 
-  // EL PANEL LATERAL: la fila enfocada, salvo que se haya cerrado para ella (× o Esc).
-  const panelTx = tab === "sheet" && focus && panelClosedFor !== focus.id
-    && (panelOnSelect || panelForcedFor === focus.id) ? focus.id : null;
-  // El cierre vale para la fila de AHORA: al pasar a otra, el panel vuelve a abrirse (también al volver).
-  const focusId = focus?.id ?? null;
-  useEffect(() => { setPanelClosedFor((c) => (c != null && focusId !== c ? null : c)); }, [focusId]);
+  // EL PANEL LATERAL: la fila enfocada, si está abierto (o si esta fila se forzó). Recogido, elegir
+  // otra fila NO lo abre — solo el botón de la franja (o volver a forzarlo) lo hace.
+  const panelTx = tab === "sheet" && focus && (panelOpen || panelForcedFor === focus.id) ? focus.id : null;
+  // RECOGER (21-oct): × o Esc, siempre lo mismo — una sola forma de quitar el panel de en medio. Se
+  // limpia también lo forzado: si no, una fila forzada se quedaría abierta pese a recogerse.
+  const collapsePanel = useCallback(() => { setPanelOpen(false); setPanelForcedFor(null); }, [setPanelOpen]);
+  const togglePanel = useCallback(() => { if (panelOpen) collapsePanel(); else setPanelOpen(true); },
+    [panelOpen, collapsePanel, setPanelOpen]);
   useEffect(() => {
     if (panelTx == null) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // Esc dentro de un editor (o del buscador) es de ESE campo: cancela la edición, no cierra el panel.
+      // Esc dentro de un editor (o del buscador) es de ESE campo: cancela la edición, no recoge el panel.
       const el = e.target as HTMLElement | null;
       if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
-      setPanelClosedFor(panelTx);
+      collapsePanel();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [panelTx]);
+  }, [panelTx, collapsePanel]);
+  // Ctrl+. ALTERNA el panel (abierto ⇄ recogido), funcione o no esté mostrándose ahora mismo — no
+  // choca con nada de la grilla ni del navegador (Ctrl+Z/F/C/V/X ya están tomados; ver Opciones →
+  // Atajos). 21-oct (2): era Ctrl+\, pero en un teclado español/latinoamericano "\" se escribe con
+  // AltGr — que el navegador reporta como Ctrl+Alt — y el candado de abajo rechazaba `e.altKey`, así
+  // que nunca disparaba ahí. El punto está en la capa BASE de cualquier teclado (sin AltGr ni Shift);
+  // se compara por `e.code` (la tecla física), no por `e.key` (el carácter, que si dependería del
+  // idioma activo).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.code !== "Period") return;
+      if (tab !== "sheet") return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      e.preventDefault();
+      togglePanel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [tab, togglePanel]);
 
   // MENÚ DE CLIC DERECHO (Jose, 4-oct): ver, editar, copiar, pegar, deshacer, seguir la regla,
   // crear una regla desde la fila y cómo se ve el texto.
@@ -1087,7 +1110,6 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       } catch { /* la grilla aún no está lista: igual queda seleccionada abajo */ }
       setFocus({ id: goTo, prop: "date", row: y + 1 });
       setSelected([goTo]);
-      setPanelClosedFor(null);
       setPanelForcedFor(goTo);
       setGoTo(null);
     };
@@ -1210,8 +1232,8 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       { label: t("sheet.mb.toolbar"), checked: toolbar, onClick: () => setToolbar(!toolbar) },
       { label: t("sheet.mb.formulaBar"), checked: showFormula, onClick: () => setShowFormula(!showFormula) },
       { label: t("sheet.mb.pinDescription"), checked: pinDesc, disabled: tab !== "sheet", onClick: () => setPinDesc(!pinDesc) },
-      { label: t("panel.showOnSelect"), checked: panelOnSelect, disabled: tab !== "sheet",
-        onClick: () => { setPanelOnSelect(!panelOnSelect); setPanelClosedFor(null); } },
+      { label: t("panel.showOnSelect"), checked: panelOpen, disabled: tab !== "sheet",
+        onClick: () => setPanelOpen(!panelOpen) },
       { heading: t("sheet.mb.density") },
       ...(["compact", "normal", "roomy"] as const).map((d) => ({
         label: t(`sheet.density.${d}`, { defaultValue: d }), checked: density === d, onClick: () => setDensity(d) })),
@@ -1572,8 +1594,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       )}
 
       {/* La grilla y, a su derecha, el PANEL de la transacción (13-oct). El panel le quita ancho a la
-          grilla (no la tapa): la fila seleccionada siempre queda a la vista. */}
-      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8 }}>
+          grilla (no la tapa): la fila seleccionada siempre queda a la vista. `position: relative`
+          (21-oct, 2): el botón flotante de abrir, cuando el panel está recogido, se posiciona encima
+          de la grilla (no le quita ancho: la Hoja usa TODO el ancho recogido). */}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8, position: "relative" }}>
       <div ref={hostRef} onContextMenu={(e) => void onContextMenu(e)}
         style={{ flex: 1, minHeight: 0, minWidth: 0,
                     border: tab === "sheet" ? "1px solid #e3ded2" : "0",
@@ -1603,12 +1627,32 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       </div>
       {panelTx != null && (
         <TransactionPanel txId={panelTx} refreshKey={flagsKey}
-          onClose={() => setPanelClosedFor(panelTx)}
+          onClose={collapsePanel}
           onGoRule={(id) => { setGoRule({ id, n: Date.now() }); setTab("rules"); }}
           onOpenAudit={() => onNavigate?.("audit")}
           // Recarga las FILAS (y con ellas los puntitos): la nota se escribe en el panel y su 📝 y la
           // búsqueda viven en la Hoja (19-oct).
           onChanged={load} />
+      )}
+      {/* EL BOTÓN FLOTANTE DE ABRIR (21-oct, 2 — versión final, reemplaza la franja de 30px de la
+          entrega anterior, sin commit): solo con el panel recogido DE VERDAD (`!panelOpen`) — NO
+          simplemente "nada que mostrar ahora" (`panelTx == null` también es cierto con el panel
+          ABIERTO pero sin fila enfocada: ahí no se muestra nada, ni franja ni botón — era el bug de
+          ayer, un botón que no hacía nada). Flota SOBRE la Hoja (no le quita ancho), pegado al borde
+          derecho, a media altura. Sin fila enfocada tampoco se muestra: abrir no mostraría nada. */}
+      {tab === "sheet" && !panelOpen && panelTx == null && focus != null && (
+        <button onClick={() => setPanelOpen(true)}
+          aria-label={t("panel.expand", { defaultValue: "Open details panel" })}
+          title={t("panel.expand", { defaultValue: "Open details panel" })}
+          onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.85"; }}
+          style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                   width: 36, height: 36, borderRadius: "50%", border: "1px solid #e3ded2",
+                   background: "#fff", color: "#5b6b62", opacity: 0.85, cursor: "pointer",
+                   display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+                   boxShadow: "0 2px 8px rgba(15,23,42,.18)", transition: "opacity .15s", zIndex: 5 }}>
+          <span aria-hidden="true" style={{ fontSize: 17 }}>‹</span>
+        </button>
       )}
       </div>
       {menu && <CellMenu at={menu.at} items={menuItems(menu.model, menu.prop, menu.row)} onClose={() => setMenu(null)} />}

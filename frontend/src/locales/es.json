@@ -1273,7 +1273,7 @@
       "chart": "Plan de cuentas…",
       "language": "Idioma",
       "shortcuts": "Atajos de teclado",
-      "shortcutsText": "Escribir sobre una celda — empieza a editar de una vez (sin Enter)\nEnter / F2 / doble clic — editar la celda\nFlechas mientras escribes — guardar y moverse\nTab — guardar y pasar a la derecha\nTab sobre una sugerencia en gris — usarla\n→ al final de una sugerencia en gris — ponerla y seguir escribiendo\nSupr al final de una sugerencia en gris — descartarla\nEscape — cancelar la edición\nCtrl+C / Ctrl+V — copiar / pegar (también un rango)\nSupr — borrar las celdas seleccionadas\nArrastrar la esquina de una celda — rellenar (como en Excel)\nCtrl+Z — deshacer\nClic derecho — más opciones de la celda",
+      "shortcutsText": "Escribir sobre una celda — empieza a editar de una vez (sin Enter)\nEnter / F2 / doble clic — editar la celda\nFlechas mientras escribes — guardar y moverse\nTab — guardar y pasar a la derecha\nTab sobre una sugerencia en gris — usarla\n→ al final de una sugerencia en gris — ponerla y seguir escribiendo\nSupr al final de una sugerencia en gris — descartarla\nEscape — cancelar la edición\nCtrl+C / Ctrl+V — copiar / pegar (también un rango)\nSupr — borrar las celdas seleccionadas\nArrastrar la esquina de una celda — rellenar (como en Excel)\nCtrl+Z — deshacer\nClic derecho — más opciones de la celda\nCtrl+. — abrir o recoger el panel de detalle",
       "newBookNote": "Nueva nota del libro…"
     },
     "undoFormat_one": "formato de {{count}} fila",
@@ -1372,7 +1372,8 @@
     }
   },
   "panel": {
-    "close": "Cerrar (Esc)",
+    "collapse": "Recoger (Esc)",
+    "expand": "Abrir el panel de detalle",
     "loading": "Cargando…",
     "error": "No se pudo cargar este movimiento.",
     "level": {
@@ -1425,7 +1426,7 @@
       "bank_modified": "el banco la cambió",
       "rule_deleted": "se borró su regla"
     },
-    "showOnSelect": "Abrir el panel de detalle al seleccionar",
+    "showOnSelect": "Panel de detalle abierto",
     "flagTitle": {
       "problem": "Problema — selecciona la fila para verlo",
       "review": "Por revisar — selecciona la fila para verlo",
