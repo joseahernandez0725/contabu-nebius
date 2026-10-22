@@ -55,15 +55,20 @@ def audit_categorization(items: list[dict], rules_by_id: dict[int, dict] | None 
                 })
 
     # 1) INCONSISTENCIA POR COMERCIO: misma huella, distintas (account_type, category).
-    #    Excluye cheques (huella vacía).
+    #    Excluye cheques (huella vacía) y lo PENDIENTE (21-oct, Jose categorizando el libro real): una fila sin
+    #    categoría no es "otra categoría", su lugar son los grupos de Pendientes. Antes `labels` ya la ignoraba,
+    #    pero `transaction_ids`, `odd_ids` y `examples` llevaban el grupo ENTERO (✅ libro real: 17 y 5
+    #    Pendientes en las dos inconsistencias abiertas) y "Poner todas en X" las categorizaba sin que el
+    #    bookkeeper las mirara.
     groups: dict[str, list[dict]] = defaultdict(list)
     for it in items:
+        if not (it.get("account_type") and it.get("category")):
+            continue
         sig = merchant_signature(it.get("description") or "")
         if sig:
             groups[sig].append(it)
     for sig, its in groups.items():
-        labels = Counter((it.get("account_type"), it.get("category"))
-                         for it in its if it.get("account_type"))
+        labels = Counter((it.get("account_type"), it.get("category")) for it in its)
         if len(labels) > 1:
             (maj_at, maj_cat), _ = labels.most_common(1)[0]  # la categoría dominante = la probable correcta
             odd = [it["id"] for it in its
