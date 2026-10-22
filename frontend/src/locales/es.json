@@ -1192,6 +1192,8 @@
     "count_other": "{{count}} transacciones",
     "yourText": "Texto que agregaste — las reglas también lo buscan",
     "addText": "+ agregar",
+    "extraLockedHint": "Solo cheques y depósitos pueden llevar texto agregado — aquí el banco ya trae a la contraparte.",
+    "extraLocked": "Esta fila no acepta texto agregado: el banco ya trae a la contraparte. Solo cheques y depósitos (donde no la trae) pueden.",
     "pending": "Pendiente",
     "onlyPending": "Pendientes ({{n}})",
     "pendingHint": "Ninguna regla la cubre todavía — elige categoría o crea una regla",

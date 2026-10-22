@@ -46,6 +46,20 @@ def is_check(description: Optional[str]) -> bool:
     return bool(description and _CHECK_RE.search(description))
 
 
+# DEPÓSITO (20-oct-2026): el inverso del cheque emitido — el banco mete dinero sin decir de quién
+# ("MOBILE DEPOSIT REF 0817123", "SQUARE INC DEPOSIT 8YH2K"). A diferencia de `is_check`, la palabra
+# puede ir EN CUALQUIER PARTE (no solo al empezar): "ATM CHECK DEPOSIT" es un depósito, no un cheque
+# emitido (y `is_check` ya lo sabe: exige que la descripción EMPIECE con "check").
+_DEPOSIT_RE = re.compile(r"\bdeposit\b", re.IGNORECASE)
+
+
+def is_deposit(description: Optional[str]) -> bool:
+    """True si la descripción trae la palabra "deposit" (en cualquier parte): el banco metió dinero
+    sin decir de quién, igual que un cheque emitido no dice a quién. Las dos son las únicas filas
+    donde el bookkeeper necesita escribir la contraparte (`description_extra`)."""
+    return bool(description and _DEPOSIT_RE.search(description))
+
+
 # Número de cheque tras CHECK / CHEQUE al INICIO (ej. "CHECK 20169  04/01" → "20169").
 _CHECK_NUM_RE = re.compile(r"^\s*(?:check|cheque)\s*#?\s*(\d+)", re.IGNORECASE)
 
@@ -728,7 +742,11 @@ def specific_phrase(description: Optional[str], merchant: Optional[str]) -> str:
 # solo cazaba ESE movimiento. Aquí se saca el comercio de los formatos que traen los bancos de EE.UU.
 
 _ACH_NAME_RE = re.compile(r"ORIG CO NAME:\s*(.+?)\s+ORIG ID:", re.IGNORECASE)
-_P2P_RE = re.compile(r"^(?:ZELLE|VENMO|CASH ?APP)\b.*?\b(?:TO|FROM)\s+(.+)$", re.IGNORECASE)
+# Canal (grupo 1) y dirección (grupo 2) capturados APARTE del nombre (grupo 3): un pago a una
+# persona por Zelle/Venmo/Cash App es el MISMO comercio recibiendo (cliente) y enviando (proveedor) —
+# `CategoryRule` no guarda entrada/salida, así que el canal+dirección es lo que separa las dos
+# reglas (20-oct-2026, prueba de campo con el libro real). Ver el armado en `suggest_keyword`.
+_P2P_RE = re.compile(r"^(ZELLE|VENMO|CASH ?APP)\b.*?\b(TO|FROM)\s+(.+)$", re.IGNORECASE)
 _DOMAIN_RE = re.compile(r"\b([A-Z][A-Z0-9]{2,})\.(?:COM|NET|ORG|CO|IO|C)\b")
 _PHONE_RE = re.compile(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b|\b\d{3}-\d{7}\b")
 _DATE_RE = re.compile(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b")
@@ -771,12 +789,28 @@ def suggest_keyword(description: Optional[str], extra: Optional[str] = None) -> 
     """Una palabra clave CORTA y estable para la regla de este movimiento — lo que cambia en cada
     pago (fechas, números de rastreo, IDs, teléfonos, ciudad y estado) se queda afuera.
 
-    Orden: lo que escribió el bookkeeper (`description_extra`, p. ej. a quién fue el cheque) → nombre
-    de la empresa en un ACH (`ORIG CO NAME:PAYROLL SERVICE ORIG ID:…` → `PAYROLL SERVICE`) → la persona
-    o empresa de un Zelle/Venmo → un dominio (`REMITLY.COM` → `REMITLY`) → las primeras palabras reales.
-    Siempre devuelve algo que la regla puede cazar en ESTA descripción (si no, la frase específica)."""
+    Orden: lo que escribió el bookkeeper (`description_extra`, p. ej. a quién fue el cheque o el
+    depósito) → nombre de la empresa en un ACH (`ORIG CO NAME:PAYROLL SERVICE ORIG ID:…` → `PAYROLL
+    SERVICE`) → la persona o empresa de un Zelle/Venmo/Cash App → un dominio (`REMITLY.COM` →
+    `REMITLY`) → las primeras palabras reales. Siempre devuelve algo que la regla puede cazar en ESTA
+    descripción (si no, la frase específica).
+
+    Pagos a PERSONAS (20-oct-2026, prueba de campo): la misma persona cobra (cliente) y paga
+    (proveedor), y `CategoryRule` no guarda entrada/salida — sin el canal y la dirección, las dos
+    reglas colisionarían en una sola. Con texto agregado en un CHEQUE o un DEPÓSITO (el banco no dice
+    a quién; ver `is_check`/`is_deposit`) la palabra clave lleva su prefijo: `CHECK*JOHN DOE` ·
+    `DEPOSIT*JOHN DOE`. Con un Zelle/Venmo/Cash App (el banco SÍ dice a quién, con FROM o TO) lleva
+    canal y dirección: `ZELLE*FROM*JOHN DOE` (recibido) · `ZELLE*TO*JOHN DOE` (enviado). El `*` es el
+    comodín de `_matches` (cada parte, en orden, en cualquier lugar): las tres partes están, en ese
+    orden, en la descripción real, así que no hace falta pasar por la validación de abajo (pensada
+    para un match sin comodín, que buscaría la frase ENTERA de un tirón)."""
     if extra and extra.strip():
-        return _name_words(extra, 4) or extra.strip().upper()
+        name = _name_words(extra, 4) or extra.strip().upper()
+        if is_check(description):
+            return f"CHECK*{name}"
+        if is_deposit(description):
+            return f"DEPOSIT*{name}"
+        return name
     d = " ".join((description or "").upper().split())
     if not d or is_check(d):
         return ""  # un cheque SIN texto no tiene comercio: primero hay que escribir a quién fue
@@ -787,7 +821,10 @@ def suggest_keyword(description: Optional[str], extra: Optional[str] = None) -> 
     if not cand:
         m = _P2P_RE.search(d)
         if m:
-            cand = _name_words(m.group(1), 3)
+            name = _name_words(m.group(3), 3)
+            if name:
+                channel = re.sub(r"\s+", " ", m.group(1).strip())
+                return f"{channel}*{m.group(2).upper()}*{name}"
     if not cand:
         m = _DOMAIN_RE.search(d)
         if m:

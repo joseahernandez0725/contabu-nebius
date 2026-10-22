@@ -51,7 +51,7 @@ from reports import pivot, pivot_leaves, income_statement
 import bank
 from rules import (
     apply_rule_to_transactions, build_import_rules, create_company_rule, find_rule_candidates,
-    is_check, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
+    is_check, is_deposit, load_rules, match_rule, matchable_text, upsert_company_rule, validate_keyword,
     place_priority, reapply_rule_precedence, redecide_transaction, rule_overlaps, simulate_delete,
     simulate_rule_change, rule_trace,
     suggest_keyword, normalize,
@@ -2583,6 +2583,19 @@ def update_transaction(
     data = payload.model_dump(exclude_unset=True)
     rule_action = data.pop("rule_action", None)  # intención sobre el reglamento (no es campo de tx)
     reason = data.pop("reason", None)            # motivo de la corrección (solo historial)
+
+    # EL TEXTO AGREGADO SOLO DONDE EL BANCO NO TRAE LA CONTRAPARTE (20-oct-2026): un cheque emitido
+    # ("CHECK 1234") o un depósito ("MOBILE DEPOSIT REF…") no dicen a quién. En las demás filas el
+    # banco ya trae quién es (Zelle/Venmo con FROM/TO, una ACH con ORIG CO NAME, un comercio con
+    # nombre) — agregar texto ahí no aporta y podría reescribir la evidencia. El frontend ya bloquea
+    # la celda; esto es el candado real (la Hoja no es el único camino a este endpoint).
+    if "description_extra" in data and data["description_extra"] and not (
+            is_check(tx.description) or is_deposit(tx.description)):
+        raise HTTPException(
+            status_code=422,
+            detail=("This row can't take added text: the bank already names the other party. "
+                    "Only checks and deposits (where it doesn't) can."),
+        )
     # HISTORIAL DE CORRECCIONES (2-oct): foto ANTES de tocar nada → al final, el par antes/después.
     before = snapshot(tx)
 

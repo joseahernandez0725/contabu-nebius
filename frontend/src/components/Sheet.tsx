@@ -424,6 +424,15 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     if (value === (before ?? "")) return false;
     // Supr sobre un rango no "borra" categorías: quedarían en "" (no es Pendiente de verdad).
     if (prop === "category" && !value) { load(); return false; }
+    // EL CANDADO DEL TEXTO AGREGADO (20-oct): solo cheques y depósitos lo aceptan (el banco no dice
+    // a quién). Borrarlo (value vacío) siempre se permite, aunque la fila ya no califique.
+    if (prop === "description_extra" && value && !canEditExtra(model.description)) {
+      setError(t("sheet.extraLocked", {
+        defaultValue: "This row can't take added text: the bank already names the other party. Only checks and deposits (where it doesn't) can.",
+      }));
+      load();
+      return false;
+    }
     const payload: Record<string, unknown> = { [prop]: value, rule_action: "only_this" };
     if (prop === "category") {
       const section = Object.entries(chartRef.current).find(([, cats]) => cats.includes(value))?.[0];
@@ -682,6 +691,15 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   // categoría y subcategoría. Un resaltado de fila que ponga el bookkeeper gana sobre este tinte.
   const manualCell = (p: any) => (p?.model?.source === "manual" ? { class: { "cb-manual": true } } : {});
 
+  // EL TEXTO AGREGADO SOLO DONDE EL BANCO NO TRAE LA CONTRAPARTE (20-oct-2026): un cheque emitido o
+  // un depósito no dicen a quién; un Zelle/Venmo/ACH ya trae el nombre, así que agregar texto ahí no
+  // aporta. Duplica `rules.is_check`/`rules.is_deposit` (backend) a propósito: la celda se bloquea
+  // ANTES de llamar al servidor (que también lo rechaza — este candado es solo la primera barrera).
+  const CHECK_RE = /^\s*(?:check|cheque)\b/i;
+  const DEPOSIT_RE = /\bdeposit\b/i;
+  const canEditExtra = (description?: string | null) =>
+    CHECK_RE.test(description ?? "") || DEPOSIT_RE.test(description ?? "");
+
   // El sobrante de ancho sobre las columnas fijas (lo mide un ResizeObserver más abajo, sobre `hostRef`)
   // va entero a Descripción; lo que el bookkeeper fijó A MANO arrastrando su borde gana. RevoGrid 4.28
   // trae un plugin de `stretch`, pero verificado en su código (`column.stretch.plugin`) que solo estira
@@ -726,6 +744,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     // de qué dijo el banco y qué escribiste tú.
     { prop: "description_extra", name: t("sheet.description", { defaultValue: "Description" }),
       size: descSize, sortable: true, editor: TEXT_EDITOR,
+      // NO `readonly` de columna a propósito (20-oct, pedido de Jose): RevoGrid pinta de gris
+      // cualquier celda readonly (su propio CSS, `.rgCell.disabled`) y la fila debe verse EXACTAMENTE
+      // igual que antes, solo con el 🔒. El candado real vive en `saveCell` (bloquea guardar, pegar y
+      // Supr sobre esa celda); aquí el editor sí abre, pero escribir no se guarda.
       cellTemplate: (h: any, p: any) => {
         // El texto se corta con "…" y lo que va detrás (etiquetas, 📝) queda siempre a la vista.
         const text: any[] = [
@@ -739,10 +761,19 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             title: t("sheet.yourText", { defaultValue: "Text you added — rules match on it too" }),
             style: { ...styleOf(p.model, "description"), opacity: 0.55, whiteSpace: "pre" },
           }, ` - ${p.model.description_extra}`));
-        } else {
+        } else if (canEditExtra(p.model.description)) {
           text.push(h("span", {
             style: { marginInlineStart: "6px", color: "#c9c2b2", fontStyle: "italic", fontSize: "12px" },
           }, t("sheet.addText", { defaultValue: "+ add" })));
+        } else {
+          // Candado (20-oct, Jose: la fila se ve EXACTAMENTE igual que antes, solo con el 🔒 — sin
+          // atenuarlo más que el resto de la fila).
+          text.push(h("span", {
+            title: t("sheet.extraLockedHint", {
+              defaultValue: "Only checks and deposits can take added text — the bank already names the other side here.",
+            }),
+            style: { marginInlineStart: "6px", fontSize: "11px", flex: "none" },
+          }, "🔒"));
         }
         const kids: any[] = [h("span", { style: { flex: "0 1 auto", minWidth: "0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, ...text)];
         for (const l of (p.model.labels ?? []) as SheetLabel[]) {
@@ -890,7 +921,13 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   const openBookNote = useCallback(async (row: SheetRow | null) => {
     if (!row) { setQuickNote({ merchant: null }); return; }
     let merchant = (row.description ?? "").slice(0, 80);
-    try { const p = await previewRule({ transaction_id: row.id }); if (p.keyword) merchant = p.keyword.slice(0, 80); }
+    try {
+      const p = await previewRule({ transaction_id: row.id });
+      // Las notas cazan por SUBCADENA literal (`tx_insight.silencing_merchants`), no por el motor de
+      // reglas: un keyword con comodín ("ZELLE*FROM*JOHN DOE", 20-oct) no aparece tal cual en la
+      // descripción. Para un pago a persona se usa solo el nombre (lo que va después del último `*`).
+      if (p.keyword) merchant = (p.keyword.includes("*") ? p.keyword.split("*").pop()! : p.keyword).slice(0, 80);
+    }
     catch { /* sin sugerencia: va la descripción del banco, editable */ }
     setQuickNote({ merchant });
   }, []);

@@ -1045,6 +1045,8 @@
     "count_other": "{{count}} transactions",
     "yourText": "Text you added — rules match on it too",
     "addText": "+ add",
+    "extraLockedHint": "Only checks and deposits can take added text — the bank already names the other side here.",
+    "extraLocked": "This row can't take added text: the bank already names the other party. Only checks and deposits (where it doesn't) can.",
     "pending": "Pending",
     "onlyPending": "Pending ({{n}})",
     "pendingHint": "No rule covers this yet — pick a category or create a rule",
