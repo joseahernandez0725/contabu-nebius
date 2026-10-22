@@ -11,8 +11,8 @@ import {
   CATEGORY_EDITOR, categoryEditors, sectionOfCategory, setEditorChart,
 } from "./CategoryEditor";
 import {
-  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useCaseStyle, applyCase, CellMenu, CellViewer,
-  cellFromEvent, FormulaBar, moveFocus, type MenuItem,
+  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useExternalClipboardGuard, useCaseStyle, applyCase,
+  CellMenu, CellViewer, cellFromEvent, FormulaBar, moveFocus, type MenuItem,
 } from "./gridKit";
 
 const RULE_EDITORS = { ...categoryEditors, ...textEditors };
@@ -618,6 +618,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
 
   const hostRef = useRef<HTMLDivElement | null>(null);
   useUndoShortcut(hostRef, () => void undo());
+  useExternalClipboardGuard(hostRef);
 
   // TAB SOBRE LA SUGERENCIA (Jose, 4-oct): parado en una subcategoría vacía (la que se ve en gris),
   // Tab la pone y pasa a la celda de la derecha, sin abrir el editor.

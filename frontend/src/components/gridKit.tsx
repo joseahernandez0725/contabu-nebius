@@ -234,6 +234,48 @@ export function useUndoShortcut(hostRef: React.RefObject<HTMLElement | null>, un
   }, [hostRef, undo]);
 }
 
+// ── El portapapeles FUERA de la grilla (20-oct-2026) ──────────────────────────────────────────
+// RevoGrid escucha copy/cut/paste en TODO `document` (revogr-clipboard.js, `target: "document"`),
+// sin mirar de dónde salió el evento: con una celda enfocada o un rango, Ctrl+C/X/V en CUALQUIER
+// campo fuera de la grilla (un diálogo, el panel lateral, una nota) se lo roba la grilla — copia la
+// celda en vez del texto, pega en la grilla en vez del campo, o borra la celda al cortar.
+//
+// RevoGrid SÍ avisa antes, con sus propios eventos `beforecopy`/`beforecut`/`beforepaste`
+// (comprobado contra `revogr-clipboard.js`: burbujean y cruzan cualquier frontera, `bubbles` +
+// `composed`, y ninguna de las dos grillas usa shadow DOM — comprobado en el libro real, solo
+// lectura, con `revo-grid.shadowRoot === null`). Si se les hace `preventDefault()`, RevoGrid se
+// detiene ANTES de tocar el evento nativo (confirmado disparando un `copy` sintético: sin el
+// candado, deja `event.defaultPrevented === true`; con él, se queda en `false`) — así el navegador
+// copia/pega/corta normal donde el usuario de verdad estaba.
+function isOutsideGrid(host: HTMLElement): boolean {
+  const active = document.activeElement as HTMLElement | null;
+  if (active && active !== document.body && !host.contains(active)) {
+    if (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable) return true;
+  }
+  const sel = window.getSelection();
+  if (sel && !sel.isCollapsed && sel.anchorNode && !host.contains(sel.anchorNode)) return true;
+  return false;
+}
+
+/** Monta esto UNA vez por grilla (sobre el `hostRef` que envuelve su `<RevoGrid>`): cancela el
+ *  secuestro de RevoGrid cuando el foco o la selección están fuera de `host`. Dentro de la grilla,
+ *  nada cambia (ni el Ctrl+C del 19-oct, que copia lo que se ve). */
+export function useExternalClipboardGuard(hostRef: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const guard = (e: Event) => { if (isOutsideGrid(host)) e.preventDefault(); };
+    host.addEventListener("beforecopy", guard);
+    host.addEventListener("beforecut", guard);
+    host.addEventListener("beforepaste", guard);
+    return () => {
+      host.removeEventListener("beforecopy", guard);
+      host.removeEventListener("beforecut", guard);
+      host.removeEventListener("beforepaste", guard);
+    };
+  }, [hostRef]);
+}
+
 // ── Mayúsculas (solo presentación) ────────────────────────────────────────────────────────────
 
 export type CaseStyle = "asis" | "upper" | "title";

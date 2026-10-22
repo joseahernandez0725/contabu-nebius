@@ -13,8 +13,8 @@ import type { CellFormat, SheetLabel, SheetRow } from "../types";
 import { CATEGORY_EDITOR, categoryEditors, setEditorChart } from "./CategoryEditor";
 import RuleDialog from "./RuleDialog";
 import {
-  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useCaseStyle, applyCase, CellMenu, CellViewer,
-  cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem, type CaseStyle,
+  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useExternalClipboardGuard, useCaseStyle, applyCase,
+  CellMenu, CellViewer, cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem, type CaseStyle,
 } from "./gridKit";
 import type { View } from "./Sidebar";
 import { SyncSummary, sumSyncs } from "./BankConnections";
@@ -870,6 +870,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   // crear una regla desde la fila y cómo se ve el texto.
   const hostRef = useRef<HTMLDivElement | null>(null);
   useUndoShortcut(hostRef, () => void undo());
+  useExternalClipboardGuard(hostRef);
 
   // Se recalcula cuando cambia el ancho DISPONIBLE: la ventana o el panel lateral de la transacción
   // que abre/cierra a su lado (los dos cambian el ancho de `hostRef`, no el de la ventana).

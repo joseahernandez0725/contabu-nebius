@@ -62,7 +62,7 @@ export default function RuleDialog({ seed, chart, onClose, onCreated, onChartCha
   // Mientras escribes la palabra clave: qué cazaría (con una pausa corta para no pedir en cada tecla).
   useEffect(() => {
     if (firstLoad.current) { firstLoad.current = false; if (seed) return; }
-    const k = keyword.trim();
+    const k = keyword.trim().toUpperCase();
     if (k.length < 2) { setPreview(null); return; }
     const id = setTimeout(() => {
       previewRule({ keyword: k, transaction_id: seed?.id }).then(setPreview).catch(() => {});
@@ -84,7 +84,12 @@ export default function RuleDialog({ seed, chart, onClose, onCreated, onChartCha
   }, [sections, localChart, q]);
 
   const unlikelyPicked = !!category && !!sections.find((x) => x.sec === category.sec)?.unlikely;
-  const k = keyword.trim();
+  // MAYÚSCULAS SOLO AL VER/GUARDAR (20-oct), no al escribir: subir a mayúsculas CADA letra en
+  // `onChange` ponía un valor distinto del que el campo acababa de mostrar, y React —al re-aplicar
+  // `value`— mandaba el cursor al final en cada tecla (no se podía corregir una letra en medio). El
+  // campo guarda tal cual se escribe (`keyword`) y se ve en mayúsculas por CSS (`textTransform`); `k`
+  // es la forma canónica que usan la vista previa, el aviso de "ya existe" y lo que se guarda.
+  const k = keyword.trim().toUpperCase();
   // La subcategoría es OBLIGATORIA (Jose, 4-oct): es el nombre limpio que se ve en los libros.
   const sub = subcategory.trim();
   const canCreate = !busy && k.length >= 2 && !!category && sub.length > 0 && !preview?.duplicate;
@@ -147,9 +152,9 @@ export default function RuleDialog({ seed, chart, onClose, onCreated, onChartCha
 
         {/* 1. PALABRA CLAVE + lo que caza en vivo */}
         <div style={label}>{t("rules.dialog.keyword")}</div>
-        <input ref={kwRef} value={keyword} onChange={(e) => setKeyword(e.target.value.toUpperCase())}
+        <input ref={kwRef} value={keyword} onChange={(e) => setKeyword(e.target.value)}
           placeholder={loading ? t("rules.dialog.suggesting") : t("rules.keywordHint", { defaultValue: "e.g. HOME DEPOT" })}
-          style={{ ...field, fontWeight: 700, letterSpacing: ".02em" }} />
+          style={{ ...field, fontWeight: 700, letterSpacing: ".02em", textTransform: "uppercase" }} />
         <p style={{ fontSize: 11.5, color: "#7a8a80", margin: "4px 0 0" }}>{t("rules.dialog.keywordHelp")}</p>
 
         <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, background: "#FBF7EE", fontSize: 13 }}>
