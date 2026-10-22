@@ -120,10 +120,34 @@ def merchant_signature(description: Optional[str], tokens: int = 2) -> str:
 
     Limitación honesta: NO resuelve nombres truncados/garbleados sin tokens en común (ej. `# DAY` vs
     `DAY DARMET`) — esos se dejan a la **aprobación humana** del proponedor (un merge falso miscategoriza,
-    peor que no mergear)."""
+    peor que no mergear).
+
+    ACH y pagos a persona van APARTE (20-oct-2026, prueba de campo en el libro real): el recorte
+    genérico de abajo toma las 2 primeras palabras significativas, y en esos dos formatos esas
+    palabras son del FORMATO del banco, no del comercio — "ORIG CO NAME:ACME PAYROLL ORIG ID:…" y
+    "ORIG CO NAME:BLUE INSURANCE ORIG ID:…" daban las dos "ORIGNAME" (100 ACH de empresas distintas,
+    una sola firma); "ZELLE PAYMENT TO JOHN DOE" y "ZELLE PAYMENT TO JANE ROE" daban las dos
+    "ZELLETO" (33 Zelle enviados a 8 personas, una sola firma)."""
     if not description:
         return ""
     text = description.upper()
+
+    m = _ACH_NAME_RE.search(text)                         # el nombre de la empresa, no "ORIG"/"NAME"
+    if m:                                                  # (mismo patrón que `suggest_keyword`)
+        words = [w for w in re.sub(r"[^A-Z0-9&'-]+", " ", m.group(1)).split()
+                 if any(c.isalpha() for c in w) and not _is_code(w)]
+        if words:
+            return "".join(words[:tokens])
+
+    m = _P2P_RE.search(text)                               # canal + dirección + persona: dos
+    if m:                                                  # personas nunca quedan juntas, y la
+        channel = re.sub(r"[^A-Z0-9]", "", m.group(1))      # misma persona queda separada por
+        direction = m.group(2).upper()                      # dirección ("ZELLETOJOHNDOE")
+        name_words = [w for w in re.sub(r"[^A-Z0-9&'-]+", " ", m.group(3)).split()
+                      if any(c.isalpha() for c in w) and not _is_code(w)]
+        if name_words:
+            return channel + direction + "".join(name_words[:tokens])
+
     text = _CHECK_WORDS_RE.sub(" ", text)                 # palabras de cheque (y CHK)
     text = re.sub(r"X{2,}\d+", " ", text)                 # cuentas enmascaradas XXXX2961
     text = re.sub(r"#\s*\d+", " ", text)                  # número de tienda / ref #1234
