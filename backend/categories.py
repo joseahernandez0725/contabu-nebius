@@ -335,7 +335,18 @@ def default_plan(sector: str, tax_form: str = DEFAULT_TAX_FORM) -> dict[str, lis
     """El plan por defecto de un libro: `{sección: [(nombre, línea)…]}`, en orden.
     1120-S es uno solo para cualquier sector; Schedule C mezcla lo del sector (o el genérico) con lo común."""
     if tax_form == "1120s":
-        return {sec: list(FORM_1120S.get(sec, [])) for sec in _SECTIONS}
+        out = {sec: list(FORM_1120S.get(sec, [])) for sec in _SECTIONS}
+        # "Materials" en 1120-S (20-oct-2026): el Form 1125-A no tiene esa línea, así que el plan
+        # general no la traía. Los libros cuyo SECTOR sí la trae en su lista de Schedule C
+        # (construction, landscaping, painting… — se mira el COGS de ESE sector, no el genérico: un
+        # sector sin plan propio, "other" incluido, cae en `_SC_GENERIC` para Schedule C, pero ESE
+        # genérico no cuenta aquí) la reciben también en 1120-S, como "Other costs" (1125A:5). Solo
+        # libros NUEVOS: `seed_chart` nunca toca una categoría que ya existe, así que esto no mueve
+        # nada ya sembrado.
+        sc_cogs = _SC_SECTOR.get((sector or "").strip().lower(), {}).get("COGS", [])
+        if any(name == "Materials" for name, _ in sc_cogs):
+            out["COGS"] = [("Materials", "1125A:5")] + out["COGS"]
+        return out
     base = _SC_SECTOR.get((sector or "").strip().lower(), _SC_GENERIC)
     out: dict[str, list[tuple[str, Optional[str]]]] = {}
     for sec in _SECTIONS:
