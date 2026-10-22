@@ -17,6 +17,10 @@ export type View = "dashboard" | "transactions" | "notes" | "audit" | "upload" |
 // En escritorio vive COMPRIMIDA (solo íconos, 64 px) y se EXPANDE al acercar el mouse (pedido de
 // Jose, 30-sep). Se abre ENCIMA del contenido, no lo empuja: si lo empujara, la hoja se redibujaría
 // cada vez que el mouse pasa por el borde. El contenido siempre empieza a 64 px.
+//
+// `drawerOnly` (20-oct, pedido de Jose): SOLO en Movimientos, la barra no reserva espacio ni se abre
+// al pasar el mouse (la Hoja tiene los números de fila pegados al borde izquierdo: se abriría solo).
+// Se vuelve un cajón como el de celular, pero también en escritorio — lo abre el botón ☰ de App.tsx.
 
 const ic = (d: ReactNode) => (
   <svg viewBox="0 0 24 24" className="size-[18px] shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -58,7 +62,7 @@ function initials(name: string | undefined): string {
 }
 
 export default function Sidebar({
-  view, onNavigate, company, companies, onSwitch, onAdd, reviewCount, auditCount, open, onClose,
+  view, onNavigate, company, companies, onSwitch, onAdd, reviewCount, auditCount, open, onClose, drawerOnly = false,
 }: {
   view: View;
   onNavigate: (v: View) => void;
@@ -68,13 +72,23 @@ export default function Sidebar({
   onAdd: () => void;
   reviewCount: number;   // pendientes de confirmar (badge rojo)
   auditCount: number;    // hallazgos del auditor (badge ámbar)
-  open: boolean;         // solo en pantallas chicas: la barra entra como cajón
+  open: boolean;         // en celular siempre, y en Movimientos (drawerOnly) también en escritorio: la barra entra como cajón
   onClose: () => void;
+  drawerOnly?: boolean;  // Movimientos (20-oct): sin riel fijo ni apertura con el mouse — solo el cajón, con el botón ☰
 }) {
   const { t } = useTranslation();
   const [hover, setHover] = useState(false);
   const timer = useRef<number | null>(null);
   useEffect(() => () => { if (timer.current) window.clearTimeout(timer.current); }, []);
+
+  // Esc cierra el cajón (celular, y Movimientos en escritorio). El riel con hover no necesita esto:
+  // se cierra solo al alejar el mouse.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   const later = (value: boolean, ms: number) => {
     if (timer.current) window.clearTimeout(timer.current);
@@ -173,24 +187,29 @@ export default function Sidebar({
   return (
     <>
       {/* ESCRITORIO: un hueco fijo de 64 px en el flujo (el contenido nunca se mueve) y, encima, la
-          barra fija que se ensancha a 240 px al acercar el mouse — o al llegar con el teclado. */}
-      <div className="hidden md:block w-16 shrink-0">
-        <aside
-          onMouseEnter={() => later(true, OPEN_DELAY_MS)}
-          onMouseLeave={() => later(false, CLOSE_DELAY_MS)}
-          onFocus={() => later(true, 0)}
-          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) later(false, 0); }}
-          className={`fixed inset-y-0 start-0 z-30 border-e border-slate-200 bg-white transition-[width,box-shadow] duration-200 ease-out ${
-            hover ? "w-60 shadow-xl" : "w-16"
-          }`}
-        >
-          {body(hover)}
-        </aside>
-      </div>
+          barra fija que se ensancha a 240 px al acercar el mouse — o al llegar con el teclado.
+          En `drawerOnly` (Movimientos) no se reserva espacio: la Hoja usa todo el ancho, y la barra
+          solo existe como cajón (abajo), igual que en celular. */}
+      {!drawerOnly && (
+        <div className="hidden md:block w-16 shrink-0">
+          <aside
+            onMouseEnter={() => later(true, OPEN_DELAY_MS)}
+            onMouseLeave={() => later(false, CLOSE_DELAY_MS)}
+            onFocus={() => later(true, 0)}
+            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) later(false, 0); }}
+            className={`fixed inset-y-0 start-0 z-30 border-e border-slate-200 bg-white transition-[width,box-shadow] duration-200 ease-out ${
+              hover ? "w-60 shadow-xl" : "w-16"
+            }`}
+          >
+            {body(hover)}
+          </aside>
+        </div>
+      )}
 
-      {/* CELULAR: cajón completo que entra desde la izquierda (no hay mouse que acercar). */}
+      {/* CAJÓN: en celular siempre (no hay mouse que acercar) y, en `drawerOnly`, también en
+          escritorio — ahí lo abre el botón ☰ de App.tsx, nunca el mouse. */}
       {open && (
-        <div className="md:hidden fixed inset-0 z-40">
+        <div className={`${drawerOnly ? "" : "md:hidden"} fixed inset-0 z-40`}>
           <div className="absolute inset-0 bg-slate-900/30" onClick={onClose} />
           <aside className="absolute inset-y-0 start-0 w-64 shadow-xl">{body(true)}</aside>
         </div>
