@@ -42,6 +42,7 @@ import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
+from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -197,11 +198,15 @@ def run_verify(session: Session, company: Company, mode: str) -> dict:
     res = merchant_verifier.verify_flagged(session, company, record=False)
     persons = merchant_verifier.protected_names(txs)
     if mode == "live":
-        new = [m for fp, m in merchant_verifier.cached(session, company).items() if fp not in before]
+        # 22-oct: se SUMA a lo guardado (antes lo pisaba): la evidencia de una corrida anterior no se pierde.
+        saved = {r["fingerprint"]: r for r in json.load(open(_oracle_path(company), encoding="utf-8"))} \
+            if _oracle_path(company).exists() else {}
+        for fp, m in merchant_verifier.cached(session, company).items():
+            if fp not in before:
+                saved[fp] = {"fingerprint": m.fingerprint, "business_type": m.business_type, "confidence": m.confidence,
+                             "source_url": m.source_url, "results_count": m.results_count, "search_depth": m.search_depth}
         with _private_open(_oracle_path(company)) as fh:
-            json.dump([{"fingerprint": m.fingerprint, "business_type": m.business_type, "confidence": m.confidence,
-                        "source_url": m.source_url, "results_count": m.results_count, "search_depth": m.search_depth}
-                       for m in new], fh, ensure_ascii=False, indent=2)
+            json.dump(list(saved.values()), fh, ensure_ascii=False, indent=2)
     return {"merchants": len(res.items), "flagged": res.flagged, "pending": res.pending, "searched": res.searched,
             "from_cache": res.from_cache, "credits": res.credits if mode == "live" else 0,
             "by_confidence": dict(Counter(i.get("confidence") or "none" for i in res.items)),
@@ -313,47 +318,66 @@ def rewind(session: Session, company: Company, since) -> dict:
             "notes_removed": len(notes)}
 
 
-def grade(session: Session, company: Company, day: str, since, verify: str, lang: str) -> int:
+def grade_once(session: Session, company: Company, since, verify: str, lang: str = "es",
+               model: Optional[str] = None, reasoning: Optional[bool] = None) -> dict:
+    """UNA calificación del ④ (22-oct: devuelve las métricas; `real_matrix.py` la repite por modelo). Dentro de la
+    transacción de quien llama, que se deshace: vuelve al "antes", Verificar, el ④ con ese modelo, el motor decide.
+    Métricas por año (2026 aparte del resto) y en total; el detalle por movimiento va en `detail` (privado)."""
     import agents
     import formula
     import nemotron
     session.commit = session.flush  # type: ignore[method-assign]
     nemotron.SENT.clear()
-    from sqlalchemy import text
-    print(f"  reloj de la base ahora: {session.connection().execute(text('SELECT LOCALTIMESTAMP')).scalar()}")
     back = rewind(session, company, since)
     key = back["key"]
-    print(f"  al 'antes' ({since}): {back['reverted']} · cambios del historial quitados: {back['changes_removed']} · "
-          f"reglas quitadas: {back['rules_removed']} · notas quitadas: {back['notes_removed']} · "
-          f"clave de respuestas: {len(key)} movimientos que estaban Pendientes")
     web = run_verify(session, company, verify) if verify != "none" else None
-    if web:
-        print(f"  verificar ({verify}): {web}")
-    res = agents.draft(session, company, lang=lang, record=False)
+    res = agents.draft(session, company, lang=lang, record=False, model=model, reasoning=reasoning)
     ctx = formula.BookContext(session, company)
     rules = formula.with_rows(ctx.rules, [p.row for p in res.proposals], company.id)
     c, detail = Counter(), []
     for t in ctx.txs:
         if t.id not in key:
             continue
+        span = "2026" if t.date.year == 2026 else "antes"
         d = formula.decide(rules, t)
         if d.source != "rule":
-            c["left_pending"] += 1
+            c[f"{span}:left_pending"] += 1
             continue
         ok = (d.account_type, d.category) == key[t.id]
-        c["right" if ok else "wrong"] += 1
-        detail.append({"tx": t.id, "agent": [d.account_type, d.category], "bookkeeper": list(key[t.id]), "ok": ok})
-    decided = c["right"] + c["wrong"]
+        c[f"{span}:{'right' if ok else 'wrong'}"] += 1
+        detail.append({"tx": t.id, "year": t.date.year, "agent": [d.account_type, d.category],
+                       "bookkeeper": list(key[t.id]), "ok": ok})
+    spans = {}
+    for span in ("2026", "antes"):
+        right, wrong, left = c[f"{span}:right"], c[f"{span}:wrong"], c[f"{span}:left_pending"]
+        spans[span] = {"key": right + wrong + left, "decided": right + wrong, "right": right}
+    spans["total"] = {k: spans["2026"][k] + spans["antes"][k] for k in ("key", "decided", "right")}
+    u = res.usage
+    privacy = agents.privacy_scan(list(nemotron.SENT), ctx.txs,
+                                  __import__("merchant_verifier").protected_names(ctx.txs))
+    return {"rewind": {k: v for k, v in back.items() if k != "key"}, "verify": web, "outcome": res.outcome,
+            "calls": res.calls, "proposals": len(res.proposals), "rejection_counts": res.rejection_counts,
+            "spans": spans, "cost_usd": (u.cost_usd if u else 0.0) or 0.0, "latency_ms": u.latency_ms if u else 0,
+            "completion_tokens": u.completion_tokens if u else 0, "privacy": privacy,
+            "_private": {"proposals": [agents.proposal_dict(p) for p in res.proposals], "detail": detail}}
+
+
+def grade(session: Session, company: Company, day: str, since, verify: str, lang: str) -> int:
+    from sqlalchemy import text
+    print(f"  reloj de la base ahora: {session.connection().execute(text('SELECT LOCALTIMESTAMP')).scalar()}")
+    g = grade_once(session, company, since, verify, lang)
+    back = g["rewind"]
+    print(f"  al 'antes' ({since}): {back['reverted']} · cambios del historial quitados: {back['changes_removed']} · "
+          f"reglas quitadas: {back['rules_removed']} · notas quitadas: {back['notes_removed']}")
+    if g["verify"]:
+        print(f"  verificar ({verify}): {g['verify']}")
     path = OUT_DIR / f"grade_{day}.json"
     with _private_open(path) as fh:
-        json.dump({"since": str(since), "rewind": {k: v for k, v in back.items() if k != "key"}, "verify": web,
-                   "outcome": res.outcome, "proposals": [agents.proposal_dict(p) for p in res.proposals],
-                   "rejection_counts": res.rejection_counts, "detail": detail}, fh, ensure_ascii=False, indent=2,
-                  default=str)
+        json.dump({"since": str(since), **g}, fh, ensure_ascii=False, indent=2, default=str)
     print(f"Escrito {path.relative_to(Path(__file__).resolve().parent)} (permisos 600) · nada guardado en la base")
-    print(f"  ④: {len(res.proposals)} filas pasan · rechazos: {res.rejection_counts} · resultado: {res.outcome}")
-    print(f"  contra el bookkeeper: decide {decided}/{len(key)} (cobertura) · acierta {c['right']}/{decided} (precisión) · "
-          f"quedan Pendientes {c['left_pending']}")
+    print(f"  ④: {g['proposals']} filas pasan · rechazos: {g['rejection_counts']} · resultado: {g['outcome']}")
+    for span, m in g["spans"].items():
+        print(f"  {span}: decide {m['decided']}/{m['key']} (cobertura) · acierta {m['right']}/{m['decided']} (precisión)")
     return 0
 
 
