@@ -579,11 +579,15 @@ def draft(session: Session, company: Company, *, lang: str = "es", reasoning: Op
         if not checked.ok:
             reject(i, raw, checked.errors)
             continue
-        key = (checked.row.keyword.upper(), checked.row.valid_from, checked.row.valid_to)
+        # 22-oct (2): el MONTO también es parte de la identidad de una fila, como en `formula.check_row` (`duplicate_rule`).
+        # Sin él, "hasta 200 → Supplies" y "desde 200.01 → Materials" del mismo comercio salían como repetidas y se perdía
+        # la segunda (✅ libro real, con la primera nota de Jose: en las 13 corridas que escribieron las dos).
+        key = (checked.row.keyword.upper(), checked.row.valid_from, checked.row.valid_to,
+               checked.row.amount_min, checked.row.amount_max)
         if key in seen:
             reject(i, raw, ["repeated_in_proposal"])
             continue
-        if key + (checked.row.category,) in dismissed_keys:
+        if key[:3] + (checked.row.category,) in dismissed_keys:
             reject(i, raw, ["dismissed_before"])   # ya lo descartaste
             continue
         if only_note is not None and only_note["id"] not in checked.row.from_notes:

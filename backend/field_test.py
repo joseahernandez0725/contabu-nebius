@@ -277,7 +277,7 @@ def drafter(session: Session, company: Company, day: str, lang: str, verify: str
 
 # ── grade: el ④ contra lo que decidió un bookkeeper real ───────────────────────────────────────────
 
-def rewind(session: Session, company: Company, since) -> dict:
+def rewind(session: Session, company: Company, since, keep_note_ids: frozenset = frozenset()) -> dict:
     """Devuelve el libro a como estaba en `since`, DENTRO de la transacción (que se deshace). Devuelve la clave de
     respuestas: movimiento → (sección, categoría) que puso el bookkeeper, para los que estaban Pendientes."""
     from models import BookNote, CategorizationChange, CategoryRule
@@ -310,7 +310,9 @@ def rewind(session: Session, company: Company, since) -> dict:
                                                     CategoryRule.created_at >= since)).all()
     for r in rules:
         session.delete(r)
-    notes = session.exec(select(BookNote).where(BookNote.company_id == company.id, BookNote.created_at >= since)).all()
+    # 22-oct (2): `keep_note_ids` — notas que se CONSERVAN aunque sean posteriores (medir el ④ con la nota del bookkeeper).
+    notes = [n for n in session.exec(select(BookNote).where(BookNote.company_id == company.id, BookNote.created_at >= since)).all()
+             if n.id not in keep_note_ids]
     for n in notes:
         session.delete(n)
     session.flush()
@@ -319,7 +321,8 @@ def rewind(session: Session, company: Company, since) -> dict:
 
 
 def grade_once(session: Session, company: Company, since, verify: str, lang: str = "es",
-               model: Optional[str] = None, reasoning: Optional[bool] = None) -> dict:
+               model: Optional[str] = None, reasoning: Optional[bool] = None,
+               keep_note_ids: frozenset = frozenset()) -> dict:
     """UNA calificación del ④ (22-oct: devuelve las métricas; `real_matrix.py` la repite por modelo). Dentro de la
     transacción de quien llama, que se deshace: vuelve al "antes", Verificar, el ④ con ese modelo, el motor decide.
     Métricas por año (2026 aparte del resto) y en total; el detalle por movimiento va en `detail` (privado)."""
@@ -328,7 +331,7 @@ def grade_once(session: Session, company: Company, since, verify: str, lang: str
     import nemotron
     session.commit = session.flush  # type: ignore[method-assign]
     nemotron.SENT.clear()
-    back = rewind(session, company, since)
+    back = rewind(session, company, since, keep_note_ids)
     key = back["key"]
     web = run_verify(session, company, verify) if verify != "none" else None
     res = agents.draft(session, company, lang=lang, record=False, model=model, reasoning=reasoning)
@@ -358,6 +361,17 @@ def grade_once(session: Session, company: Company, since, verify: str, lang: str
     return {"rewind": {k: v for k, v in back.items() if k != "key"}, "verify": web, "outcome": res.outcome,
             "calls": res.calls, "proposals": len(res.proposals), "rejection_counts": res.rejection_counts,
             "spans": spans, "cost_usd": (u.cost_usd if u else 0.0) or 0.0, "latency_ms": u.latency_ms if u else 0,
+            # Cada fila que pasa, SIN su palabra clave: sección/cuenta, montos, si cita una nota y cuánto cambia.
+            "rows": [{"account_type": p.row.account_type.value, "category": p.row.category,
+                      "amount_min": float(p.row.amount_min) if p.row.amount_min is not None else None,
+                      "amount_max": float(p.row.amount_max) if p.row.amount_max is not None else None,
+                      "from_notes": list(p.row.from_notes), "from_changes": len(p.row.from_changes),
+                      "web": bool(p.web), "changes": p.test["changes"]} for p in res.proposals],
+            # Lo que el modelo escribió con monto aunque el validador lo rechazara (¿inventó un umbral?).
+            "rejected_amounts": [{"amount_min": r["raw"].get("amount_min"), "amount_max": r["raw"].get("amount_max"),
+                                  "from_notes": r["raw"].get("from_notes"), "error": (r["errors"] or [None])[0]}
+                                 for r in res.rejected if isinstance(r.get("raw"), dict)
+                                 and (r["raw"].get("amount_min") is not None or r["raw"].get("amount_max") is not None)],
             "completion_tokens": u.completion_tokens if u else 0, "privacy": privacy,
             "_private": {"proposals": [agents.proposal_dict(p) for p in res.proposals], "detail": detail}}
 

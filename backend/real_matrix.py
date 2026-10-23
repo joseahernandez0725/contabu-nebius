@@ -53,7 +53,9 @@ SINCE = datetime(2026, 10, 20, 20, 50)          # la prueba de Jose: reloj de la
 MODELS = ("nano", "lightning", "super", "ultra", "vl")
 CONFIGS = [(m, r) for m in MODELS for r in (False, True)]
 USD_CAP = 4.00                                   # tope de TODO el experimento (Nebius)
-SEAT = {"drafter": "drafter", "personal": "personal", "exam_reviewer": "reviewer", "exam_personal": "personal"}
+SEAT = {"drafter": "drafter", "drafter_note": "drafter", "drafter_note_fix": "drafter", "personal": "personal", "exam_reviewer": "reviewer",
+        "exam_personal": "personal"}
+KEY_SIZE = (386, 118)    # la clave del ④ tras volver al "antes" (total, 2026): si cambia, el libro ya no es el de la medición
 
 
 def _append(row: dict) -> None:
@@ -153,14 +155,16 @@ def check() -> int:
 
 # ── ④ en el libro real ─────────────────────────────────────────────────────────────────────────
 
-def drafter(n: int, live_first: bool = False) -> int:
+def drafter(n: int, live_first: bool = False, keep_note: int | None = None, kind: str | None = None) -> int:
     import agent_models
     import field_test
     import merchant_verifier
     from db import engine
     from models import Company
+    kind = kind or ("drafter_note" if keep_note is not None else "drafter")
+    keep = frozenset({keep_note}) if keep_note is not None else frozenset()
     first = True
-    for m, r in _cfg_runs("drafter", n):
+    for m, r in _cfg_runs(kind, n):
         if _over_cap():
             break
         mode, first = ("live" if live_first and first else "saved"), False
@@ -172,22 +176,27 @@ def drafter(n: int, live_first: bool = False) -> int:
                 merchant_verifier.ORACLE = None
                 t0 = time.time()
                 try:
-                    g = field_test.grade_once(s, company, SINCE, mode)
+                    g = field_test.grade_once(s, company, SINCE, mode, keep_note_ids=keep)
                     err = None
+                    size = (g["spans"]["total"]["key"], g["spans"]["2026"]["key"])
+                    if size != KEY_SIZE:
+                        sys.exit(f"⛔ la clave dio {size}, no {KEY_SIZE}: el libro cambió; me detengo")
+                    if keep and g["rewind"]["notes_removed"]:
+                        sys.exit("⛔ se borró una nota que debía quedarse; me detengo")
                 except Exception as e:   # un modelo que falla cuenta como corrida fallida, no detiene el resto
                     g, err = None, type(e).__name__
             finally:
                 s.rollback()
                 agent_models.OVERRIDES.pop("drafter", None)
-        row = {"kind": "drafter", "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
+        row = {"kind": kind, "model": m, "reasoning": r, "keep_note": keep_note, "ts": datetime.now().isoformat(timespec="seconds"),
                "wall_s": round(time.time() - t0, 1), "error": err, "web": mode}
         if g:
             row.update({k: g[k] for k in ("outcome", "calls", "proposals", "rejection_counts", "spans", "cost_usd",
-                                          "latency_ms", "completion_tokens", "privacy")})
+                                          "latency_ms", "completion_tokens", "privacy", "rows", "rejected_amounts")})
             row["verify"] = {k: g["verify"][k] for k in ("merchants", "pending", "pending_high_or_medium", "credits")} if g["verify"] else None
         _append(row)
         sp = row.get("spans", {}).get("total", {})
-        print(f"④ {m}{'+r' if r else ''}: {row.get('outcome', err)} · {row.get('proposals', 0)} filas · decide "
+        print(f"{'④+nota' if keep else '④'} {m}{'+r' if r else ''}: {row.get('outcome', err)} · {row.get('proposals', 0)} filas · decide "
               f"{sp.get('decided', 0)}/{sp.get('key', 0)} · acierta {sp.get('right', 0)} · ${row.get('cost_usd', 0):.5f} · "
               f"{(row.get('latency_ms') or 0) / 1000:.1f}s", flush=True)
     return 0
@@ -423,7 +432,7 @@ def _fmt(vals, f="{}"):
 def table() -> int:
     rows = _read()
     print(f"Gastado en Nebius: ${_spent():.4f} (tope ${USD_CAP})\n")
-    for kind in ("drafter", "personal", "exam_reviewer", "exam_personal"):
+    for kind in ("drafter", "drafter_note", "drafter_note_fix", "personal", "exam_reviewer", "exam_personal"):
         mine = [r for r in rows if r["kind"] == kind]
         if not mine:
             continue
@@ -436,7 +445,7 @@ def table() -> int:
             cost = sum(r.get("cost_usd") or 0 for r in rs) / len(rs)
             lat = sum((r.get("latency_ms") or 0) for r in ok) / max(1, len(ok)) / 1000
             name = f"{m}{' razona' if rz else ''}"
-            if kind == "drafter":
+            if kind in ("drafter", "drafter_note", "drafter_note_fix"):
                 cov = [f"{r['spans']['total']['decided']}/{r['spans']['total']['key']}" for r in ok]
                 prec = [f"{r['spans']['total']['right']}/{r['spans']['total']['decided']}" for r in ok]
                 c26 = [f"{r['spans']['2026']['decided']}/{r['spans']['2026']['key']}·{r['spans']['2026']['right']}" for r in ok]
@@ -465,6 +474,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "table"))
     ap.add_argument("--n", type=int, default=3, help="corridas por configuración")
+    ap.add_argument("--keep-note", type=int, help="drafter: conservar esta nota al volver al 'antes' (kind drafter_note)")
     ap.add_argument("--live-first", action="store_true",
                     help="drafter/exam: la PRIMERA corrida busca en Tavily de verdad y guarda la evidencia; las demás la reusan")
     args = ap.parse_args()
@@ -473,7 +483,7 @@ def main() -> int:
     if args.what == "check":
         return check()
     if args.what == "drafter":
-        return drafter(args.n, args.live_first)
+        return drafter(args.n, args.live_first, args.keep_note)
     if args.what == "personal":
         return personal(args.n)
     return exam(args.n, args.live_first)
