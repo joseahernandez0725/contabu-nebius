@@ -130,9 +130,15 @@ def detect(session: Session, company: Company, txs: list[Transaction]) -> list[d
     by_id = {t.id: t for t in txs}
     rules = session.exec(select(CategoryRule).where(CategoryRule.company_id == company.id)).all()
     rule_of = {r.id: r for r in rules}
+    # 23-oct: lo que decidiría HOY el motor por fila (monto y fechas incluidos), para que "mismo comercio, distinta
+    # categoría" no salte con un comercio separado a propósito por reglas condicionadas (`formula.engine_label`).
+    import formula
+    from rules import load_rules
+    ordered = load_rules(session, company.id, company.sector or "")
+    engine = {t.id: formula.engine_label(ordered, t) for t in txs}
     items = [{"id": t.id, "description": t.description, "account_type": t.account_type.value if t.account_type else None,
               "category": t.category, "is_inflow": t.is_inflow, "matched_rule_id": t.matched_rule_id,
-              "source": t.source} for t in txs]
+              "source": t.source, "engine": engine[t.id][0], "engine_conditional": engine[t.id][1]} for t in txs]
     rules_by_id = {r.id: {"match_text": r.match_text, "account_type": r.account_type.value if r.account_type else None,
                           "category": r.category} for r in rules}
     out: list[dict] = []
@@ -158,6 +164,10 @@ def detect(session: Session, company: Company, txs: list[Transaction]) -> list[d
                         "merchant": merchant, "transaction_ids": ids, "payload": {
                             "categories": sorted(f["detail"]), "odd_ids": f.get("odd_ids", []),
                             "manual_ids": f.get("manual_ids", []),
+                            # 23-oct: separado por reglas condicionadas → las filas que no las siguen, y por fila lo
+                            # que decide el motor (las llaves en texto: el JSON de la base no guarda llaves numéricas).
+                            **({"by_rules": True, "suggested_by_tx": {str(k): v for k, v in f["suggested_by_tx"].items()}}
+                               if f.get("by_rules") else {}),
                             "suggested_account_type": f.get("suggested_account_type"),
                             "suggested_category": f.get("suggested_category")}})
         elif f["type"] == "sign_mismatch":

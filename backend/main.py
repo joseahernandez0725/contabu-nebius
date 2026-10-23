@@ -1618,15 +1618,20 @@ def _company_audit(session: Session, company_id: int) -> list[dict]:
     txs = session.exec(
         select(Transaction).where(Transaction.company_id == company_id)
     ).all()
+    rules = session.exec(
+        select(CategoryRule).where(CategoryRule.company_id == company_id)
+    ).all()
+    # 23-oct (Auditoría/IA): la decisión del motor por fila, para no marcar un comercio separado por monto o fechas.
+    import formula
+    company = session.get(Company, company_id)
+    ordered = load_rules(session, company_id, (company.sector if company else None) or "")
     items = [{
         "id": t.id, "description": t.description,
         "account_type": t.account_type.value if t.account_type else None,
         "category": t.category, "is_inflow": t.is_inflow,
-        "matched_rule_id": t.matched_rule_id,
+        "matched_rule_id": t.matched_rule_id, "source": t.source,
+        **dict(zip(("engine", "engine_conditional"), formula.engine_label(ordered, t))),
     } for t in txs]
-    rules = session.exec(
-        select(CategoryRule).where(CategoryRule.company_id == company_id)
-    ).all()
     rules_by_id = {r.id: {
         "match_text": r.match_text,
         "account_type": r.account_type.value if r.account_type else None,

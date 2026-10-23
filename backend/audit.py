@@ -13,6 +13,10 @@ así que un Chevron con dos categorías vuelve a ser una inconsistencia — pedi
 Lo escrito a mano manda (Jose, 3-oct): si los `items` traen `source`, cada inconsistencia lleva
 `manual_ids` — las filas que el bookkeeper puso a mano a propósito. El revisor ① (agents.py) las trata
 como excepción deliberada o como señal para el ④, no como error.
+
+Desde el 8-oct las reglas tienen MONTO (`amount_min`/`amount_max`) y desde el 4-oct ventana de fechas: un comercio
+separado así no es una inconsistencia (23-oct). Para verlo, los `items` pueden traer `engine` (lo que decidiría hoy el
+motor, "SECCIÓN/Categoría") y `engine_conditional` (si lo decide una regla con condición); `audit.py` no toca la base.
 """
 from collections import Counter, defaultdict
 
@@ -69,6 +73,36 @@ def audit_categorization(items: list[dict], rules_by_id: dict[int, dict] | None 
             groups[sig].append(it)
     for sig, its in groups.items():
         labels = Counter((it.get("account_type"), it.get("category")) for it in its)
+        # 23-oct: un comercio que el bookkeeper SEPARA con reglas condicionadas (monto o fechas: "hasta $200 →
+        # Supplies, más → Materials") tiene dos cuentas a propósito. Si quien llama pasa la decisión del motor
+        # (`engine`, `engine_conditional`; ver `formula.engine_label`), cada fila que coincide con ella está
+        # EXPLICADA por sus reglas; el hallazgo apunta solo a las que no, y sugiere POR FILA lo que decide el motor.
+        # (✅ libro real: 60 filas de un comercio, 50 + 10 por monto, salían "inconsistentes".) Sin reglas con
+        # condición, todo sigue como antes: la mayoría.
+        if any(it.get("engine_conditional") for it in its):
+            off = [it for it in its if it.get("engine") != f"{it.get('account_type')}/{it.get('category')}"]
+            if not off:
+                continue
+            by_tx = {it["id"]: it["engine"] for it in off if it.get("engine")}
+            wanted = set(by_tx.values())
+            one = next(iter(wanted)) if len(wanted) == 1 and len(by_tx) == len(off) else None
+            at, cat = (one.split("/", 1) if one else (None, None))
+            findings.append({
+                "type": "inconsistent_merchant",
+                "severity": "high",
+                "merchant": sig,
+                "transaction_ids": [it["id"] for it in off],
+                "odd_ids": [it["id"] for it in off],
+                "manual_ids": [it["id"] for it in off if it.get("source") == "manual"],
+                "detail": sorted({f"{it.get('account_type')}/{it.get('category')}" for it in off} | wanted),
+                "by_rules": True,                  # la pantalla dice "no siguen la regla de su monto o fechas"
+                "suggested_by_tx": by_tx,          # fila → lo que decide el motor (no la mayoría)
+                "suggestion": one,
+                "suggested_account_type": at,
+                "suggested_category": cat,
+                "examples": [{"id": it["id"], "description": it.get("description"), "is_inflow": bool(it.get("is_inflow"))} for it in off[:3]],
+            })
+            continue
         if len(labels) > 1:
             (maj_at, maj_cat), _ = labels.most_common(1)[0]  # la categoría dominante = la probable correcta
             odd = [it["id"] for it in its

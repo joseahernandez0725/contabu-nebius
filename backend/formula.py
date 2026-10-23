@@ -216,6 +216,20 @@ def decide(rules_sorted: list[CategoryRule], tx: Transaction) -> Decision:
     return Decision(None, None, None)
 
 
+def engine_label(rules_sorted: list[CategoryRule], tx: Transaction) -> tuple[Optional[str], bool]:
+    """Lo que decidiría HOY el motor para este movimiento, para el auditor (23-oct): `("SECCIÓN/Categoría" o None,
+    ¿lo decide una regla con CONDICIÓN?)`. Condición = monto o ventana de fechas: un comercio que el bookkeeper separa
+    por monto ("hasta $200 → Supplies") tiene dos cuentas a propósito. Misma precedencia que `decide`."""
+    rule = match_rule(rules_sorted, matchable_text(tx.description, tx.description_extra), tx.date, tx.amount)
+    if rule is not None:
+        conditional = any(v is not None for v in (rule.amount_min, rule.amount_max, rule.valid_from, rule.valid_to))
+        return f"{rule.account_type.value if rule.account_type else None}/{rule.category}", conditional
+    transfer = classify_transfer(tx.description)
+    if transfer is not None:
+        return f"{transfer[0].value}/{transfer[1]}", False
+    return None, False
+
+
 def with_rows(base_rules: list[CategoryRule], rows: list[FormulaRow], company_id: int) -> list[CategoryRule]:
     """Las reglas vivas + las filas propuestas, en el ORDEN del motor (`rules.rule_order`)."""
     return sorted(list(base_rules) + [to_rule(r, company_id) for r in rows], key=rule_order)

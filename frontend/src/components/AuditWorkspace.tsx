@@ -538,8 +538,11 @@ export function useAuditText() {
       case "inconsistent_merchant": {
         const cats = (p.categories as string[] | undefined) ?? [];
         const manual = (p.manual_ids as number[] | undefined)?.length ?? 0;
-        return t("auditView.say.inconsistent_merchant", { count: cats.length, cats: cats.map(label).join(" · ") }) +
-          (manual ? " " + t("auditView.say.byHand", { count: manual }) : "");
+        // 23-oct: separado a propósito por reglas con monto o fechas → solo las filas que no las siguen.
+        const head = p.by_rules
+          ? t("auditView.say.inconsistent_by_rules", { count: ((p.odd_ids as number[] | undefined) ?? []).length })
+          : t("auditView.say.inconsistent_merchant", { count: cats.length, cats: cats.map(label).join(" · ") });
+        return head + (manual ? " " + t("auditView.say.byHand", { count: manual }) : "");
       }
       case "sign_mismatch":
         return t("auditView.say.sign_mismatch", { dir: t(`auditView.dir.${p.direction}`), section: SECTION_LABEL[p.account_type as string] ?? String(p.account_type) });
@@ -873,7 +876,10 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
       )}
       {f.transactions.length > 0 && (
         <ul className="border-t border-slate-100 pt-1">
-          {f.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate} extra={x.category ? label(`${x.account_type}/${x.category}`) : t("agents.pending")}
+          {f.transactions.map((x) => <TxRow key={x.id} x={x} fmtDate={fmtDate} extra={(x.category ? label(`${x.account_type}/${x.category}`) : t("agents.pending")) +
+            // 23-oct: lo que decide el motor para ESTA fila, cuando el comercio está separado por reglas con condición.
+            ((p.suggested_by_tx as Record<string, string> | undefined)?.[String(x.id)]
+              ? ` → ${t("auditView.say.ruleSays", { s: label((p.suggested_by_tx as Record<string, string>)[String(x.id)]) })}` : "")}
                                             onOpen={onOpenSheet} openLabel={t("auditView.act.openSheet")} />)}
         </ul>
       )}
