@@ -26,7 +26,7 @@ from audit import audit_categorization
 from billing import apply_session, create_checkout_session, handle_event
 # `effective_role` es la única fuente de verdad del acceso (FASE 13); los helpers dicen la
 # INTENCIÓN de cada endpoint: leer · escribir como consola · escribir como cliente · ser dueño.
-from auth import (current_user, effective_role, owned_company, owner_company, owned_transaction,
+from auth import (current_identity, current_user, effective_role, owned_company, owner_company, owned_transaction,
                   client_writable_company, console_company, user_firm)
 from categories import (help_for, LINES, LOCKED, TAX_FORMS, categories_for_company, chart_rows, line_form, seed_chart,
                         suggested_line, switch_plan)
@@ -245,6 +245,7 @@ def _create_own_firm(user: User, session: Session) -> tuple[Firm, FirmRole]:
 @app.get("/api/me")
 def get_me(
     user: User = Depends(current_user),
+    identity: dict = Depends(current_identity),
     session: Session = Depends(get_session),
 ):
     """El usuario, su OFICINA y los libros que ve. Respuesta: `{user, firm, firm_role, companies, roles}`.
@@ -256,7 +257,10 @@ def get_me(
       cáscara: consola del bookkeeper o plataforma del cliente.
     Las invitaciones pendientes ya se enlazaron en `current_user`, ANTES de llegar aquí: por eso un
     invitado nunca recibe una oficina que no pidió.
+    - **En el DEMO** (23-oct) no se crea nada aquí: `demo.door` dice la puerta (`demo.door` en la respuesta)
+      y, solo a quien tiene código, le deja su oficina. Sin código se ven los libros de la visita guiada.
     """
+    door = demo.door(session, user, anonymous=bool(identity.get("anonymous"))) if demo.DEMO_MODE else None
     firm, firm_role = user_firm(user, session)
 
     ids: set[int] = set()
@@ -265,19 +269,12 @@ def get_me(
     ids |= set(session.exec(select(Company.id).where(Company.user_id == user.id)).all())
     ids |= set(session.exec(select(CompanyMember.company_id).where(CompanyMember.user_id == user.id)).all())
 
-    if not ids and (firm is None or firm_role == FirmRole.OWNER):
+    if not ids and not demo.DEMO_MODE and (firm is None or firm_role == FirmRole.OWNER):
         if firm is None:
-            # DEMO: cada visitante que llega barre las oficinas vencidas (el demo solo crece cuando
-            # alguien entra). Va ANTES de crear la oficina nueva: su commit no debe arrastrarla.
-            demo.cleanup_quietly(session)
             firm, firm_role = _create_own_firm(user, session)
-        if demo.DEMO_MODE:
-            # DEMO: los libros sembrados por el generador de Movimientos (o uno vacío si aún no existe).
-            books = demo.seed_visitor_books(session, firm, user)
-        else:
-            # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector).
-            books = [Company(name="My Business", sector="", user_id=user.id, firm_id=firm.id)]
-            session.add(books[0])
+        # sector vacío = AÚN NO ELEGIDO → el frontend muestra el onboarding (selector de sector).
+        books = [Company(name="My Business", sector="", user_id=user.id, firm_id=firm.id)]
+        session.add(books[0])
         session.commit()
         ids = {b.id for b in books}
 
@@ -287,13 +284,52 @@ def get_me(
         r = effective_role(c, user, session)
         if r is not None:
             roles[c.id] = r.value
-    return {
+    out = {
         "user": user,
         "firm": _firm_out(firm, firm_role) if firm is not None else None,
         "firm_role": firm_role.value if firm_role is not None else None,
         "companies": [c for c in companies if c.id in roles],
         "roles": roles,
     }
+    if door is not None:
+        out["demo"] = {"door": door}
+    return out
+
+
+# ==================================================================================================
+# FASE 13 — LAS DOS PUERTAS DEL DEMO (área `Firm / bookkeepers`, 23-oct). Solo con DEMO_MODE: fuera del
+# demo responden 404. La lógica vive en `demo.py`; aquí solo HTTP.
+# ==================================================================================================
+
+class DemoCodeIn(BaseModel):
+    code: str
+
+
+@app.post("/api/demo/access")
+def demo_redeem_code(payload: DemoCodeIn, request: Request, user: User = Depends(current_user),
+                     identity: dict = Depends(current_identity), session: Session = Depends(get_session)):
+    """Canjea el CÓDIGO DE ACCESO del demo en vivo (lo pide la app después de "Entrar con Google"). Lo
+    verifica el backend en tiempo constante; sin un código válido no se crea oficina ni se gasta IA. 403
+    `demo_code_invalid` · 429 `demo_code_locked` (demasiados intentos) · 403 `demo_google_required`."""
+    if not demo.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="not found")
+    ip = demo.client_ip(request.headers, request.client.host if request.client else None)
+    try:
+        name = demo.redeem_code(session, user, payload.code, ip=ip, anonymous=bool(identity.get("anonymous")))
+    except demo.CodeRejected as e:
+        raise HTTPException(status_code=429 if e.code == "demo_code_locked" else 403, detail={"code": e.code})
+    return {"ok": True, "code_name": name}
+
+
+@app.post("/api/demo/pool/refill")
+def demo_pool_refill(user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Rellena las oficinas en espera (`demo.refill_pool`). La pide el frontend SIN esperarla —al abrir la
+    pantalla del código y al canjearlo— porque en Cloud Run el trabajo solo avanza dentro de una petición.
+    Pasa cualquiera con sesión: el trabajo tiene techo (`DEMO_POOL_SIZE`) y nadie se lleva una oficina sin
+    código. Para cebarla a mano: `demo.py pool`."""
+    if not demo.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="not found")
+    return demo.refill_pool(session)
 
 
 # ==================================================================================================
@@ -385,6 +421,9 @@ def create_company(
     """Crea un libro NUEVO dentro de la OFICINA del usuario (antes nacía suelto, sin `firm_id`, y los
     demás bookkeepers de la oficina no lo veían). Sin oficina → nace la suya (FASE 13 Paso 4). Un
     VIEWER de la oficina no crea libros. Se crea con `sector=""` → el frontend lo lleva al onboarding."""
+    if demo.DEMO_MODE and not demo.access_of(session, user):
+        # DEMO (23-oct): sin código de acceso no nace ninguna oficina, tampoco por aquí.
+        raise HTTPException(status_code=403, detail={"code": "demo_access_required"})
     firm, firm_role = user_firm(user, session)
     if firm is None:
         firm, firm_role = _create_own_firm(user, session)
@@ -1921,8 +1960,8 @@ class AgentRunIn(BaseModel):
 def _agent_error(e: Exception) -> HTTPException:
     import agent_calls
     import nemotron
-    if isinstance(e, agent_calls.CapReached):
-        return HTTPException(status_code=429, detail={"code": "agent_cap_reached"})
+    if isinstance(e, agent_calls.CapReached):   # el de la oficina, o el GLOBAL del demo (Firm, 23-oct)
+        return HTTPException(status_code=429, detail={"code": e.code})
     if isinstance(e, agent_calls.AlreadyRunning):   # 20-oct: otro paso de agentes ya corre sobre este libro
         return HTTPException(status_code=409, detail={"code": "agent_busy"})
     if isinstance(e, nemotron.NemotronUnavailable):

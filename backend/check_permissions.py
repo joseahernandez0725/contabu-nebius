@@ -55,8 +55,11 @@ def _local_only(self, address):
 
 socket.socket.connect = _local_only
 
-from datetime import date, datetime, timezone  # noqa: E402
+from datetime import date, datetime, timedelta, timezone  # noqa: E402
 from decimal import Decimal  # noqa: E402
+from typing import Optional  # noqa: E402
+
+from sqlalchemy import func, text  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlmodel import Session, delete, select  # noqa: E402
@@ -147,6 +150,8 @@ BODIES: dict[tuple[str, str], dict] = {
     ("POST", "/api/companies/{company_id}/agents/verify-merchant"): {"transaction_id": 999999},
     ("POST", "/api/companies/{company_id}/audit/findings/{finding_id}/resolve"): {"status": "ok"},
     ("POST", "/api/companies/{company_id}/agents/dismissals"): {"keyword": "PERMCHECK"},
+    # Las dos puertas del demo (Firm, 23-oct): fuera del demo, 404.
+    ("POST", "/api/demo/access"): {"code": "permcheck-wrong"},
     # "__TX__" se reemplaza por el id de la transacción REAL de prueba: con una lista vacía el
     # endpoint corta con 422 ("no transactions") ANTES de mirar el permiso, y no probaría nada.
     ("POST", "/api/transactions/clarify-group"): {"transaction_ids": ["__TX__"], "answer": "x"},
@@ -365,6 +370,292 @@ def check_demo_cleanup_firebase() -> list[str]:
     return fails
 
 
+# ── LAS DOS PUERTAS DEL DEMO (23-oct) ─────────────────────────────────────────────────────────────
+# Se prueban como corren en el servicio de demo: `DEMO_MODE` encendido y `AUTH_DEV_MODE` APAGADO (el candado 1
+# no deja tener los dos), con la verificación de Firebase reemplazada por una de mentira, sin red, que
+# reconoce tokens inventados — el camino real (`Authorization: Bearer`) de punta a punta.
+
+DOOR_UIDS = {"anon": "__permcheck_door_anon__", "nocode": "__permcheck_door_nocode__",
+             "live": "__permcheck_door_live__", "other": "__permcheck_door_other__"}
+DOOR_CODES = {"DEMO_ACCESS_CODE": "permcheck-devpost-7Qx2", "DEMO_ACCESS_CODE_GUEST": "permcheck-guest-K9w4"}
+
+
+def _sweep(client: TestClient, token: str, subs: dict, *, methods_only: Optional[set] = None,
+           allowed: set = frozenset()) -> list[str]:
+    """Recorre TODAS las rutas con `token` sobre el libro/movimiento de `subs`. Ninguna puede dar 2xx salvo las
+    de `allowed`. `methods_only={"POST",…}` limita a esos métodos (las escrituras de un VIEWER)."""
+    leaks: list[str] = []
+    for route in app.routes:
+        tmpl = getattr(route, "path", None)
+        methods = getattr(route, "methods", None) or set()
+        if not tmpl or not tmpl.startswith("/api"):
+            continue
+        for method in sorted(methods - {"HEAD", "OPTIONS"}):
+            key = (method, tmpl)
+            if (methods_only and method not in methods_only) or key in SKIP - {("POST", "/api/companies")}:
+                continue
+            url = tmpl
+            for name in ("company_id", "transaction_id"):
+                url = url.replace("{" + name + "}", subs[name])
+            while "{" in url:
+                a = url.index("{"); b = url.index("}") + 1
+                url = url[:a] + "999999" + url[b:]
+            kwargs: dict = {"headers": {"Authorization": f"Bearer {token}"}}
+            if key in BODIES:
+                kwargs["json"] = _fill(BODIES[key], int(subs["transaction_id"]))
+            elif key in FILES:
+                kwargs["files"] = FILES[key]
+            elif key == ("POST", "/api/companies"):
+                kwargs["json"] = {"name": "PERMCHECK NEW"}
+            if key in QUERY:
+                kwargs["params"] = QUERY[key]
+            r = client.request(method, url, **kwargs)
+            if 200 <= r.status_code < 300 and key not in allowed:
+                leaks.append(f"{method} {tmpl} → {r.status_code}")
+                print(f"  🔴 [{token}] {method:6} {tmpl}  → {r.status_code}  ¡FUGA!")
+    return leaks
+
+
+def check_demo_doors(client: TestClient) -> list[str]:
+    import logging
+    import agent_calls
+    import auth
+    import demo
+    from models import AgentCall, DemoAccess, DemoCodeAttempt, DemoOffice
+    print("\n  --- las dos puertas del demo (23-oct) ---")
+    claims = {
+        "anon": {"uid": DOOR_UIDS["anon"], "firebase": {"sign_in_provider": "anonymous"}},
+        **{k: {"uid": DOOR_UIDS[k], "email": f"{k}@permcheck.local", "firebase": {"sign_in_provider": "google.com"}}
+           for k in ("nocode", "live", "other")},
+    }
+    def fake_verify(token: str) -> dict:
+        if token not in claims:
+            raise ValueError("firma inválida")
+        return claims[token]
+    H = lambda k: {"Authorization": f"Bearer {k}"}   # noqa: E731
+    fails: list[str] = []
+    def expect(label: str, ok: bool, got) -> None:
+        print(f"  {'✅' if ok else '❌'} {label} → {got}")
+        if not ok:
+            fails.append(f"puertas: {label} → {got}")
+
+    saved = (auth.AUTH_DEV_MODE, auth._verify_firebase_token, demo.DEMO_MODE, demo.cleanup_quietly,
+             demo.DEMO_POOL_SIZE, demo.GLOBAL_DAILY_CALLS, demo.GLOBAL_DAILY_SEARCHES,
+             {k: os.environ.get(k) for k in DOOR_CODES})
+    pool_user_existed = False
+    made_tour = False
+    try:
+        auth.AUTH_DEV_MODE, auth._verify_firebase_token, demo.DEMO_MODE = False, fake_verify, True
+        demo.cleanup_quietly = lambda s: None      # la limpieza real NO corre sobre la base de desarrollo
+        os.environ.update(DOOR_CODES)
+
+        # Fixtures: la visita (si la base no tiene una) y la oficina en vivo de OTRO usuario con código.
+        with Session(engine) as s:
+            pool_user_existed = s.exec(select(User).where(User.firebase_uid == demo.POOL_UID)).first() is not None
+            tour_id = demo.tour_firm_id(s)
+            if tour_id is None:
+                made_tour = True
+                tu = User(firebase_uid="__permcheck_door_tourowner__"); s.add(tu); s.flush()
+                tf = Firm(name="PERMCHECK TOUR", owner_user_id=tu.id); s.add(tf); s.flush()
+                s.add(DemoOffice(firm_id=tf.id, kind="tour"))
+                s.add(FirmMember(firm_id=tf.id, user_id=tu.id, email="", role=FirmRole.OWNER))
+                tco = Company(name="PERMCHECK TOUR BOOK", sector="construction", firm_id=tf.id, user_id=tu.id)
+                s.add(tco); s.flush()
+                s.add(Transaction(company_id=tco.id, date=date(2026, 6, 1), description="HOME DEPOT",
+                                  amount=Decimal("100.00"), is_inflow=False, category="Materials"))
+                s.commit()
+                tour_id = tf.id
+            tour_co = s.exec(select(Company).where(Company.firm_id == tour_id).order_by(Company.id)).first()
+            tour_tx = s.exec(select(Transaction).where(Transaction.company_id == tour_co.id)).first()
+            ou = User(firebase_uid=DOOR_UIDS["other"], email="other@permcheck.local"); s.add(ou); s.flush()
+            of = Firm(name="PERMCHECK OTHER", owner_user_id=ou.id, demo_expires_at=datetime(2099, 1, 1))
+            s.add(of); s.flush()
+            s.add(FirmMember(firm_id=of.id, user_id=ou.id, email=ou.email, role=FirmRole.OWNER))
+            s.add(DemoAccess(user_id=ou.id, code_name="devpost"))
+            oco = Company(name="PERMCHECK OTHER BOOK", sector="construction", firm_id=of.id, user_id=ou.id)
+            s.add(oco); s.flush()
+            otx = Transaction(company_id=oco.id, date=date(2026, 6, 1), description="HOME DEPOT",
+                              amount=Decimal("100.00"), is_inflow=False, category="Materials")
+            s.add(otx); s.commit()
+            tour_subs = {"company_id": str(tour_co.id), "transaction_id": str(tour_tx.id)}
+            other_subs = {"company_id": str(oco.id), "transaction_id": str(otx.id)}
+            other_co_id = oco.id
+
+        def owned_by(uid_key: str) -> int:
+            with Session(engine) as s:
+                u = s.exec(select(User).where(User.firebase_uid == DOOR_UIDS[uid_key])).first()
+                if u is None:
+                    return 0
+                return len(s.exec(select(Firm).where(Firm.owner_user_id == u.id)).all()) + \
+                    len(s.exec(select(FirmMember).where(FirmMember.user_id == u.id)).all())
+
+        demo.DEMO_POOL_SIZE = 0     # en los barridos, rellenar la piscina no siembra nada
+        refill_ok = {("POST", "/api/demo/pool/refill")}
+        # Un POST que solo LEE (qué cazaría una regla; ni escribe ni llama a la IA): un VIEWER puede.
+        viewer_ok = refill_ok | {("POST", "/api/companies/{company_id}/rules/preview")}
+        # Sin código, `/api/firm` es la VISITA (no la oficina del otro): se comprueba aparte, abajo.
+        reads_ok = {("GET", "/api/me"), ("GET", "/api/hello"), ("GET", "/api/firm")} | refill_ok
+
+        # 1) La visita guiada: el anónimo la ve como VIEWER y no nace nada suyo.
+        r = client.get("/api/me", headers=H("anon"))
+        j = r.json() if r.status_code == 200 else {}
+        expect("anónimo: /api/me abre la visita", r.status_code == 200 and j.get("demo", {}).get("door") == "tour"
+               and j.get("companies") and all(v == "VIEWER" for v in j.get("roles", {}).values()),
+               f"{r.status_code} · {j.get('demo')} · {j.get('roles')}")
+        expect("anónimo: ninguna oficina ni membresía propia", owned_by("anon") == 0, owned_by("anon"))
+        leaks = _sweep(client, "anon", tour_subs, methods_only={"POST", "PATCH", "PUT", "DELETE"}, allowed=viewer_ok)
+        expect("anónimo (VIEWER de la visita): ninguna escritura pasa", not leaks, leaks or "0 fugas")
+        r = client.post("/api/demo/access", json={"code": DOOR_CODES["DEMO_ACCESS_CODE"]}, headers=H("anon"))
+        expect("anónimo: no canjea códigos", r.status_code == 403, f"{r.status_code} {r.json().get('detail')}")
+
+        # 2) Google SIN código: ni oficina, ni agentes, ni la oficina de otro.
+        r = client.get("/api/me", headers=H("nocode"))
+        expect("Google sin código: /api/me pide el código", r.status_code == 200 and r.json().get("demo", {}).get("door") == "needs_code",
+               f"{r.status_code} · {r.json().get('demo')}")
+        r = client.post("/api/companies", json={"name": "PERMCHECK NEW"}, headers=H("nocode"))
+        expect("Google sin código: no crea oficina (POST /api/companies)", r.status_code == 403 and owned_by("nocode") == 0,
+               f"{r.status_code} · oficinas: {owned_by('nocode')}")
+        leaks = _sweep(client, "nocode", other_subs, allowed=reads_ok)
+        expect("Google sin código: nada de la oficina de otro (todas las rutas)", not leaks, leaks or "0 fugas")
+        r = client.get("/api/firm", headers=H("nocode"))
+        expect("Google sin código: su /api/firm es la visita, como VIEWER", r.status_code == 200
+               and r.json().get("id") == tour_id and r.json().get("role") == "VIEWER", r.json())
+        leaks = _sweep(client, "nocode", tour_subs, methods_only={"POST", "PATCH", "PUT", "DELETE"}, allowed=viewer_ok)
+        expect("Google sin código: ninguna escritura ni agente en la visita", not leaks, leaks or "0 fugas")
+        expect("Google sin código: sigue sin oficina tras los barridos", owned_by("nocode") == 0, owned_by("nocode"))
+
+        # 3) El código: tiempo constante, intentos limitados, y nunca en el log.
+        expect("match_code: vacío, errado, apagado → nada",
+               demo.match_code("") is None and demo.match_code("x") is None, "ok")
+        expect("match_code: el de invitados con espacios", demo.match_code(f"  {DOOR_CODES['DEMO_ACCESS_CODE_GUEST']} ") == "guest", "ok")
+        records: list[str] = []
+        class _Grab(logging.Handler):
+            def emit(self, rec): records.append(self.format(rec))
+        grab = _Grab(); logging.getLogger().addHandler(grab); logging.getLogger().setLevel(logging.INFO)
+        codes = []
+        for i in range(demo.MAX_FAILS_USER):
+            codes.append(client.post("/api/demo/access", json={"code": f"wrong-{i}"}, headers=H("live")).status_code)
+        r = client.post("/api/demo/access", json={"code": DOOR_CODES["DEMO_ACCESS_CODE_GUEST"]}, headers=H("live"))
+        expect(f"{demo.MAX_FAILS_USER} errados → 403; el siguiente, aunque acierte, 429",
+               codes == [403] * demo.MAX_FAILS_USER and r.status_code == 429, f"{codes} → {r.status_code}")
+        expect("bloqueado: no se le dio acceso ni oficina", owned_by("live") == 0, owned_by("live"))
+        with Session(engine) as s:
+            lu = s.exec(select(User).where(User.firebase_uid == DOOR_UIDS["live"])).first()
+            s.exec(delete(DemoCodeAttempt).where(DemoCodeAttempt.user_id == lu.id)); s.commit()
+
+        # 4) Con código: una oficina de la piscina, a su nombre, que vence desde HOY.
+        demo.DEMO_POOL_SIZE = 1
+        r = client.post("/api/demo/pool/refill", headers=H("nocode"))
+        expect("la piscina se rellena dentro de la petición", r.status_code == 200 and r.json().get("ready", 0) >= 1, r.json())
+        r = client.post("/api/demo/access", json={"code": DOOR_CODES["DEMO_ACCESS_CODE_GUEST"]}, headers=H("live"))
+        expect("código de invitados → acceso", r.status_code == 200 and r.json().get("code_name") == "guest",
+               f"{r.status_code} {r.json()}")
+        logging.getLogger().removeHandler(grab)
+        leaked = [x for x in records if any(c in x for c in list(DOOR_CODES.values()) + ["wrong-0"])]
+        expect("el código nunca va al log", not leaked, leaked or f"{len(records)} líneas, ninguna con el código")
+        with Session(engine) as s:
+            lu = s.exec(select(User).where(User.firebase_uid == DOOR_UIDS["live"])).first()
+            acc = s.exec(select(DemoAccess).where(DemoAccess.user_id == lu.id)).first()
+            expect("guarda QUÉ código usó (el nombre)", acc is not None and acc.code_name == "guest", acc and acc.code_name)
+            f = s.exec(select(Firm).where(Firm.owner_user_id == lu.id)).first()
+            office = s.exec(select(DemoOffice).where(DemoOffice.firm_id == f.id)).first() if f else None
+            left = (f.demo_expires_at - datetime.now(timezone.utc).replace(tzinfo=None)).days if f else None
+            expect("la oficina salió de la piscina y vence a los DEMO_TTL_DAYS desde hoy",
+                   office is not None and office.kind == "live" and left in (demo.DEMO_TTL_DAYS - 1, demo.DEMO_TTL_DAYS),
+                   f"{office and office.kind} · vence en {left} días")
+            pool = s.exec(select(User).where(User.firebase_uid == demo.POOL_UID)).first()
+            cids = list(s.exec(select(Company.id).where(Company.firm_id == f.id)).all()) if f else []
+            stale = s.connection().execute(text("""
+                SELECT count(*) FROM categorizationchange WHERE company_id = ANY(:ids) AND changed_by_user_id = :p
+            """), {"ids": cids, "p": pool.id if pool else -1}).scalar()
+            books = s.exec(select(Company).where(Company.firm_id == f.id).order_by(Company.id)).all() if f else []
+            expect("los libros y su historial pasan al usuario (nada queda a nombre de la piscina)",
+                   len(books) == 3 and all(b.user_id == lu.id for b in books) and stale == 0,
+                   f"{len(books)} libros · {stale} filas de historial a nombre de la piscina")
+        r = client.get("/api/me", headers=H("live"))
+        j = r.json()
+        expect("con código: /api/me abre su oficina en Rivera HVAC", j.get("demo", {}).get("door") == "live"
+               and j["companies"] and j["companies"][0]["name"].startswith("Rivera HVAC")
+               and set(j["roles"].values()) == {"OWNER"}, f"{j.get('demo')} · {[c['name'] for c in j['companies']]}")
+        r = client.get(f"/api/companies/{other_co_id}", headers=H("live"))
+        expect("con código: la oficina de OTRO sigue cerrada", r.status_code == 403, r.status_code)
+        r = client.patch(f"/api/companies/{tour_subs['company_id']}", json={"name": "hackeada"}, headers=H("live"))
+        expect("con código: la visita sigue de solo lectura", r.status_code == 403, r.status_code)
+
+        # 5) El tope GLOBAL: con el demo entero en su techo, ni la oficina con cupo llama al modelo.
+        with Session(engine) as s:
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)
+            used = s.exec(select(func.count(AgentCall.id)).where(AgentCall.created_at >= since,
+                                                                AgentCall.agent.in_(agent_calls._MODEL_AGENTS))).one()
+            searches = s.exec(select(func.count(AgentCall.id)).where(AgentCall.created_at >= since,
+                                                                    AgentCall.agent == "verifier")).one()
+            book = s.get(Company, j["companies"][0]["id"])
+            book_id = book.id
+            # Una llamada y una búsqueda sembradas en el libro de prueba: el techo = lo gastado (0 = apagado).
+            for agent in ("reviewer", "verifier"):
+                s.add(AgentCall(company_id=book.id, firm_id=book.firm_id, agent=agent, model="permcheck"))
+            s.commit()
+            s.refresh(book)
+            demo.GLOBAL_DAILY_CALLS, demo.GLOBAL_DAILY_SEARCHES = used + 1, searches + 1
+            got = []
+            for agent in (None, "verifier"):
+                try:
+                    agent_calls.check_cap(s, book, agent); got.append("pasó")
+                except agent_calls.GlobalCapReached as e:
+                    got.append(e.code)
+        expect("tope global: llamadas y búsquedas", got == ["demo_global_cap_reached"] * 2, got)
+        r = client.post(f"/api/companies/{book_id}/agents/review", json={"lang": "en"}, headers=H("live"))
+        expect("tope global: la ruta responde 429 con su código", r.status_code == 429
+               and r.json().get("detail", {}).get("code") == "demo_global_cap_reached", f"{r.status_code} {r.json()}")
+
+        # 6) Si se VACÍA el código de invitados, quienes entraron con él pierden el acceso.
+        os.environ["DEMO_ACCESS_CODE_GUEST"] = ""
+        r = client.get("/api/me", headers=H("live"))
+        r2 = client.get(f"/api/companies/{book_id}", headers=H("live"))
+        expect("código de invitados vaciado → sin acceso", r.json().get("demo", {}).get("door") == "needs_code"
+               and r2.status_code == 403, f"{r.json().get('demo')} · su libro → {r2.status_code}")
+        os.environ["DEMO_ACCESS_CODE_GUEST"] = DOOR_CODES["DEMO_ACCESS_CODE_GUEST"]
+
+        # 7) La limpieza nunca borra la visita, ni aunque alguien le pusiera fecha por error.
+        with Session(engine) as s:
+            tf = s.get(Firm, tour_id)
+            before = tf.demo_expires_at
+            tf.demo_expires_at = datetime(1999, 1, 1); s.add(tf); s.commit()
+            saved_fb = demo._firebase
+            demo._firebase = lambda: type("F", (), {"get_user": lambda *_: None, "delete_user": lambda *_: None})()
+            try:
+                demo.cleanup_expired_offices(s, now=datetime(2000, 1, 2))
+            finally:
+                demo._firebase = saved_fb
+            alive = s.get(Firm, tour_id) is not None
+            if alive:
+                tf = s.get(Firm, tour_id); tf.demo_expires_at = before; s.add(tf); s.commit()
+        expect("la limpieza no borra la visita guiada", alive, alive)
+    finally:
+        (auth.AUTH_DEV_MODE, auth._verify_firebase_token, demo.DEMO_MODE, demo.cleanup_quietly,
+         demo.DEMO_POOL_SIZE, demo.GLOBAL_DAILY_CALLS, demo.GLOBAL_DAILY_SEARCHES, env) = saved
+        for k, v in env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        with Session(engine) as s:
+            uids = list(DOOR_UIDS.values()) + (["__permcheck_door_tourowner__"] if made_tour else [])
+            if not pool_user_existed:
+                uids.append(demo.POOL_UID)
+            users = s.exec(select(User).where(User.firebase_uid.in_(uids))).all()
+            ids = [u.id for u in users]
+            fids = list(s.exec(select(Firm.id).where(Firm.owner_user_id.in_(ids))).all()) if ids else []
+            conn = s.connection()
+            cids = [r[0] for r in conn.execute(text("SELECT id FROM company WHERE firm_id = ANY(:f)"), {"f": fids})]
+            demo._delete(conn, "company", cids, {})
+            demo._delete(conn, "firm", fids, {})
+            conn.execute(text("DELETE FROM democodeattempt WHERE user_id = ANY(:u)"), {"u": ids})
+            demo._delete(conn, "user", ids, {})
+            s.commit()
+    return fails
+
+
 def main() -> int:
     with Session(engine) as s:
         drop_fixtures(s)              # por si una corrida anterior murió a medias
@@ -482,6 +773,7 @@ def main() -> int:
 
     leaks.extend(check_anonymous_tokens(client))
     leaks.extend(check_demo_cleanup_firebase())
+    leaks.extend(check_demo_doors(client))
 
     print(f"\n  Rutas comprobadas: {checked}  ·  permitidas al cliente: {len(CLIENT_ALLOWED)}")
     if BLOCKED:

@@ -9,6 +9,7 @@ import {
 import { SECTION_LABEL } from "../accounting";
 import { DEMO_MODE } from "../demo";
 import MerchantSearch from "./MerchantSearch";
+import { LiveOnly } from "./DemoDoors";   // visita guiada del demo (Firm, 23-oct)
 import {
   BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, Tabs,
   agoText, DetailEmpty,
@@ -642,9 +643,9 @@ function TeamPanel({ team, exact, steps, running, launching, stepNote, est, disa
             </button>
           )}
           {/* La acción principal de la página: corre Auditar → Verificar → Redactar, en orden. */}
-          <button onClick={onReviewBook} disabled={disabled} className={BTN_PRIMARY} title={estimateText(est.review_book)}>
+          <LiveOnly><button onClick={onReviewBook} disabled={disabled} className={BTN_PRIMARY} title={estimateText(est.review_book)}>
             {running || launching ? t("auditView.running") : t("auditView.reviewBook")}
-          </button>
+          </button></LiveOnly>
         </div>
       </div>
       {/* ANTES: lo que costaría "Revisar el libro". DESPUÉS: lo que costó la última acción. */}
@@ -663,9 +664,9 @@ function TeamPanel({ team, exact, steps, running, launching, stepNote, est, disa
                   {detailed && <p className="text-[11px] text-slate-500">{t(`auditView.team.step.${s}`)}</p>}
                   {sum?.text && <p className={`text-[11px] truncate ${sum.tone}`} title={sum.text}>{sum.text}</p>}
                 </div>
-                <button onClick={() => onRun(s)} disabled={disabled} className={BTN_SECONDARY} title={estimateText(est[s])}>
+                <LiveOnly compact><button onClick={() => onRun(s)} disabled={disabled} className={BTN_SECONDARY} title={estimateText(est[s])}>
                   {t("auditView.team.run")}
-                </button>
+                </button></LiveOnly>
               </div>
               {detailed && est[s] && <p className="text-[11px] text-slate-400">{estimateText(est[s])}</p>}
               {detailed && (
@@ -944,10 +945,10 @@ function PendingDetail({ g, t, webLabel, fmtDate, chart, catToType, busy, onCate
         <CategoryPicker chart={chart} busy={busy} t={t} cta={t("auditView.act.categorizeAll", { count: g.count })}
                         onPick={(c) => onCategorize(ids, catToType[c], c)} />
         <div className="flex flex-wrap gap-2">
-          <button onClick={() => onAskRule(g)} disabled={busy || g.person_payment} title={t("auditView.agent.drafter")}
+          <LiveOnly compact><button onClick={() => onAskRule(g)} disabled={busy || g.person_payment} title={t("auditView.agent.drafter")}
                   className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-emerald-700 text-emerald-800 disabled:opacity-40">
             {t("auditView.act.askRule")}
-          </button>
+          </button></LiveOnly>
           {onOpenSheet && <button onClick={() => onOpenSheet(g.transactions[0]?.id)} className="px-2 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("auditView.act.openSheet")}</button>}
         </div>
       </div>

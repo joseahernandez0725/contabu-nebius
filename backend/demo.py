@@ -1,9 +1,15 @@
 """
 ContaBu — el despliegue de DEMO del concurso (FASE 13, área `Firm / bookkeepers`).
 
-Ver `docs/DEMO Y ENTREGA.md` → "🔑 Acceso". Cada visitante entra con **login anónimo de Firebase**, el
-alta de siempre (`GET /api/me`) le crea **su propia oficina**, y en el demo se le **siembran los libros**
-con el generador de datos de Movimientos. Nadie le rompe el demo a nadie: cada jurado trabaja su copia.
+**Las dos puertas** (Jose, 23-oct; `docs/DEMO Y ENTREGA.md` → "El plan del 22 al 30-oct"):
+- **Visita guiada** — login ANÓNIMO de Firebase, sin cuenta. Todos ven UNA oficina compartida (`DemoOffice`
+  kind="tour") con los 3 libros y la revisión de los agentes YA GUARDADA, como VIEWER: nadie la cambia y
+  no gasta IA. No se crea nada por visitante (ni oficina ni membresía: el acceso de VIEWER lo da
+  `demo_role`). La crea y la revisa UNA vez el script `demo.py tour`; nunca vence.
+- **Demo en vivo** — "Entrar con Google" y después un **código de acceso** que verifica el backend
+  (`redeem_code`). Sin código válido no hay oficina ni IA, tampoco por la API directa: `auth.effective_role`
+  y `auth.user_firm` pasan por `demo_role` / `visible_firm`. Con código, el usuario recibe su oficina con los
+  3 libros: una ya sembrada de la **piscina** (`DemoOffice` kind="pool") si hay, o sembrada en el momento.
 
 Todo esto se enciende SOLO con la variable de entorno `DEMO_MODE=true` del servicio de demo
 (`contabu-demo-api`). En producción y en desarrollo está apagado y este módulo no hace nada.
@@ -18,23 +24,54 @@ Tres candados, a propósito:
 3. **La limpieza no depende de una lista de tablas escrita a mano**: descubre en el momento qué cuelga
    de cada fila — por clave foránea y por referencia suave (`company_id`, `transaction_id`, `firm_id`
    sin FK, como el historial de correcciones). Las tablas que agreguen otras áreas quedan cubiertas solas.
+
+Y la visita guiada no se borra por ningún camino: su `demo_expires_at` es NULL (candado 2) y, además, la
+limpieza excluye su oficina por nombre de papel (`_tour_ids`).
+
+🔴 **La piscina se rellena DENTRO de una petición** (`POST /api/demo/pool/refill`): Cloud Run corre con la
+CPU limitada fuera de las peticiones, así que un hilo que siembre después de responder no avanza. La pide
+el frontend sin esperarla (al abrir la pantalla del código y al canjearlo), cuando Neon ya está despierto.
+No se usa Cloud Scheduler a propósito: un pinchazo cada pocos minutos no deja dormir a Neon (Free: 100
+CU-h/mes) y una vez por hora no sirve para nada. Para cebarla a mano, `demo.py pool`.
 """
 
+import hashlib
+import hmac
 import logging
 import os
 import sys
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Iterator, Optional
 
 from sqlalchemy import text
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
-from models import Company, Firm, User
+from models import (AgentCall, Company, DemoAccess, DemoCodeAttempt, DemoOffice, Firm, FirmMember, FirmRole,
+                    Role, User)
 
 log = logging.getLogger("contabu.demo")
 
 DEMO_MODE = os.getenv("DEMO_MODE", "").lower() in {"1", "true", "yes"}
 DEMO_TTL_DAYS = int(os.getenv("DEMO_TTL_DAYS", "7"))
+# Oficinas ya sembradas en espera de un código (la primera carga: ~5–6 s de siembra que el juez no espera).
+DEMO_POOL_SIZE = int(os.getenv("DEMO_POOL_SIZE", "3"))
+# El tope DIARIO GLOBAL de todo el demo (últimas 24 h, todas las oficinas). 0 = sin tope global. El tope por
+# oficina sigue aparte (`AGENT_DAILY_CALLS`, `agent_calls.py`).
+GLOBAL_DAILY_CALLS = int(os.getenv("DEMO_GLOBAL_DAILY_CALLS") or 600)
+GLOBAL_DAILY_SEARCHES = int(os.getenv("DEMO_GLOBAL_DAILY_SEARCHES") or 100)
+
+# Los dos códigos de acceso (vienen de Secret Manager). El de Devpost queda fijo hasta el 15-dic; el de
+# invitados se cambia cuando haga falta, y si se VACÍA, quienes entraron con él pierden el acceso.
+_CODE_ENV = {"devpost": "DEMO_ACCESS_CODE", "guest": "DEMO_ACCESS_CODE_GUEST"}
+# Intentos fallidos permitidos antes de bloquear un rato.
+MAX_FAILS_USER, USER_WINDOW = 5, timedelta(minutes=15)
+MAX_FAILS_IP, IP_WINDOW = 20, timedelta(hours=1)
+
+# Dueños de sistema de la visita y de la piscina. Ningún login de Firebase produce un uid con ":" de este
+# modo (los anónimos y los de Google son aleatorios; los personalizados solo los firma la cuenta de servicio).
+TOUR_UID = "demo:tour"
+POOL_UID = "demo:pool"
 
 # Candado 1 — se evalúa al importar: si las dos están encendidas, el servicio no levanta.
 if DEMO_MODE and os.getenv("AUTH_DEV_MODE", "").lower() in {"1", "true", "yes"}:
@@ -57,7 +94,7 @@ def mark_if_demo(firm: Firm) -> None:
 
 # ── Siembra de los libros del visitante ─────────────────────────────────────────────────────────
 
-def seed_visitor_books(session: Session, firm: Firm, owner: User) -> list[Company]:
+def seed_visitor_books(session: Session, firm: Firm, owner: User, *, strict: bool = False) -> list[Company]:
     """Los libros con que arranca la oficina de un visitante del demo.
 
     Llama al generador de datos de Movimientos, con la firma acordada en el 📬 Buzón (3-oct):
@@ -69,11 +106,14 @@ def seed_visitor_books(session: Session, firm: Firm, owner: User) -> list[Compan
     oficina y libros nacen juntos o no nace nada.
 
     Si el generador todavía no existe (o falla), el visitante recibe un libro vacío como cualquier
-    cuenta nueva: el demo queda pobre, pero no roto. Se deja en el log para que se note.
+    cuenta nueva: el demo queda pobre, pero no roto. Se deja en el log para que se note. Con `strict` (la
+    visita y la piscina: nadie está esperando) el error sube, para no guardar una oficina pobre.
     """
     try:
         import demo_data  # área Movimientos
     except ImportError:
+        if strict:
+            raise
         demo_data = None
         log.warning("demo_data todavía no existe (Movimientos); el visitante recibe un libro vacío")
     if demo_data is not None:
@@ -86,11 +126,344 @@ def seed_visitor_books(session: Session, firm: Firm, owner: User) -> list[Compan
                 return list(books)
             log.warning("demo_data.seed_demo_books no creó libros; el visitante recibe un libro vacío")
         except Exception:  # un error del generador no debe impedir entrar al demo
+            if strict:
+                raise
             log.exception("demo_data.seed_demo_books falló; el visitante recibe un libro vacío")
+    if strict:
+        raise RuntimeError("demo_data.seed_demo_books no creó libros")
     book = Company(name="My Business", sector="", user_id=owner.id, firm_id=firm.id)
     session.add(book)
     session.flush()
     return [book]
+
+
+# ── Las dos puertas ───────────────────────────────────────────────────────────────────────────────
+
+def _cache(session: Session) -> dict:
+    """Lo que se consulta varias veces en UNA petición (el rol se pide por cada libro): vive en la sesión."""
+    return session.info.setdefault("demo", {})
+
+
+def tour_firm_id(session: Session) -> Optional[int]:
+    """La oficina de la visita guiada (o None si el script todavía no la creó)."""
+    c = _cache(session)
+    if "tour" not in c:
+        c["tour"] = session.exec(select(DemoOffice.firm_id).where(DemoOffice.kind == "tour")).first()
+    return c["tour"]
+
+
+def access_of(session: Session, user: User) -> Optional[str]:
+    """El código con que `user` entró al demo en vivo ("devpost" | "guest"), si ese código SIGUE puesto en el
+    servicio. None = sin acceso: si Jose vacía `DEMO_ACCESS_CODE_GUEST`, sus usuarios caen aquí solos."""
+    c = _cache(session).setdefault("access", {})
+    if user.id not in c:
+        row = session.exec(select(DemoAccess).where(DemoAccess.user_id == user.id)).first()
+        live = row is not None and bool((os.getenv(_CODE_ENV.get(row.code_name, "")) or "").strip())
+        c[user.id] = row.code_name if live else None
+    return c[user.id]
+
+
+def demo_role(session: Session, company: Company, user: User, role: Optional[Role]) -> Optional[Role]:
+    """El rol sobre un libro EN EL DEMO, encima del de siempre (`auth.effective_role`):
+    - un libro de la visita guiada → VIEWER para cualquiera con sesión (no hace falta membresía; tampoco el
+      dueño de sistema puede escribir por la API);
+    - cualquier otro libro → el rol de siempre, SOLO si el usuario tiene un código vigente. Así una cuenta sin
+      código no alcanza ninguna oficina (tampoco las de visitantes anónimos de antes de las dos puertas)."""
+    if company.firm_id is not None and company.firm_id == tour_firm_id(session):
+        return Role.VIEWER
+    return role if access_of(session, user) else None
+
+
+def visible_firm(session: Session, user: User) -> tuple[Optional[Firm], Optional[FirmRole]]:
+    """`auth.user_firm` en el demo: con código, su oficina (la primera que no sea la visita); sin código, la
+    visita guiada como VIEWER (o nada, si todavía no existe)."""
+    tour = tour_firm_id(session)
+    if access_of(session, user):
+        q = select(FirmMember).where(FirmMember.user_id == user.id).order_by(FirmMember.id)
+        if tour is not None:
+            q = q.where(FirmMember.firm_id != tour)
+        fm = session.exec(q).first()
+        return (session.get(Firm, fm.firm_id), fm.role) if fm else (None, None)
+    return (session.get(Firm, tour), FirmRole.VIEWER) if tour else (None, None)
+
+
+def door(session: Session, user: User, *, anonymous: bool) -> str:
+    """Por qué puerta entra quien llega a `/api/me`, y deja lista su oficina si le toca una:
+    "live" (tiene código: su oficina, asignada o sembrada aquí) · "tour" (anónimo: la visita) ·
+    "needs_code" (Google sin código: la pantalla del código; puede mirar la visita) · "tour_missing"."""
+    if access_of(session, user):
+        ensure_live_office(session, user)
+        return "live"
+    if not anonymous:
+        return "needs_code"
+    return "tour" if tour_firm_id(session) is not None else "tour_missing"
+
+
+# ── El código de acceso ───────────────────────────────────────────────────────────────────────────
+
+def _digest(value: str) -> bytes:
+    return hashlib.sha256(value.encode("utf-8")).digest()
+
+
+def match_code(given: str) -> Optional[str]:
+    """¿Qué código es `given`? ("devpost" | "guest" | None). En TIEMPO CONSTANTE: se compara con los DOS
+    siempre, sobre huellas del mismo largo (`hmac.compare_digest`), así ni el tiempo ni el largo dicen nada.
+    Un código vacío en el servicio está apagado: nunca coincide."""
+    got = _digest((given or "").strip())
+    found = None
+    for name, env in _CODE_ENV.items():
+        expected = (os.getenv(env) or "").strip()
+        same = hmac.compare_digest(got, _digest(expected))
+        if same and expected and found is None:
+            found = name
+    return found
+
+
+def client_ip(headers, fallback: Optional[str]) -> str:
+    """La IP del que llama. En Cloud Run el frente de Google AGREGA la IP real al final de
+    `X-Forwarded-For` (lo de antes lo puede escribir el cliente), así que se toma la última. 🟡 Sin verificar
+    en la consola: por eso el límite por IP es holgado y el que manda es el límite por usuario."""
+    xff = (headers.get("x-forwarded-for") or "").split(",")
+    last = xff[-1].strip() if xff else ""
+    return last or fallback or "?"
+
+
+def _ip_hash(ip: str) -> str:
+    return hashlib.sha256(f"contabu-demo:{ip}".encode()).hexdigest()[:32]
+
+
+class CodeRejected(Exception):
+    """`code`: demo_code_invalid · demo_code_locked · demo_google_required · demo_not_ready."""
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
+
+
+def redeem_code(session: Session, user: User, given: str, *, ip: str, anonymous: bool) -> str:
+    """Canjea un código: lo verifica, guarda CUÁL usó el usuario y le deja su oficina. Devuelve el nombre del
+    código. El código NUNCA va al log ni a la base (solo su nombre); un fallo deja un intento (IP en huella)."""
+    if anonymous:
+        raise CodeRejected("demo_google_required")      # la visita no canjea: primero "Entrar con Google"
+    if access_of(session, user):
+        ensure_live_office(session, user)
+        return access_of(session, user) or ""
+    now = _now()
+    h = _ip_hash(ip)
+    fails_user = session.exec(select(func.count(DemoCodeAttempt.id)).where(
+        DemoCodeAttempt.user_id == user.id, DemoCodeAttempt.created_at >= now - USER_WINDOW)).one()
+    fails_ip = session.exec(select(func.count(DemoCodeAttempt.id)).where(
+        DemoCodeAttempt.ip_hash == h, DemoCodeAttempt.created_at >= now - IP_WINDOW)).one()
+    if fails_user >= MAX_FAILS_USER or fails_ip >= MAX_FAILS_IP:
+        raise CodeRejected("demo_code_locked")          # ni se compara: el bloqueo no dice si acertó
+    name = match_code(given)
+    if name is None:
+        session.add(DemoCodeAttempt(user_id=user.id, ip_hash=h, created_at=now))
+        session.commit()
+        log.info("demo: código rechazado (usuario %s)", user.id)
+        raise CodeRejected("demo_code_invalid")
+    row = session.exec(select(DemoAccess).where(DemoAccess.user_id == user.id)).first()
+    if row is None:
+        row = DemoAccess(user_id=user.id, code_name=name)
+    row.code_name, row.granted_at = name, now
+    session.add(row)
+    session.commit()
+    _cache(session).pop("access", None)
+    log.info("demo: acceso concedido (usuario %s, código %s)", user.id, name)
+    ensure_live_office(session, user)
+    return name
+
+
+# ── Las oficinas: la visita, la piscina y la del usuario ─────────────────────────────────────────
+
+def _system_user(session: Session, uid: str) -> User:
+    u = session.exec(select(User).where(User.firebase_uid == uid)).first()
+    if u is None:
+        u = User(firebase_uid=uid, email=None)
+        session.add(u)
+        session.flush()
+    return u
+
+
+def _new_office(session: Session, owner: User, kind: str, name: str) -> Firm:
+    """Una oficina del demo con sus 3 libros. La visita NO lleva fecha de borrado (candado 2); las demás sí,
+    y la de una asignada se vuelve a contar desde que se asigna. No hace commit."""
+    firm = Firm(name=name, owner_user_id=owner.id)
+    if kind != "tour":
+        firm.demo_expires_at = _now() + timedelta(days=DEMO_TTL_DAYS)
+    session.add(firm)
+    session.flush()
+    session.add(FirmMember(firm_id=firm.id, user_id=owner.id, email=owner.email or "", role=FirmRole.OWNER))
+    session.add(DemoOffice(firm_id=firm.id, kind=kind, assigned_at=_now() if kind == "live" else None))
+    seed_visitor_books(session, firm, owner, strict=kind != "live")
+    return firm
+
+
+_USER_COLS = ("user_id", "changed_by_user_id", "created_by_user_id", "resolved_by_user_id")
+
+
+def _hand_over(session: Session, firm: Firm, old_user_id: int, user: User) -> None:
+    """Pasa una oficina de la piscina a su dueño de verdad: la oficina, su membresía, los libros que creó el
+    dueño de sistema y todo lo que la siembra firmó con él (el historial de correcciones…). Las columnas se
+    DESCUBREN en la base (como la limpieza): las tablas por libro que agreguen otras áreas quedan cubiertas."""
+    session.flush()
+    conn = session.connection()
+    ids = [r[0] for r in conn.execute(text("SELECT id FROM company WHERE firm_id = :f"), {"f": firm.id})]
+    conn.execute(text("UPDATE firmmember SET user_id = :u, email = :e WHERE firm_id = :f AND user_id = :o"),
+                 {"u": user.id, "e": user.email or "", "f": firm.id, "o": old_user_id})
+    conn.execute(text("UPDATE company SET user_id = :u WHERE firm_id = :f AND user_id = :o"),
+                 {"u": user.id, "f": firm.id, "o": old_user_id})
+    if not ids:
+        return
+    cols = conn.execute(text("""
+        SELECT c.table_name, c.column_name FROM information_schema.columns c
+        WHERE c.table_schema = 'public' AND c.column_name = ANY(:cols) AND EXISTS (
+          SELECT 1 FROM information_schema.columns k
+          WHERE k.table_schema = 'public' AND k.table_name = c.table_name AND k.column_name = 'company_id')
+    """), {"cols": list(_USER_COLS)}).fetchall()
+    for table, col in cols:
+        conn.execute(text(f'UPDATE "{table}" SET "{col}" = :u WHERE "{col}" = :o AND company_id = ANY(:ids)'),
+                     {"u": user.id, "o": old_user_id, "ids": ids})
+
+
+def claim_pool_office(session: Session, user: User) -> Optional[Firm]:
+    """Toma UNA oficina de la piscina para `user` (o None si está vacía). `FOR UPDATE SKIP LOCKED`: dos
+    canjes a la vez nunca se llevan la misma. Su fecha de borrado se cuenta desde AHORA. No hace commit."""
+    now = _now()
+    row = session.exec(
+        select(DemoOffice).join(Firm, Firm.id == DemoOffice.firm_id)
+        .where(DemoOffice.kind == "pool")
+        .where(Firm.demo_expires_at > now + timedelta(hours=1))    # no una que la limpieza esté por borrar
+        .order_by(DemoOffice.id).limit(1).with_for_update(skip_locked=True, of=DemoOffice)
+    ).first()
+    if row is None:
+        return None
+    firm = session.get(Firm, row.firm_id)
+    old = firm.owner_user_id
+    firm.owner_user_id = user.id
+    firm.name = (user.email or "").strip() or "My Firm"
+    firm.demo_expires_at = now + timedelta(days=DEMO_TTL_DAYS)
+    row.kind, row.assigned_at = "live", now
+    session.add(firm)
+    session.add(row)
+    _hand_over(session, firm, old, user)
+    return firm
+
+
+def ensure_live_office(session: Session, user: User) -> None:
+    """Quien tiene código y todavía no tiene oficina (recién canjeado, o la suya venció) recibe una: de la
+    piscina si hay (al instante) o sembrada aquí (los 5–6 s de siempre)."""
+    if visible_firm(session, user)[0] is not None:
+        return
+    cleanup_quietly(session)
+    # Una a la vez POR USUARIO (dos pestañas que entran juntas no se llevan dos oficinas): candado de la
+    # transacción de esta sesión, se suelta en el commit; quien esperaba vuelve a mirar y ya la encuentra.
+    session.execute(text("select pg_advisory_xact_lock(:s, :u)"), {"s": _LOCK_SPACE + 1, "u": user.id})
+    if visible_firm(session, user)[0] is None and claim_pool_office(session, user) is None:
+        _new_office(session, user, "live", (user.email or "").strip() or "My Firm")
+    session.commit()
+
+
+def pool_ready(session: Session) -> int:
+    return int(session.exec(
+        select(func.count(DemoOffice.id)).join(Firm, Firm.id == DemoOffice.firm_id)
+        .where(DemoOffice.kind == "pool").where(Firm.demo_expires_at > _now() + timedelta(hours=1))).one())
+
+
+_LOCK_SPACE = 0x44454D4F   # "DEMO": espacio de candados de Postgres; el segundo número dice cuál
+
+
+@contextmanager
+def _try_lock(which: int) -> Iterator[bool]:
+    """Candado de TRANSACCIÓN en una conexión aparte (el pooler de Neon va en modo transacción: ver
+    `agent_calls.exclusive`). `False` si otro ya lo tiene: no se espera."""
+    from db import engine
+    with engine.connect() as conn:
+        try:
+            yield bool(conn.execute(text("select pg_try_advisory_xact_lock(:s, :w)"),
+                                    {"s": _LOCK_SPACE, "w": which}).scalar())
+        finally:
+            conn.rollback()
+
+
+def refill_pool(session: Session) -> dict:
+    """Siembra oficinas en espera hasta `DEMO_POOL_SIZE`. Una a la vez en todo el servicio (si otra petición
+    ya está rellenando, vuelve al instante) y cada oficina con su commit: si la petición se corta, lo hecho
+    queda. Barre lo vencido primero."""
+    with _try_lock(1) as got:
+        if not got:
+            return {"busy": True, "ready": pool_ready(session), "created": 0}
+        cleanup_quietly(session)
+        owner = _system_user(session, POOL_UID)
+        made = 0
+        while pool_ready(session) < DEMO_POOL_SIZE:
+            try:
+                _new_office(session, owner, "pool", "Demo office (waiting)")
+                session.commit()
+            except Exception:
+                session.rollback()
+                log.exception("demo: no se pudo sembrar una oficina en espera")
+                return {"busy": False, "ready": pool_ready(session), "created": made, "error": True}
+            made += 1
+        if made:
+            log.info("demo: piscina +%d (lista: %d)", made, DEMO_POOL_SIZE)
+        return {"busy": False, "ready": pool_ready(session), "created": made}
+
+
+# ── El tope DIARIO GLOBAL ─────────────────────────────────────────────────────────────────────────
+
+def check_global_cap(session: Session, agent: Optional[str] = None) -> None:
+    """Lo llama `agent_calls.check_cap` antes de cada llamada: ¿le quedan al DEMO ENTERO llamadas a los
+    agentes (o búsquedas en Tavily, `agent="verifier"`) en las últimas 24 h? Fuera del demo no hace nada."""
+    if not DEMO_MODE:
+        return
+    import agent_calls
+    searches = agent == "verifier"
+    cap = GLOBAL_DAILY_SEARCHES if searches else GLOBAL_DAILY_CALLS
+    if cap <= 0:
+        return
+    agents = ("verifier",) if searches else agent_calls._MODEL_AGENTS
+    since = _now() - timedelta(hours=24)
+    used = session.exec(select(func.count(AgentCall.id))
+                        .where(AgentCall.created_at >= since, AgentCall.agent.in_(agents))).one()
+    if used >= cap:
+        raise agent_calls.GlobalCapReached(f"demo: {cap} {'búsquedas' if searches else 'llamadas'} en 24 h")
+
+
+# ── La visita guiada: se crea y se revisa UNA vez (el script de abajo) ───────────────────────────
+
+def build_tour(session: Session, *, review: bool = True, lang: str = "en") -> Firm:
+    """Crea la oficina de la visita con los 3 libros y, con `review`, corre la revisión de los agentes que
+    corre "Revisar el libro" (auditar → verificar en la web → el ① vuelve a juzgar) y la deja GUARDADA. No
+    redacta reglas: las propuestas del ④ no se guardan, se aprueban en pantalla. Gasta Nebius y Tavily una
+    sola vez. Si la visita ya existe, se niega (para rehacerla, se borra a mano primero)."""
+    if tour_firm_id(session) is not None:
+        raise RuntimeError(f"la visita guiada ya existe (oficina {tour_firm_id(session)})")
+    owner = _system_user(session, TOUR_UID)
+    firm = _new_office(session, owner, "tour", "ContaBu guided tour")
+    session.commit()
+    _cache(session).pop("tour", None)
+    if review:
+        review_tour(session, firm, owner, lang=lang)
+    return firm
+
+
+def review_tour(session: Session, firm: Firm, owner: User, *, lang: str = "en") -> None:
+    import agent_calls
+    import agents
+    import merchant_verifier
+    books = session.exec(select(Company).where(Company.firm_id == firm.id).order_by(Company.id)).all()
+    for company in books:
+        with agent_calls.exclusive(company):
+            res = agents.review(session, company, lang=lang, user_id=owner.id)
+            print(f"  {company.name}: auditoría + ① → {res.outcome} ({res.reviewed} juzgados)")
+            try:
+                v = merchant_verifier.verify_flagged(session, company, user_id=owner.id)
+                again = agents.review(session, company, lang=lang, user_id=owner.id,
+                                      finding_ids=v.finding_ids) if v.finding_ids else None
+                print(f"  {company.name}: ② {v.searched} búsquedas, {v.from_cache} de memoria"
+                      + (f" → ① otra vez: {again.reviewed}" if again else ""))
+            except merchant_verifier.TavilyUnavailable:
+                print(f"  {company.name}: ② sin Tavily (TAVILY_API_KEY): queda sin evidencia de la web")
 
 
 # ── Limpieza de las oficinas vencidas ───────────────────────────────────────────────────────────
@@ -163,24 +536,52 @@ def cleanup_expired_offices(session: Session, now: Optional[datetime] = None) ->
     expired = session.exec(
         select(Firm).where(Firm.demo_expires_at != None).where(Firm.demo_expires_at < now)  # noqa: E711
     ).all()
-    if not expired:
-        return {}
-    firm_ids = [f.id for f in expired]
-    owners = {f.owner_user_id for f in expired}
+    tour = set(_tour_ids(session))
+    expired = [f for f in expired if f.id not in tour]   # la visita guiada no se borra por ningún camino
     counts: dict[str, int] = {}
     conn = session.connection()
-    _delete(conn, "firm", firm_ids, counts)
-    orphans = [u for u in owners if _user_is_orphan(conn, u)]
     firebase_uids: list[str] = []
-    if orphans:
-        firebase_uids = [r[0] for r in conn.execute(
-            text('SELECT firebase_uid FROM "user" WHERE id = ANY(:ids)'), {"ids": orphans})]
-        _delete(conn, "user", orphans, counts)
+    if expired:
+        firm_ids = [f.id for f in expired]
+        owners = {f.owner_user_id for f in expired}
+        _delete(conn, "firm", firm_ids, counts)
+        orphans = [u for u in owners if _user_is_orphan(conn, u)]
+        if orphans:
+            firebase_uids = [r[0] for r in conn.execute(
+                text('SELECT firebase_uid FROM "user" WHERE id = ANY(:ids)'), {"ids": orphans})]
+            _delete(conn, "user", orphans, counts)
+    firebase_uids += _drop_stale_visitors(conn, now, counts)
+    n = conn.execute(text("DELETE FROM democodeattempt WHERE created_at < :t"),
+                     {"t": now - timedelta(days=1)}).rowcount
+    if n:
+        counts["democodeattempt"] = n
     session.commit()   # la BASE primero: un fallo de Firebase nunca deja la limpieza a medias
+    firebase_uids = [u for u in firebase_uids if not u.startswith("demo:")]   # los dueños de sistema
     if firebase_uids and DEMO_MODE:
         counts.update(delete_anonymous_firebase_users(firebase_uids))
-    log.info("demo: limpieza de %d oficinas vencidas → %s", len(firm_ids), counts)
+    if counts:
+        log.info("demo: limpieza (%d oficinas vencidas) → %s", len(expired), counts)
     return counts
+
+
+def _tour_ids(session: Session) -> list[int]:
+    return list(session.exec(select(DemoOffice.firm_id).where(DemoOffice.kind == "tour")).all())
+
+
+def _drop_stale_visitors(conn, now: datetime, counts: dict[str, int], batch: int = 50) -> list[str]:
+    """Los visitantes de la visita guiada no tienen oficina, pero sí su fila en `user` (la crea el login).
+    Pasados `DEMO_TTL_DAYS`, se borran los que no tienen correo (sesiones anónimas: una cuenta real siempre
+    lo tiene, así que esto no alcanza a nadie de verdad, ni en una base mal apuntada) y de los que ya nada
+    cuelga. Devuelve sus uid de Firebase."""
+    rows = conn.execute(text("""
+        SELECT id, firebase_uid FROM "user"
+        WHERE email IS NULL AND created_at < :t AND firebase_uid NOT LIKE 'demo:%'
+        ORDER BY id LIMIT :n
+    """), {"t": now - timedelta(days=DEMO_TTL_DAYS), "n": batch}).fetchall()
+    stale = [(uid, fb) for uid, fb in rows if _user_is_orphan(conn, uid)]
+    if stale:
+        _delete(conn, "user", [u for u, _ in stale], counts)
+    return [fb for _, fb in stale]
 
 
 def _firebase():
@@ -237,12 +638,38 @@ def cleanup_quietly(session: Session) -> None:
         session.rollback()
 
 
+def status(session: Session) -> dict:
+    kinds = dict(session.exec(select(DemoOffice.kind, func.count(DemoOffice.id)).group_by(DemoOffice.kind)).all())
+    codes = dict(session.exec(select(DemoAccess.code_name, func.count(DemoAccess.id))
+                              .group_by(DemoAccess.code_name)).all())
+    return {"tour_firm_id": tour_firm_id(session), "offices": kinds, "pool_ready": pool_ready(session),
+            "pool_size": DEMO_POOL_SIZE, "users_with_code": codes}
+
+
+_USAGE = """uso (siempre con DEMO_MODE=true y el DATABASE_URL de la base del DEMO):
+  .venv/bin/python demo.py tour [--no-review]   crea la visita guiada y guarda la revisión de los agentes (UNA vez)
+  .venv/bin/python demo.py pool                 rellena las oficinas en espera hasta DEMO_POOL_SIZE
+  .venv/bin/python demo.py status               qué hay: la visita, la piscina, los códigos canjeados
+  .venv/bin/python demo.py cleanup              borra lo vencido"""
+
+
 if __name__ == "__main__":
-    # Limpieza manual (o desde un cron): DEMO_MODE=true .venv/bin/python demo.py cleanup
-    if sys.argv[1:] != ["cleanup"]:
-        sys.exit("uso: DEMO_MODE=true .venv/bin/python demo.py cleanup")
+    cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
+    if cmd not in {"tour", "pool", "status", "cleanup"} or (args and args != ["--no-review"]):
+        sys.exit(_USAGE)
     if not DEMO_MODE:
-        sys.exit("Se niega: DEMO_MODE no está encendido (la limpieza es solo para la base del demo).")
+        sys.exit("Se niega: DEMO_MODE no está encendido (esto es solo para la base del demo).")
+    logging.basicConfig(level=logging.INFO)
     from db import engine
     with Session(engine) as s:
-        print(cleanup_expired_offices(s) or "nada vencido")
+        if cmd == "tour":
+            # La revisión de 3 libros pasa el tope POR OFICINA del demo (20 por defecto): aquí no aplica.
+            os.environ.setdefault("AGENT_DAILY_CALLS", "200")
+            f = build_tour(s, review="--no-review" not in args)
+            print(f"visita guiada lista: oficina {f.id}")
+        elif cmd == "pool":
+            print(refill_pool(s))
+        elif cmd == "status":
+            print(status(s))
+        else:
+            print(cleanup_expired_offices(s) or "nada vencido")

@@ -59,9 +59,10 @@
     "resetNeedsEmail": "Escribe tu correo arriba primero.",
     "resetSent": "Si ese correo tiene cuenta, te enviamos un enlace para restablecer tu contraseña.",
     "resetError": "No se pudo enviar el correo de restablecimiento.",
-    "tryDemo": "Probar el demo",
-    "demoHint": "Un clic, sin crear cuenta. Te damos tu propia oficina con 3 libros de clientes.",
-    "demoNotEnabled": "El acceso al demo todavía no está activado. Entra con Google."
+    "tryDemo": "Hacer la visita guiada",
+    "demoHint": "Sin cuenta. De solo lectura, con la revisión de los agentes ya hecha.",
+    "demoNotEnabled": "El acceso al demo todavía no está activado. Entra con Google.",
+    "liveHint": "Demo en vivo: corre tú los agentes sobre tu propia copia de los libros. Necesitas un código de acceso."
   },
   "review": {
     "count": "{{count}} movimientos",
@@ -821,7 +822,9 @@
       "unauthorized": "La clave de la IA fue rechazada.",
       "network": "No se pudo contactar al servicio de IA.",
       "search_unavailable": "La búsqueda web no está configurada en este servidor.",
-      "search_error": "La búsqueda web falló. Inténtalo de nuevo."
+      "search_error": "La búsqueda web falló. Inténtalo de nuevo.",
+      "demo_global_cap_reached": "El demo llegó al límite de llamadas a la IA de hoy, para todos. Inténtalo mañana, o haz la visita guiada, donde la revisión ya está hecha.",
+      "live_demo_only": "Solo en el demo en vivo: entra con Google para correr los agentes."
     },
     "verify": "Verificar comercios",
     "verifying": "Buscando…",
@@ -1614,5 +1617,31 @@
       "schK": "Schedule K, {{n}} · {{label}}",
       "schL": "Schedule L, {{n}} · {{label}}"
     }
+  },
+  "demoDoor": {
+    "liveOnly": "Solo en el demo en vivo",
+    "liveOnlyHint": "La visita guiada es de solo lectura y no corre la IA. En el demo en vivo corres los agentes sobre tu propia copia.",
+    "signInGoogle": "Entra con Google",
+    "enterCode": "Escribe tu código de acceso",
+    "banner": {
+      "title": "Visita guiada · solo lectura",
+      "text": "La revisión de los agentes ya está hecha. ¿Quieres correrlos tú?"
+    },
+    "code": {
+      "title": "Escribe tu código de acceso",
+      "lead": "El demo en vivo te da tu propia oficina con 3 libros de clientes, donde corres tú los agentes.",
+      "signedInAs": "Entraste como {{email}}",
+      "placeholder": "Código de acceso",
+      "submit": "Entrar",
+      "preparing": "Preparando tu oficina…",
+      "browseTour": "Mejor hacer la visita guiada (solo lectura)",
+      "error": {
+        "demo_code_invalid": "Ese código de acceso no es válido.",
+        "demo_code_locked": "Demasiados intentos. Espera unos minutos y vuelve a probar.",
+        "demo_google_required": "Primero entra con Google.",
+        "network": "No se pudo contactar al servidor. Inténtalo de nuevo."
+      }
+    },
+    "tourMissing": "La visita guiada todavía no está lista. Vuelve en un rato."
   }
 }

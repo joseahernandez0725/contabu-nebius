@@ -13,9 +13,10 @@ import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Login from "./components/Login";
 import Sidebar, { viewLabel, type View } from "./components/Sidebar";
 import DemoTour from "./components/DemoTour";
-import { DEMO_MODE } from "./demo";
+import { DEMO_MODE, ENTER_CODE_EVENT, setTouring, type DemoDoor } from "./demo";
+import { AccessCodeScreen, TourBanner, TourMissing } from "./components/DemoDoors";
 import { auth } from "./firebase";
-import { getCompanies, getCompany, setActiveCompany, createCompany, getAuditSummary, confirmCheckout } from "./api";
+import { getCompanies, getCompany, setActiveCompany, createCompany, getAuditSummary, confirmCheckout, demoDoor } from "./api";
 import type { AuditBoard } from "./api";
 import type { Company } from "./types";
 
@@ -48,6 +49,16 @@ function App() {
   const [fbUser, setFbUser] = useState<FirebaseUser | null | undefined>(
     DEV_UID ? ({ uid: DEV_UID } as FirebaseUser) : undefined,
   );
+  // DEMO — las dos puertas (FASE 13, 23-oct): por cuál entró (lo dice `/api/me`), si una cuenta de Google sin
+  // código eligió mirar la visita mientras tanto, y `session` para volver a pedir `/api/me` tras canjear el código.
+  const [door, setDoor] = useState<DemoDoor | null>(null);
+  const [browsingTour, setBrowsingTour] = useState(false);
+  const [session, setSession] = useState(0);
+  useEffect(() => {
+    const enterCode = () => setBrowsingTour(false);
+    window.addEventListener(ENTER_CODE_EVENT, enterCode);
+    return () => window.removeEventListener(ENTER_CODE_EVENT, enterCode);
+  }, []);
 
   const reloadReview = useCallback(() => {
     // El AUDITOR corre solo (determinista, gratis) → badges sin que el bookkeeper lo pida (FASE 9/11).
@@ -61,6 +72,7 @@ function App() {
     if (DEV_UID) return;               // modo desarrollo: no se escucha a Firebase
     return onAuthStateChanged(auth, (u) => {
       setFbUser(u);
+      setDoor(null); setBrowsingTour(false);
       if (!u) { setCompany(null); setCompanies([]); setProblemCount(0); setAuditCount(0); }
     });
   }, []);
@@ -102,9 +114,15 @@ function App() {
     if (!fbUser) return;
     setAuthError(false);
     getCompanies()
-      .then((cs) => { setCompanies(cs); setCompany(cs[0] ?? null); reloadReview(); })
+      .then((cs) => {
+        // En el demo la misma pestaña puede cambiar de oficina (visita → la suya, tras el código): el libro activo
+        // siempre es el primero de la lista nueva (Rivera HVAC), no el que quedó de antes.
+        if (DEMO_MODE && cs[0]) setActiveCompany(cs[0].id);
+        setDoor(demoDoor());
+        setCompanies(cs); setCompany(cs[0] ?? null); reloadReview();
+      })
       .catch(() => setAuthError(true));
-  }, [fbUser, reloadReview]);
+  }, [fbUser, reloadReview, session]);
 
   // Vuelta de Stripe Checkout (?billing=success&session_id=…): confirma el pago y refresca la empresa.
   useEffect(() => {
@@ -137,6 +155,15 @@ function App() {
   }
   // Sin sesión → pantalla de acceso.
   if (fbUser === null) return <Login />;
+
+  // DEMO: Google sin código → el código (o la visita, si la eligió); la visita sin crear todavía → un aviso.
+  const touring = DEMO_MODE && (door === "tour" || (door === "needs_code" && browsingTour));
+  setTouring(touring);   // lo leen `<LiveOnly>` y `api.ts` (ver demo.ts); antes de pintar cualquier página
+  if (DEMO_MODE && door === "needs_code" && !browsingTour) {
+    return <AccessCodeScreen email={fbUser.email} onDone={() => setSession((n) => n + 1)}
+                             onBrowseTour={() => setBrowsingTour(true)} />;
+  }
+  if (DEMO_MODE && door === "tour_missing") return <TourMissing />;
 
   // Libro SIN sector → onboarding (el sector decide el plan de cuentas). 🔄 2-oct (FASE 13 Paso 5):
   // fuera la entrevista y su flag `round1_done`. Y el sector lo elige el BOOKKEEPER: un cliente
@@ -182,6 +209,7 @@ function App() {
           </button>
           <h1 className="font-semibold text-slate-900 truncate">{viewLabel(t, view)}</h1>
           {company && <span className="text-sm text-slate-400 truncate">· {company.name}</span>}
+          {touring && <TourBanner />}
         </header>
 
         <main className="flex-1 w-full px-3 sm:px-4 py-3">

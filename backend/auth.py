@@ -62,7 +62,7 @@ def current_identity(
     if AUTH_DEV_MODE:
         if not x_dev_uid:
             raise HTTPException(status_code=401, detail="missing X-Dev-Uid (dev mode)")
-        return {"uid": x_dev_uid, "email": x_dev_email}
+        return {"uid": x_dev_uid, "email": x_dev_email, "anonymous": False}
 
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
@@ -77,7 +77,8 @@ def current_identity(
     # real que nunca se borra. Solo el servicio de demo (`DEMO_MODE`) los acepta.
     if is_anonymous_token(decoded) and not _demo_mode():
         raise HTTPException(status_code=401, detail="anonymous sessions are only allowed in the demo")
-    return {"uid": decoded["uid"], "email": decoded.get("email")}
+    # `anonymous`: el demo decide la puerta con esto (visita guiada vs. demo en vivo con código; `demo.door`).
+    return {"uid": decoded["uid"], "email": decoded.get("email"), "anonymous": is_anonymous_token(decoded)}
 
 
 def _demo_mode() -> bool:
@@ -155,6 +156,9 @@ def effective_role(company: Company, user: User, session: Session) -> Role | Non
     nunca se PIERDA: a un socio VIEWER de la oficina se le puede dar MEMBER en un libro suelto.
 
     Es la ÚNICA fuente de verdad del acceso: un endpoint que no pase por aquí no está protegido.
+
+    En el DEMO (23-oct) manda además `demo.demo_role`: la visita guiada es VIEWER para todos, y sin un
+    código de acceso vigente no se alcanza ningún otro libro.
     """
     roles: list[Role] = []
 
@@ -178,9 +182,11 @@ def effective_role(company: Company, user: User, session: Session) -> Role | Non
         if fm:
             roles.append(_FIRM_TO_COMPANY_ROLE[fm.role])
 
-    if not roles:
-        return None
-    return max(roles, key=lambda r: _ROLE_RANK[r])
+    best = max(roles, key=lambda r: _ROLE_RANK[r]) if roles else None
+    if _demo_mode():
+        import demo
+        return demo.demo_role(session, company, user, best)
+    return best
 
 
 def owned_company(company_id: int, user: User, session: Session, *, write: bool = False) -> Company:
@@ -262,7 +268,11 @@ def user_firm(user: User, session: Session) -> tuple[Firm | None, FirmRole | Non
 
     Es lo que distingue a un bookkeeper de un cliente: el cliente **no pertenece a ninguna firma**, y
     de eso depende qué cáscara le muestra el frontend (consola vs plataforma del cliente).
+    En el DEMO: con código, su oficina; sin código, la visita guiada como VIEWER (`demo.visible_firm`).
     """
+    if _demo_mode():
+        import demo
+        return demo.visible_firm(session, user)
     fm = session.exec(select(FirmMember).where(FirmMember.user_id == user.id)).first()
     if fm is None:
         return None, None

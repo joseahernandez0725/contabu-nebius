@@ -9,6 +9,7 @@ import {
   BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, BTN_SMALL_PRIMARY, Badge, DetailEmpty, DetailHeader, DetailSection, EmptyRow,
   ListCard, ListDetail, ListRow, PageHeader, secsSince, agoText,
 } from "./PageKit";
+import { LiveOnly } from "./DemoDoors";   // visita guiada del demo (Firm, 23-oct)
 
 // LAS NOTAS DEL LIBRO, CON PÁGINA PROPIA (FASE 11, Auditoría / IA · ronda de diseño 2, 18-oct-2026).
 // La nota es "el prompt que escribe el bookkeeper": lo que la IA debe saber de ESTE cliente. Vive entre
@@ -281,9 +282,9 @@ function NoteDetail({ note, lang, errText, onOpenSheet, onProposeRules, onSaved,
         )}
         {/* Probar · Guardar: escribes → Probar → ves qué entendería y qué marcaría → Guardar. */}
         <div className="flex flex-wrap items-center gap-2 pt-1">
-          <button className={BTN_SECONDARY} onClick={test} disabled={!!busy || !draft.text.trim()}>
+          <LiveOnly compact><button className={BTN_SECONDARY} onClick={test} disabled={!!busy || !draft.text.trim()}>
             {busy === "test" ? t("notesPage.testing") : t("notesPage.test")}
-          </button>
+          </button></LiveOnly>
           <span className="text-[11px] text-slate-400">
             {testCalls ? t("auditView.est.calls", { count: testCalls }) : t("notesPage.free")}
           </span>
@@ -333,10 +334,10 @@ function NoteDetail({ note, lang, errText, onOpenSheet, onProposeRules, onSaved,
       {!isNew && (
         <div className="border-t border-slate-100 pt-2 flex flex-wrap items-center gap-1.5">
           {note.kind === "keep_in_mind" && !note.paused_at && onProposeRules && (
-            <button className={BTN_SECONDARY} disabled={!!busy || dirty} onClick={() => onProposeRules(note.id)}
+            <LiveOnly compact><button className={BTN_SECONDARY} disabled={!!busy || dirty} onClick={() => onProposeRules(note.id)}
                     title={t("auditView.est.calls", { count: 1 })}>
               {t("notesPage.proposeRules")}
-            </button>
+            </button></LiveOnly>
           )}
           <div className="ms-auto flex items-center gap-1.5">
             <button className={BTN_GHOST} disabled={!!busy} onClick={togglePause}>

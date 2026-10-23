@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentError, searchMerchant, type AgentSpent } from "../api";
+import { LiveOnly } from "./DemoDoors";   // visita guiada del demo (Firm, 23-oct)
 
 // "BUSCAR ESTE COMERCIO" (FASE 11, 14-oct — Tavily rediseñado para gastar poco): el ② busca en internet
 // el comercio de UN movimiento, al instante, y solo si la oficina no lo buscó ya. Primero una búsqueda
@@ -48,10 +49,10 @@ export default function MerchantSearch({ transactionId, onDone }: {
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-      <button onClick={run} disabled={busy} title={t("auditView.search.hint")}
+      <LiveOnly compact><button onClick={run} disabled={busy} title={t("auditView.search.hint")}
               className="px-2.5 py-1 rounded-lg font-semibold text-sky-800 ring-1 ring-sky-200 hover:bg-sky-50 disabled:opacity-50">
         {busy ? t("auditView.search.searching") : t("auditView.search.button")}
-      </button>
+      </button></LiveOnly>
       {!msg && !error && <span className="text-slate-400">{t("auditView.search.hint")}</span>}
       {msg && <span className="text-slate-700">{msg}</span>}
       {error && <span className="text-rose-700">{error}</span>}

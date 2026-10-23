@@ -423,6 +423,39 @@ class FirmMember(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_utcnow)
 
 
+# ── Firm (FASE 13) — las dos puertas del demo (23-oct). Solo tienen filas en la base del DEMO ─────
+# Tablas NUEVAS a propósito, sin columnas nuevas en `User` ni `Firm`: Auditoría corre exámenes con este
+# código sobre copias de la base sin migrar, y una columna de más en `Firm` rompería cada `Firm(...)`.
+
+class DemoOffice(SQLModel, table=True):
+    """El papel de una oficina en el demo (`demo.py`). `kind`: **tour** (la visita guiada, compartida y de
+    solo lectura; nunca vence) · **pool** (ya sembrada, en espera de un código) · **live** (asignada a quien
+    canjeó un código; vence a los `DEMO_TTL_DAYS` desde `assigned_at`)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    firm_id: int = Field(foreign_key="firm.id", unique=True, index=True)
+    kind: str = Field(index=True)
+    assigned_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
+class DemoAccess(SQLModel, table=True):
+    """Quién canjeó un código de acceso al demo en vivo y CUÁL: `code_name` = "devpost" | "guest" (el
+    nombre, nunca el código). El acceso vale mientras ese código siga puesto en el servicio."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="user.id", unique=True, index=True)
+    code_name: str
+    granted_at: datetime = Field(default_factory=_utcnow)
+
+
+class DemoCodeAttempt(SQLModel, table=True):
+    """Un intento FALLIDO de código, para el límite por usuario y por IP. Ni el código ni la IP en claro
+    (`ip_hash`). `user_id` sin clave foránea: es historia corta, la limpieza borra las de más de un día."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: Optional[int] = Field(default=None, index=True)
+    ip_hash: str = Field(index=True)
+    created_at: datetime = Field(default_factory=_utcnow, index=True)
+
+
 # ── Movimientos (FASE 10) — historial de correcciones ──────────────────────────────────────────
 
 class CategorizationChange(SQLModel, table=True):

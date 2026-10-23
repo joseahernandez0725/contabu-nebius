@@ -35,6 +35,10 @@ class CapReached(RuntimeError):
     code = "agent_cap_reached"
 
 
+class GlobalCapReached(CapReached):
+    code = "demo_global_cap_reached"   # FASE 13 (Firm, 23-oct): el tope diario de TODO el demo (`demo.py`)
+
+
 class AlreadyRunning(RuntimeError):
     code = "agent_busy"
 
@@ -79,6 +83,8 @@ def calls_last_24h(session: Session, company: Company, agents: tuple = _MODEL_AG
 
 def check_cap(session: Session, company: Company, agent: Optional[str] = None) -> None:
     """Antes de llamar: ¿la oficina todavía tiene llamadas (o búsquedas, `agent="verifier"`) hoy?"""
+    import demo
+    demo.check_global_cap(session, agent)   # FASE 13 (Firm, 23-oct): y el demo entero (no hace nada fuera)
     if agent == "verifier":
         if calls_last_24h(session, company, ("verifier",)) >= DAILY_SEARCH_CAP:
             raise CapReached(f"{DAILY_SEARCH_CAP} búsquedas en 24 h")

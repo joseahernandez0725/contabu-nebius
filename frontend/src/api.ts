@@ -1,5 +1,6 @@
 // Capa de acceso al backend. Centraliza las llamadas HTTP en un solo lugar.
 import { auth } from "./firebase";
+import { inTour, type DemoDoor } from "./demo";
 import type { Company, IncomeStatement, Transaction, SheetRow, SheetLabel } from "./types";
 
 // URL del backend según entorno: en dev, localhost; en prod, el Cloud Run (VITE_API_URL).
@@ -33,6 +34,7 @@ interface Me {
   user: { id: number; firebase_uid: string; email: string | null };
   companies: Company[];
   roles?: Record<number, string>; // company_id → rol del usuario (OWNER/MEMBER/VIEWER)
+  demo?: { door: DemoDoor };      // solo en el despliegue de demo (FASE 13, 23-oct): por qué puerta entró
 }
 
 // Inicia la sesión: trae el usuario y sus empresas; fija la empresa activa. Devuelve la empresa.
@@ -51,6 +53,7 @@ export async function getCompanies(): Promise<Company[]> {
   if (!res.ok) throw new Error("No se pudo iniciar sesión");
   const me: Me = await res.json();
   if (companyId == null) companyId = me.companies[0]?.id ?? null;
+  lastDoor = me.demo?.door ?? null;
   const roles = me.roles || {};
   return me.companies.map((c) => ({ ...c, role: roles[c.id] as Company["role"] }));
 }
@@ -1034,6 +1037,8 @@ export class AgentError extends Error {
 }
 
 async function agentsFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Visita guiada del demo (Firm, 23-oct): ningún agente corre desde aquí (el backend también lo niega).
+  if (init.method === "POST" && inTour()) throw new AgentError("live_demo_only");
   const res = await fetch(`${API}/api/companies/${cid()}/agents${path}`, {
     ...init,
     headers: { ...(await authHeaders()), "Content-Type": "application/json", ...(init.headers ?? {}) },
@@ -1217,3 +1222,39 @@ export interface RuleTrace {
   manual: boolean; bare_check: boolean;
 }
 export const getRuleTrace = (id: number) => auditFetch<RuleTrace>(`/transactions/${id}/rule-trace`);
+
+
+// ── LAS DOS PUERTAS DEL DEMO (FASE 13, área Firm · 23-oct) ─────────────────────────────────────────
+// Solo existen en el despliegue de demo (`DEMO_MODE`); fuera de él el backend responde 404.
+
+let lastDoor: DemoDoor | null = null;
+/** La puerta que dijo el último `/api/me` (null fuera del demo). La lee App.tsx después de `getCompanies`. */
+export function demoDoor(): DemoDoor | null { return lastDoor; }
+
+export class DemoCodeError extends Error {
+  code: string;   // demo_code_invalid · demo_code_locked · demo_google_required · network
+  constructor(code: string) { super(code); this.code = code; }
+}
+
+/** Canjea el código de acceso del demo en vivo. Si la piscina está vacía tarda lo que la siembra (~5 s). */
+export async function redeemDemoCode(code: string): Promise<{ ok: true; code_name: string }> {
+  const res = await fetch(`${API}/api/demo/access`, {
+    method: "POST",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  }).catch(() => null);
+  if (!res) throw new DemoCodeError("network");
+  if (!res.ok) {
+    const detail = await res.json().then((j) => j?.detail).catch(() => null);
+    throw new DemoCodeError(detail?.code ?? "demo_code_invalid");
+  }
+  return res.json();
+}
+
+/** Rellena las oficinas en espera. Se llama SIN esperarla: el trabajo corre dentro de esta petición (en Cloud
+ *  Run lo que sigue después de responder no avanza) mientras el usuario escribe su código o mira su oficina. */
+export function refillDemoPool(): void {
+  void authHeaders()
+    .then((headers) => fetch(`${API}/api/demo/pool/refill`, { method: "POST", headers, keepalive: true }))
+    .catch(() => {});
+}

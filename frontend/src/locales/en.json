@@ -41,9 +41,10 @@
     "resetNeedsEmail": "Type your email above first.",
     "resetSent": "If that email has an account, we sent a link to reset your password.",
     "resetError": "Couldn't send the reset email.",
-    "tryDemo": "Try the demo",
-    "demoHint": "One click, no account. You get your own office with 3 client books.",
-    "demoNotEnabled": "The demo access isn't turned on yet. Sign in with Google instead."
+    "tryDemo": "Take the guided tour",
+    "demoHint": "No account. Read-only, with the agents' review already done.",
+    "demoNotEnabled": "The demo access isn't turned on yet. Sign in with Google instead.",
+    "liveHint": "Live demo: run the agents yourself on your own copy of the books. You'll need an access code."
   },
   "review": {
     "count": "{{count}} transactions",
@@ -458,7 +459,9 @@
       "unauthorized": "The AI key was rejected.",
       "network": "Couldn't reach the AI service.",
       "search_unavailable": "Web search isn't configured on this server.",
-      "search_error": "The web search failed. Try again."
+      "search_error": "The web search failed. Try again.",
+      "demo_global_cap_reached": "The demo reached today's limit of AI calls for everyone. Try again tomorrow — or take the guided tour, where the review is already done.",
+      "live_demo_only": "Live demo only: sign in with Google to run the agents."
     },
     "verify": "Verify merchants",
     "verifying": "Searching…",
@@ -1485,5 +1488,31 @@
       "schK": "Schedule K, {{n}} · {{label}}",
       "schL": "Schedule L, {{n}} · {{label}}"
     }
+  },
+  "demoDoor": {
+    "liveOnly": "Live demo only",
+    "liveOnlyHint": "The guided tour is read-only and doesn't run the AI. In the live demo you run the agents on your own copy.",
+    "signInGoogle": "Sign in with Google",
+    "enterCode": "Enter your access code",
+    "banner": {
+      "title": "Guided tour · read-only",
+      "text": "The agents' review is already done. Want to run them yourself?"
+    },
+    "code": {
+      "title": "Enter your access code",
+      "lead": "The live demo gives you your own office with 3 client books, where you run the agents yourself.",
+      "signedInAs": "Signed in as {{email}}",
+      "placeholder": "Access code",
+      "submit": "Enter",
+      "preparing": "Preparing your office…",
+      "browseTour": "Take the guided tour instead (read-only)",
+      "error": {
+        "demo_code_invalid": "That access code isn't valid.",
+        "demo_code_locked": "Too many tries. Wait a few minutes and try again.",
+        "demo_google_required": "Sign in with Google first.",
+        "network": "Couldn't reach the server. Try again."
+      }
+    },
+    "tourMissing": "The guided tour isn't ready yet. Please come back in a little while."
   }
 }
