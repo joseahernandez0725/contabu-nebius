@@ -65,7 +65,8 @@ EXAMS = {
           "evidence": "web_evidencia_examen2.json"},
 }
 TAVILY_CAP = 30
-SEAT = {"drafter": "drafter", "drafter_note": "drafter", "drafter_note_fix": "drafter",
+SEAT = {"drafter": "drafter", "drafter_note": "drafter", "drafter_note_fix": "drafter", "r3_2026": "drafter",
+        "r3_2026_note": "drafter",
         **{f"{e['prefix']}{x}_{k}": seat for e in EXAMS.values() for x in ("", "_nonote")
            for k, seat in (("reviewer", "reviewer"), ("personal", "personal"))}, "personal": "personal", "exam_reviewer": "reviewer",
         "exam_personal": "personal"}
@@ -177,13 +178,17 @@ def check() -> int:
 
 # ── ④ en el libro real ─────────────────────────────────────────────────────────────────────────
 
-def drafter(n: int, live_first: bool = False, keep_note: int | None = None, kind: str | None = None) -> int:
+def drafter(n: int, live_first: bool = False, keep_note: int | None = None, kind: str | None = None,
+            db: str = "contabu_real") -> int:
+    """`db="contabu_real_2026"` (24-oct, regla de Jose: del libro real solo vale 2026): la copia recortada a 2026; su
+    clave es solo de 2026 (se exige 0 filas de antes) y los `kind` son `r3_2026` / `r3_2026_note`."""
     import agent_models
     import field_test
     import merchant_verifier
     from db import engine
     from models import Company
-    kind = kind or ("drafter_note" if keep_note is not None else "drafter")
+    r3 = db != "contabu_real"
+    kind = kind or (("r3_2026" if r3 else "drafter") + ("_note" if keep_note is not None else ""))
     keep = frozenset({keep_note}) if keep_note is not None else frozenset()
     first = True
     for m, r in _cfg_runs(kind, n):
@@ -192,7 +197,7 @@ def drafter(n: int, live_first: bool = False, keep_note: int | None = None, kind
         mode, first = ("live" if live_first and first else "saved"), False
         with Session(engine) as s:
             try:
-                _require_db(s, "contabu_real")
+                _require_db(s, db)
                 company = s.get(Company, COMPANY_ID)
                 agent_models.OVERRIDES["drafter"] = (m, r)
                 merchant_verifier.ORACLE = None
@@ -201,10 +206,16 @@ def drafter(n: int, live_first: bool = False, keep_note: int | None = None, kind
                     g = field_test.grade_once(s, company, SINCE, mode, keep_note_ids=keep)
                     err = None
                     size = (g["spans"]["total"]["key"], g["spans"]["2026"]["key"])
-                    if size != KEY_SIZE:
+                    if r3 and g["spans"]["antes"]["key"]:
+                        sys.exit(f"⛔ la copia de 2026 trae filas de antes en la clave ({size}); me detengo")
+                    if not r3 and size != KEY_SIZE:
                         sys.exit(f"⛔ la clave dio {size}, no {KEY_SIZE}: el libro cambió; me detengo")
-                    if keep and g["rewind"]["notes_removed"]:
-                        sys.exit("⛔ se borró una nota que debía quedarse; me detengo")
+                    if keep:   # la nota que se conserva sigue ahí (las demás posteriores sí se borran: 24-oct, nota 2)
+                        from models import BookNote
+                        left = set(s.exec(select(BookNote.id).where(BookNote.company_id == company.id)).all())
+                        if not keep <= left:
+                            sys.exit("⛔ se borró la nota que debía quedarse; me detengo")
+                        g["notes_left"] = sorted(left)
                 except Exception as e:   # un modelo que falla cuenta como corrida fallida, no detiene el resto
                     g, err = None, type(e).__name__
             finally:
@@ -215,6 +226,7 @@ def drafter(n: int, live_first: bool = False, keep_note: int | None = None, kind
         if g:
             row.update({k: g[k] for k in ("outcome", "calls", "proposals", "rejection_counts", "spans", "cost_usd",
                                           "latency_ms", "completion_tokens", "privacy", "rows", "rejected_amounts")})
+            row["notes_left"] = g.get("notes_left")
             row["verify"] = {k: g["verify"][k] for k in ("merchants", "pending", "pending_high_or_medium", "credits")} if g["verify"] else None
         _append(row)
         sp = row.get("spans", {}).get("total", {})
@@ -507,7 +519,8 @@ def _fmt(vals, f="{}"):
 def table() -> int:
     rows = _read()
     print(f"Gastado en Nebius: ${_spent():.4f} (tope ${USD_CAP})\n")
-    known = ["drafter", "drafter_note", "drafter_note_fix", "personal", "exam_reviewer", "exam_personal"]
+    known = ["drafter", "drafter_note", "drafter_note_fix", "r3_2026", "r3_2026_note", "personal", "exam_reviewer",
+             "exam_personal"]
     kinds = known + sorted({r["kind"] for r in rows} - set(known))
     for kind in kinds:
         mine = [r for r in rows if r["kind"] == kind]
@@ -522,7 +535,7 @@ def table() -> int:
             cost = sum(r.get("cost_usd") or 0 for r in rs) / len(rs)
             lat = sum((r.get("latency_ms") or 0) for r in ok) / max(1, len(ok)) / 1000
             name = f"{m}{' razona' if rz else ''}"
-            if kind in ("drafter", "drafter_note", "drafter_note_fix"):
+            if kind in ("drafter", "drafter_note", "drafter_note_fix", "r3_2026", "r3_2026_note"):
                 cov = [f"{r['spans']['total']['decided']}/{r['spans']['total']['key']}" for r in ok]
                 prec = [f"{r['spans']['total']['right']}/{r['spans']['total']['decided']}" for r in ok]
                 c26 = [f"{r['spans']['2026']['decided']}/{r['spans']['2026']['key']}·{r['spans']['2026']['right']}" for r in ok]
@@ -576,6 +589,7 @@ def main() -> int:
     ap.add_argument("--exam", choices=tuple(EXAMS), default="1", help="exam: cuál examen sembrado (base, clave, kind)")
     ap.add_argument("--tag", help="exam: medición con etiqueta (solo el equipo de hoy, kind aparte)")
     ap.add_argument("--drop-note", action="store_true", help="exam: el equipo de hoy con las notas borradas (en la transacción)")
+    ap.add_argument("--db", default="contabu_real", help="drafter: la base (contabu_real_2026 = la copia recortada a 2026)")
     ap.add_argument("--keep-note", type=int, help="drafter: conservar esta nota al volver al 'antes' (kind drafter_note)")
     ap.add_argument("--live-first", action="store_true",
                     help="drafter/exam: la PRIMERA corrida busca en Tavily de verdad y guarda la evidencia; las demás la reusan")
@@ -585,7 +599,7 @@ def main() -> int:
     if args.what == "check":
         return check()
     if args.what == "drafter":
-        return drafter(args.n, args.live_first, args.keep_note)
+        return drafter(args.n, args.live_first, args.keep_note, db=args.db)
     if args.what == "personal":
         return personal(args.n)
     return exam(args.n, args.live_first, args.exam, args.drop_note, args.tag)
