@@ -65,7 +65,7 @@ function initials(name: string | undefined): string {
 }
 
 export default function Sidebar({
-  view, onNavigate, company, companies, onSwitch, onAdd, reviewCount, auditCount, open, onClose,
+  view, onNavigate, company, companies, onSwitch, onAdd, reviewCount, auditCount, open, onClose, forceExpand = false,
 }: {
   view: View;
   onNavigate: (v: View) => void;
@@ -77,6 +77,7 @@ export default function Sidebar({
   auditCount: number;    // hallazgos del auditor (badge ámbar)
   open: boolean;         // en celular, el cajón
   onClose: () => void;
+  forceExpand?: boolean; // el recorrido guiado del demo (23-oct) la abre para señalar el selector de libro
 }) {
   const { t } = useTranslation();
   const [hover, setHover] = useState(false);
@@ -118,7 +119,7 @@ export default function Sidebar({
       </div>
 
       {/* El CLIENTE abierto, fijo arriba y FUERA del área con scroll (su menú flotante se recortaría). */}
-      <div className="shrink-0 h-[60px] px-4 flex items-center border-b border-slate-200">
+      <div className="shrink-0 h-[60px] px-4 flex items-center border-b border-slate-200" data-tour={expanded ? "book-switcher" : undefined}>
         {expanded ? (
           <div className="min-w-0 w-full">
             <div className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5 whitespace-nowrap">{t("shell.client")}</div>
@@ -204,10 +205,10 @@ export default function Sidebar({
           onFocus={() => later(true, 0)}
           onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) later(false, 0); }}
           className={`fixed inset-y-0 start-0 z-30 border-e border-slate-200 bg-white transition-[width,box-shadow] duration-200 ease-out ${
-            hover ? "w-60 shadow-xl" : "w-12"
+            hover || forceExpand ? "w-60 shadow-xl" : "w-12"
           }`}
         >
-          {body(hover)}
+          {body(hover || forceExpand)}
         </aside>
       </div>
 

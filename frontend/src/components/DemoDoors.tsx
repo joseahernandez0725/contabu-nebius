@@ -27,7 +27,7 @@ export function LiveOnly({ children, compact = false }: { children: ReactNode; c
     // Donde cabía un botón chico: una sola píldora, que es a la vez el aviso y el enlace.
     return (
       <button type="button" onClick={() => void goLive()} title={`${t("demoDoor.liveOnlyHint")} → ${label}`}
-              className="shrink-0 whitespace-nowrap px-2.5 py-1 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:text-brand-green hover:border-brand-green">
+              className="shrink-0 max-w-[8.5rem] leading-tight text-center px-2.5 py-1 rounded-lg border border-dashed border-slate-300 text-xs text-slate-500 hover:text-brand-green hover:border-brand-green">
         {t("demoDoor.liveOnly")} ↗
       </button>
     );
@@ -52,7 +52,8 @@ export function TourBanner() {
   const label = useGoLiveLabel();
   return (
     <div className="ms-auto min-w-0 flex items-center gap-2 rounded-full bg-amber-50 border border-amber-200 px-3 py-1 text-xs text-amber-900">
-      <span className="font-semibold shrink-0">{t("demoDoor.banner.title")}</span>
+      {/* En el celular no cabe todo: el título se recorta y el enlace queda siempre entero. */}
+      <span className="font-semibold min-w-0 truncate">{t("demoDoor.banner.title")}</span>
       <span className="hidden lg:inline truncate">{t("demoDoor.banner.text")}</span>
       <button type="button" onClick={() => void goLive()} className="shrink-0 font-semibold text-brand-green hover:underline">
         {label}

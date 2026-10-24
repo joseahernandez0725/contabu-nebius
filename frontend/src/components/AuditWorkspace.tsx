@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getAgentTeam, getAgentUsage, getAuditBoard, getBookNotes, getCategories, money,
+  AgentError, applyRuleProposals, dismissProposal, getAgentEstimate, getTourProposals, getAgentTeam, getAgentUsage, getAuditBoard, getBookNotes, getCategories, money,
   resolveFinding, runAudit, runFormulaDrafter, runMerchantVerifier, updateTransaction,
   type AgentEstimate, type AgentSpent, type AgentTeam, type AgentUsageSummary, type AuditBoard, type BoardFinding, type ChartOfAccounts,
   type DismissReason, type DraftResponse, type FormulaProposal, type PendingGroup, type TeamAgent, type TeamAgentKey, type TxSummary,
 } from "../api";
 import { SECTION_LABEL } from "../accounting";
-import { DEMO_MODE } from "../demo";
+import { DEMO_MODE, inTour } from "../demo";
 import MerchantSearch from "./MerchantSearch";
 import { LiveOnly } from "./DemoDoors";   // visita guiada del demo (Firm, 23-oct)
+import JudgedBy from "./JudgedBy";          // quién juzgó cada hallazgo (Firm, 23-oct)
 import {
   BTN_GHOST, BTN_PRIMARY, BTN_SECONDARY, Badge, EmptyRow as Empty, ListCard, ListDetail, ListRow as QueueRow, Tabs,
   agoText, DetailEmpty,
@@ -82,6 +83,7 @@ export default function AuditWorkspace({
   const [board, setBoard] = useState<AuditBoard | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
   const [proposals, setProposals] = useState<FormulaProposal[]>([]);
+  useEffect(() => { if (inTour()) getTourProposals().then(setProposals).catch(() => {}); }, []);   // visita guiada (Firm, 23-oct): las guardadas, en solo lectura
   const [rejected, setRejected] = useState(0);
   // 20-oct (prueba de campo): cuando el ④ deja 0 propuestas, POR QUÉ y qué hacer (antes solo "0 pasaron").
   const [draftWhy, setDraftWhy] = useState<DraftWhyData | null>(null);
@@ -441,7 +443,7 @@ export default function AuditWorkspace({
               {tab === "proposals" && proposals.length === 0 && <Empty text={t("auditView.empty.proposals")} />}
 
               {tab === "findings" && findings.map((f) => (
-                <QueueRow key={f.id} active={sel?.kind === "finding" && sel.id === f.id} onClick={() => setSel({ kind: "finding", id: f.id })}
+                <QueueRow key={f.id} tour={`finding-${f.id}`} active={sel?.kind === "finding" && sel.id === f.id} onClick={() => setSel({ kind: "finding", id: f.id })}
                           dot={SEV_DOT[f.severity]} title={t(`auditView.type.${f.type}`, { defaultValue: f.type })}
                           sub={f.merchant ?? ""} right={
                             <>
@@ -459,7 +461,7 @@ export default function AuditWorkspace({
                           right={<span className="text-xs tabular-nums text-slate-600">{money(g.total)}</span>} />
               ))}
               {tab === "proposals" && proposals.map((p, i) => (
-                <QueueRow key={i} active={sel?.kind === "proposal" && sel.idx === i} onClick={() => setSel({ kind: "proposal", idx: i })}
+                <QueueRow key={i} tour={`proposal-${i}`} active={sel?.kind === "proposal" && sel.idx === i} onClick={() => setSel({ kind: "proposal", idx: i })}
                           dot={decided[i] ? "bg-slate-300" : "bg-emerald-500"} title={`${p.keyword} → ${p.category}`}
                           sub={decisionText(decided[i]) ?? t("agents.test", { count: p.test.changes })}
                           right={<>{p.warnings.length > 0 && <span className="text-xs">⚠️</span>}{p.web_evidence.length > 0 && <span className="text-xs">🔎</span>}</>} />
@@ -625,7 +627,7 @@ function TeamPanel({ team, exact, steps, running, launching, stepNote, est, disa
     return { text: r ? (s === "audit" ? t("auditView.team.codeOnly") : t("auditView.team.didNotRun")) : t("auditView.team.never"), tone: "text-slate-500" };
   };
   return (
-    <section className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
+    <section data-tour="ai-team" className="bg-white rounded-xl border border-slate-200 p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h2 className="text-sm font-semibold text-slate-900">{t("auditView.team.title")}</h2>
         {team && (
@@ -851,6 +853,7 @@ function FindingDetail({ f, t, sentence, label, webLabel, fmtDate, chart, catToT
         <h3 className="text-sm font-semibold text-slate-900 mt-0.5">
           {t(`auditView.type.${f.type}`, { defaultValue: f.type })}{f.merchant ? <span className="font-normal text-slate-500"> · {f.merchant}</span> : null}
         </h3>
+        <JudgedBy findingId={f.id} />
       </div>
       {/* Lo que vio el auditor */}
       <p className="text-sm text-slate-700">{sentence}</p>
@@ -998,7 +1001,7 @@ function ProposalDetail({ p, idx, decided, t, label, webLabel, fmtDate, busy, on
       {p.warnings.map((w) => <p key={w} className="text-xs text-amber-800 bg-amber-50 rounded-lg px-2 py-1">⚠️ {t(`agents.warning.${w}`)}</p>)}
       {/* La prueba contra la historia */}
       <div className="text-xs text-slate-700 bg-slate-50 rounded-lg px-2 py-1.5">
-        <button onClick={() => setShowRows(!showRows)} className="text-start w-full">
+        <button onClick={() => setShowRows(!showRows)} className="text-start w-full" data-tour="history-test">
           <span className="text-slate-400">{showRows ? "▾" : "▸"} </span>
           {t("agents.test", { count: p.test.changes })}
           {p.test.by_pair.map((b) => ` · ${label(b.from)} → ${label(b.to)}: ${b.rows}`).join("")}
@@ -1035,11 +1038,11 @@ function ProposalDetail({ p, idx, decided, t, label, webLabel, fmtDate, busy, on
             </div>
           </div>
         ) : (
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end"><LiveOnly compact>
             <button onClick={() => setDismissing(true)} className="px-2.5 py-1 rounded-lg text-xs text-slate-600 hover:bg-slate-100">{t("agents.discard")}</button>
             <button onClick={() => onApprove(idx, p)} disabled={busy}
                     className="px-3 py-1 rounded-lg text-xs font-semibold text-white bg-emerald-700 disabled:opacity-40">{t("agents.approve")}</button>
-          </div>
+          </LiveOnly></div>
         )}
       </div>
     </div>

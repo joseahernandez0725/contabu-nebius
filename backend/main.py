@@ -321,6 +321,38 @@ def demo_redeem_code(payload: DemoCodeIn, request: Request, user: User = Depends
     return {"ok": True, "code_name": name}
 
 
+@app.get("/api/demo/intro")
+def demo_intro(user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """La pantalla de inicio del recorrido guiado: los agentes con su modelo y el antes/después de Rivera HVAC
+    de la visita, contado por SQL (`demo.intro`). La visita es pública: cualquiera con sesión la lee."""
+    if not demo.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="not found")
+    return demo.intro(session)
+
+
+@app.get("/api/companies/{company_id}/demo/proposals")
+def demo_tour_proposals(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Las reglas que el ④ propuso al crear la visita (guardadas; en solo lectura). Vacío en cualquier otro libro."""
+    if not demo.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="not found")
+    return demo.tour_proposals(session, console_company(company_id, user, session))
+
+
+@app.get("/api/companies/{company_id}/demo/guide")
+def demo_guide_pick(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """El hallazgo que muestra la parada 5 del recorrido (`demo.guide_pick`)."""
+    if not demo.DEMO_MODE:
+        raise HTTPException(status_code=404, detail="not found")
+    return demo.guide_pick(session, console_company(company_id, user, session))
+
+
+@app.get("/api/companies/{company_id}/findings/judges")
+def finding_judges(company_id: int, user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Quién juzgó de verdad cada hallazgo y con qué modelo, sacado de `agentcall` (`demo.judges`): la
+    etiqueta "Judged by Nemotron 3 Nano" del detalle. Lectura de consola (como el tablero de Auditoría)."""
+    return {str(k): v for k, v in demo.judges(session, console_company(company_id, user, session)).items()}
+
+
 @app.post("/api/demo/pool/refill")
 def demo_pool_refill(user: User = Depends(current_user), session: Session = Depends(get_session)):
     """Rellena las oficinas en espera (`demo.refill_pool`). La pide el frontend SIN esperarla —al abrir la

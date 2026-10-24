@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { uploadCsv, setTransactionsAccount, type BankConnection, type UploadResult } from "../api";
 import { SyncSummary, useBanks } from "./BankConnections";
+import { LiveOnly } from "./DemoDoors";   // visita guiada del demo: vincular un banco, solo en vivo (Firm, 23-oct)
 import {
   BTN_GHOST, BTN_PRIMARY, BTN_SMALL_PRIMARY, DOT, DetailHeader, DetailSection, EmptyRow, ListCard, ListDetail, ListRow,
   PageHeader, Stat, TONE, agoText, secsSince,
@@ -88,9 +89,9 @@ export default function Upload({ onDone }: { onDone: () => void }) {
       <PageHeader
         meta={banks.conns.length > 0 ? t("page.banks.updated", { when: ago(oldest) }) : undefined}
         primary={banks.config?.enabled && (
-          <button onClick={() => void banks.openLink()} disabled={banks.busy !== null} className={BTN_PRIMARY}>
+          <LiveOnly><button onClick={() => void banks.openLink()} disabled={banks.busy !== null} className={BTN_PRIMARY}>
             {banks.busy === "new" ? t("page.banks.working") : t("bank.link")}
-          </button>
+          </button></LiveOnly>
         )}
         more={[
           ...(banks.conns.some((c) => c.status !== "disconnected")

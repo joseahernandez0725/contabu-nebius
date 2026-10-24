@@ -1259,6 +1259,30 @@ export async function redeemDemoCode(code: string): Promise<{ ok: true; code_nam
   return res.json();
 }
 
+// ── El recorrido guiado (FASE 13, Firm · 23-oct): la pantalla de inicio y las paradas ──────────────
+
+export interface DemoIntro {
+  team: { agent: "reviewer" | "drafter" | "personal" | "notes"; model: string }[];
+  book: string | null;          // Rivera HVAC de la visita (los números de abajo salen de ese libro, por SQL)
+  rows?: number; pending?: number; issues?: number; explained?: number; proposals?: number;
+}
+export async function getDemoIntro(): Promise<DemoIntro> {
+  const res = await fetch(`${API}/api/demo/intro`, { headers: await authHeaders() });
+  if (!res.ok) throw new Error("intro");
+  return res.json();
+}
+
+/** Las reglas que el ④ propuso al crear la visita (guardadas; en la visita se ven sin poder aprobarlas). */
+export const getTourProposals = () => auditFetch<FormulaProposal[]>("/demo/proposals");
+
+/** El hallazgo de la parada 5 del recorrido: el de la nota de las vacaciones si la revisión está limpia. */
+export const getGuidePick = () =>
+  auditFetch<{ finding_id: number | null; kind: "vacation" | "payroll" | "finding" }>("/demo/guide");
+
+/** Quién juzgó de verdad cada hallazgo (sacado de `agentcall`): {finding_id: {by, model}}. */
+export type FindingJudge = { by: "reviewer" | "note_checker" | "personal_judge" | "code"; model: string | null };
+export const getFindingJudges = () => auditFetch<Record<string, FindingJudge>>("/findings/judges");
+
 /** Rellena las oficinas en espera. Se llama SIN esperarla: el trabajo corre dentro de esta petición (en Cloud
  *  Run lo que sigue después de responder no avanza) mientras el usuario escribe su código o mira su oficina. */
 export function refillDemoPool(): void {

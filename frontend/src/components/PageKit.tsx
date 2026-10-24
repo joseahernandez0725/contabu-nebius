@@ -118,9 +118,12 @@ export function ListDetail({ list, detail, selKey, wide = "list" }: {
     : wide === "split" ? "lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]"
     : "lg:grid-cols-[minmax(0,1fr)_420px]";
   return (
-    <div className={`grid gap-3 ${cols} items-start`}>
+    // `grid-cols-1`: en el celular la única columna es `minmax(0, 1fr)`; sin eso, el contenido ancho de un detalle
+    // (las filas de la prueba contra la historia) ensanchaba la página entera (23-oct, visto en 375 px).
+    <div className={`grid grid-cols-1 gap-3 ${cols} items-start`}>
       {list}
-      <DetailCard ref={ref} sticky={wide !== "detail"}>{detail}</DetailCard>
+      {/* `tour`: lo ilumina el recorrido guiado del demo (DemoGuide.tsx). */}
+      <DetailCard ref={ref} sticky={wide !== "detail"} tour="detail">{detail}</DetailCard>
     </div>
   );
 }
@@ -145,7 +148,7 @@ export function Tabs<K extends string>({ items, active, onChange }: {
   return (
     <div className="flex border-b border-slate-200 text-sm">
       {items.map((it) => (
-        <button key={it.key} onClick={() => onChange(it.key)}
+        <button key={it.key} onClick={() => onChange(it.key)} data-tour={`tab-${it.key}`}
                 className={`flex-1 px-3 py-2 font-medium ${active === it.key ? "text-emerald-800 border-b-2 border-emerald-700 -mb-px" : "text-slate-500 hover:text-slate-800"}`}>
           {it.label} {it.count != null && <span className="text-xs text-slate-400">{it.count}</span>}
         </button>
@@ -155,12 +158,13 @@ export function Tabs<K extends string>({ items, active, onChange }: {
 }
 
 /** Un renglón de la lista: puntito de estado · título · subtítulo · lo de la derecha. */
-export function ListRow({ active, onClick, dot, title, sub, right }: {
+export function ListRow({ active, onClick, dot, title, sub, right, tour }: {
   active: boolean; onClick: () => void; dot: string; title: ReactNode; sub?: ReactNode; right?: ReactNode;
+  tour?: string;   // marca para el recorrido guiado del demo (`data-tour`)
 }) {
   return (
     <li>
-      <button onClick={onClick}
+      <button onClick={onClick} data-tour={tour}
               className={`w-full text-start px-3 py-2 flex items-center gap-2.5 ${active ? "bg-emerald-50" : "hover:bg-slate-50"}`}>
         <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
         <span className="min-w-0 flex-1">
@@ -186,10 +190,10 @@ export function Badge({ cls, children, title }: { cls: string; children: ReactNo
 /** La tarjeta del detalle. `sticky`: se queda a la vista al bajar (lista + detalle). `onClose`: el
  *  mismo detalle como PANEL LATERAL (la transacción en Bookkeeping), con su botón ×. */
 export const DetailCard = forwardRef<HTMLDivElement, {
-  children: ReactNode; sticky?: boolean; onClose?: () => void; closeLabel?: string; className?: string;
-}>(function DetailCard({ children, sticky, onClose, closeLabel, className = "" }, ref) {
+  children: ReactNode; sticky?: boolean; onClose?: () => void; closeLabel?: string; className?: string; tour?: string;
+}>(function DetailCard({ children, sticky, onClose, closeLabel, className = "", tour }, ref) {
   return (
-    <div ref={ref}
+    <div ref={ref} data-tour={tour}
          className={`relative bg-white rounded-xl border border-slate-200 p-3 min-h-[8rem] ${sticky ? "lg:sticky lg:top-16 scroll-mt-16" : ""} ${className}`}>
       {onClose && (
         <button onClick={onClose} aria-label={closeLabel} title={closeLabel}

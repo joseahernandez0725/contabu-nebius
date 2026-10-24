@@ -447,6 +447,17 @@ class DemoAccess(SQLModel, table=True):
     granted_at: datetime = Field(default_factory=_utcnow)
 
 
+class DemoTourProposal(SQLModel, table=True):
+    """Una regla que el ④ propuso al crear la VISITA GUIADA (23-oct). Las propuestas del ④ no se guardan en
+    ningún otro lado (se aprueban en pantalla); la visita las muestra en solo lectura, sin poder aprobarlas.
+    `data` = `agents.proposal_dict(...)` tal cual (con su prueba contra la historia)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    company_id: int = Field(foreign_key="company.id", index=True)
+    position: int = Field(default=0)
+    data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 class DemoCodeAttempt(SQLModel, table=True):
     """Un intento FALLIDO de código, para el límite por usuario y por IP. Ni el código ni la IP en claro
     (`ip_hash`). `user_id` sin clave foránea: es historia corta, la limpieza borra las de más de un día."""

@@ -1357,7 +1357,7 @@
     "close": "Cerrar menú",
     "settings": "Ajustes del libro",
     "tour": {
-      "title": "Recorrido del demo",
+      "title": "Cosas para probar",
       "progress": "{{done}} de {{total}}",
       "minimize": "Minimizar",
       "reset": "Empezar de nuevo",
@@ -1644,5 +1644,92 @@
       }
     },
     "tourMissing": "La visita guiada todavía no está lista. Vuelve en un rato."
+  },
+  "demoGuide": {
+    "open": "Guía",
+    "progress": "{{n}} de {{total}}",
+    "skip": "Saltar",
+    "next": "Siguiente",
+    "done": "Listo",
+    "agent": {
+      "reviewer": "Revisa cada hallazgo",
+      "drafter": "Redacta reglas",
+      "personal": "Detecta gastos personales",
+      "notes": "Lee tus notas"
+    },
+    "intro": {
+      "powered": "Con NVIDIA Nemotron en Nebius Token Factory",
+      "title": "La IA de las grandes firmas, para el bookkeeper pequeño",
+      "lead_one": "Un agente de IA revisa los libros de tus clientes y te explica lo que se ve mal. Nunca toca un número.",
+      "lead_other": "Un equipo de {{count}} agentes de IA revisa los libros de tus clientes y te explica lo que se ve mal. Nunca tocan un número.",
+      "before": "Antes",
+      "rows_one": "{{n}} fila del extracto del banco",
+      "rows_other": "{{n}} filas del extracto del banco",
+      "noCategory": "Sin categorías, sin P&L",
+      "issues_one": "{{n}} error que nadie ha visto",
+      "issues_other": "{{n}} errores que nadie ha visto",
+      "after": "Después",
+      "pnl_one": "El P&L listo, con {{n}} fila Pendiente declarada, nunca escondida",
+      "pnl_other": "El P&L listo, con {{n}} filas Pendientes declaradas, nunca escondidas",
+      "explained_one": "{{n}} hallazgo explicado por los agentes",
+      "explained_other": "{{n}} hallazgos explicados por los agentes",
+      "proposals_one": "{{n}} regla propuesta, probada contra la historia",
+      "proposals_other": "{{n}} reglas propuestas, cada una probada contra la historia",
+      "source": "Contado por la base de datos en el libro de ejemplo {{book}}.",
+      "blind": "{{min}}–{{max}} de {{of}} errores escondidos, encontrados en un examen a ciegas (solo con reglas: {{rules}})",
+      "note": "Una nota del bookkeeper, en los libros de un cliente real",
+      "noteSource": "Una cuenta de cliente autorizada · acierto de las reglas que redactó la IA",
+      "start": "Empezar la visita de 60 segundos"
+    },
+    "s1": {
+      "t": "Eres el bookkeeper",
+      "b": "Llevas los libros de tres clientes. Un equipo de agentes de IA sobre NVIDIA Nemotron los revisa por ti, y nunca toca un número."
+    },
+    "s2": {
+      "t": "Tres clientes, una sola consola",
+      "b": "Aquí cambias entre los libros de tus clientes. Estás en Rivera HVAC, un contratista de calefacción y aire."
+    },
+    "s3": {
+      "t": "El P&L, antes de lo Pendiente",
+      "b": "Los totales los suma la base de datos, no la IA. Lo que todavía no tiene categoría se declara debajo del resultado, nunca se esconde."
+    },
+    "s4": {
+      "tour": "Los agentes ya revisaron este libro. Cada paso dice qué modelo de Nemotron hizo el trabajo y qué encontró.",
+      "live": "Toca “Revisar el libro” y espera a que terminen los tres pasos (cerca de un minuto). Cada paso dice qué modelo de Nemotron hizo el trabajo.",
+      "measured": "Elegidos midiendo: los modelos más grandes encontraron menos errores.",
+      "t": "El equipo de agentes"
+    },
+    "s5": {
+      "t": "Un hallazgo, con su evidencia",
+      "vacation": "Tu nota (el dueño estuvo de vacaciones en Europa) se volvió un chequeo: el café comprado allá esa semana es personal, no una comida de negocio. La evidencia de la web está enlazada.",
+      "payroll": "Conocimiento contable, no solo texto: el banco solo ve el pago neto, así que en los libros faltan los impuestos y la nómina bruta.",
+      "finding": "Cada hallazgo trae el veredicto del agente y su evidencia. Tú decides qué hacer.",
+      "judged": "La etiqueta dice qué modelo lo juzgó de verdad, sacado del registro de llamadas de los agentes."
+    },
+    "s6": {
+      "t": "Una regla, probada antes de cambiar nada",
+      "b": "La IA no categoriza: propone una regla. Antes de aprobarla ves cada fila que cambiaría.",
+      "tourOnly": "En la visita guiada puedes mirar, no aprobar.",
+      "none": {
+        "tour": "Aquí aparecen las reglas que propusieron los agentes.",
+        "live": "Aquí aparecen las reglas que proponen los agentes después de “Revisar el libro”."
+      }
+    },
+    "s7": {
+      "tour": {
+        "t": "¿Quieres correr los agentes tú mismo?",
+        "b": "Entra con Google y escribe el código de acceso: te damos tu propia copia de los tres libros, y corres tú los agentes."
+      },
+      "live": {
+        "t": "Esta oficina es tuya",
+        "b": "Corrige una fila a mano en Movimientos (lo que escribes siempre manda sobre las reglas), o vincula un banco: es el sandbox de Plaid, con datos de prueba."
+      }
+    },
+    "judged": {
+      "reviewer": "Juzgado por {{model}}",
+      "note_checker": "Revisado por {{model}} (desde tu nota)",
+      "personal_judge": "Juzgado por {{model}}",
+      "code": "Lo encontró el código, sin IA"
+    }
   }
 }

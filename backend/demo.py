@@ -39,6 +39,7 @@ import hashlib
 import hmac
 import logging
 import os
+import re
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -47,8 +48,8 @@ from typing import Iterator, Optional
 from sqlalchemy import text
 from sqlmodel import Session, func, select
 
-from models import (AgentCall, Company, DemoAccess, DemoCodeAttempt, DemoOffice, Firm, FirmMember, FirmRole,
-                    Role, User)
+from models import (AgentCall, BookNote, Company, DemoAccess, DemoCodeAttempt, DemoOffice, DemoTourProposal,
+                    Finding, Firm, FirmMember, FirmRole, Role, Transaction, User)
 
 log = logging.getLogger("contabu.demo")
 
@@ -432,10 +433,10 @@ def check_global_cap(session: Session, agent: Optional[str] = None) -> None:
 # ── La visita guiada: se crea y se revisa UNA vez (el script de abajo) ───────────────────────────
 
 def build_tour(session: Session, *, review: bool = True, lang: str = "en") -> Firm:
-    """Crea la oficina de la visita con los 3 libros y, con `review`, corre la revisión de los agentes que
-    corre "Revisar el libro" (auditar → verificar en la web → el ① vuelve a juzgar) y la deja GUARDADA. No
-    redacta reglas: las propuestas del ④ no se guardan, se aprueban en pantalla. Gasta Nebius y Tavily una
-    sola vez. Si la visita ya existe, se niega (para rehacerla, se borra a mano primero)."""
+    """Crea la oficina de la visita con los 3 libros y, con `review`, corre lo mismo que "Revisar el libro"
+    (auditar → verificar en la web → el ① vuelve a juzgar → el ④ redacta reglas) y lo deja GUARDADO; las reglas
+    propuestas, en `DemoTourProposal` (🔄 23-oct: en el resto de la app viven solo en pantalla). Gasta Nebius y
+    Tavily una sola vez. Si la visita ya existe, se niega (para rehacerla, se borra a mano primero)."""
     if tour_firm_id(session) is not None:
         raise RuntimeError(f"la visita guiada ya existe (oficina {tour_firm_id(session)})")
     owner = _system_user(session, TOUR_UID)
@@ -444,6 +445,7 @@ def build_tour(session: Session, *, review: bool = True, lang: str = "en") -> Fi
     _cache(session).pop("tour", None)
     if review:
         review_tour(session, firm, owner, lang=lang)
+        draft_tour(session, firm, owner, lang=lang)
     return firm
 
 
@@ -464,6 +466,135 @@ def review_tour(session: Session, firm: Firm, owner: User, *, lang: str = "en") 
                       + (f" → ① otra vez: {again.reviewed}" if again else ""))
             except merchant_verifier.TavilyUnavailable:
                 print(f"  {company.name}: ② sin Tavily (TAVILY_API_KEY): queda sin evidencia de la web")
+
+
+def draft_tour(session: Session, firm: Firm, owner: User, *, lang: str = "en") -> None:
+    """El ④ redacta reglas para cada libro de la visita y se GUARDAN (`DemoTourProposal`): en cualquier otro
+    lado las propuestas viven solo en pantalla hasta aprobarlas; la visita es de solo lectura y su recorrido las
+    muestra. Reemplaza las que hubiera. En inglés (lo leen los jueces): el ④ escribe en un solo idioma."""
+    import agent_calls
+    import agents
+    books = session.exec(select(Company).where(Company.firm_id == firm.id).order_by(Company.id)).all()
+    for company in books:
+        with agent_calls.exclusive(company):
+            res = agents.draft(session, company, lang=lang, user_id=owner.id)
+        for old in session.exec(select(DemoTourProposal).where(DemoTourProposal.company_id == company.id)).all():
+            session.delete(old)
+        for i, p in enumerate(res.proposals):
+            session.add(DemoTourProposal(company_id=company.id, position=i, data=agents.proposal_dict(p)))
+        session.commit()
+        print(f"  {company.name}: ④ → {res.outcome}, {len(res.proposals)} reglas propuestas guardadas")
+
+
+def tour_proposals(session: Session, company: Company) -> list[dict]:
+    rows = session.exec(select(DemoTourProposal).where(DemoTourProposal.company_id == company.id)
+                        .order_by(DemoTourProposal.position)).all()
+    return [r.data for r in rows]
+
+
+# ── El recorrido guiado (23-oct): la pantalla de inicio, quién juzgó cada hallazgo y la parada 5 ──
+
+def _model_label(model: Optional[str]) -> Optional[str]:
+    import agent_models
+    if not model:
+        return None
+    return agent_models.LABELS.get(agent_models.short(model), model)
+
+
+def intro(session: Session) -> dict:
+    """La pantalla de inicio del recorrido: los agentes con su modelo (`agent_models`, lo que corre hoy) y el
+    antes/después de RIVERA HVAC de la visita, todo contado por SQL (nada escrito a mano)."""
+    import agent_models
+    import book_review
+    team = [{"agent": a, "model": agent_models.LABELS.get(agent_models.short(agent_models.get(a)[0]),
+                                                           agent_models.get(a)[0])}
+            for a in agent_models.DEFAULTS]
+    tid = tour_firm_id(session)
+    book = session.exec(select(Company).where(Company.firm_id == tid).order_by(Company.id)).first() if tid else None
+    if book is None:
+        return {"team": team, "book": None}
+    count = lambda q: int(session.exec(q).one())   # noqa: E731
+    findings = select(func.count(Finding.id)).where(Finding.company_id == book.id)
+    return {
+        "team": team,
+        "book": book.name,
+        "rows": count(select(func.count(Transaction.id)).where(Transaction.company_id == book.id)),
+        "pending": count(select(func.count(Transaction.id)).where(Transaction.company_id == book.id,
+                                                                  Transaction.account_type.is_(None))),
+        "issues": count(findings.where(Finding.type.not_in(book_review.INFO_TYPES))),
+        "explained": count(findings.where(Finding.agent_verdict.is_not(None))),
+        "proposals": count(select(func.count(DemoTourProposal.id)).where(DemoTourProposal.company_id == book.id)),
+    }
+
+
+def judges(session: Session, company: Company) -> dict[int, dict]:
+    """Quién juzgó DE VERDAD cada hallazgo, sacado de `agentcall`: {finding_id: {"by", "model"}}.
+    - con veredicto del ① → la llamada del ① que lo dejó (`agent_reviewed_at` se fija justo antes de guardarla);
+    - `note_check` → el ⑥ traductor de notas (no lo juzga el ①); `personal_use` → el ⑤;
+    - lo demás (nómina, cobertura…) → "code": lo encontró el auditor, sin IA."""
+    import book_review
+    calls = session.exec(select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.outcome == "ok")
+                         .order_by(AgentCall.created_at)).all()
+    reviewer = [c for c in calls if c.agent == "reviewer"]
+    last = {c.agent: c for c in calls}   # la última de cada agente
+    out: dict[int, dict] = {}
+    for f in session.exec(select(Finding).where(Finding.company_id == company.id)).all():
+        c = _reviewer_call(reviewer, f.agent_reviewed_at) if f.agent_reviewed_at is not None else None
+        if c is not None:
+            out[f.id] = {"by": "reviewer", "model": _model_label(c.model)}
+            continue
+        if f.type == "note_check" and "note_checker" in last:
+            out[f.id] = {"by": "note_checker", "model": _model_label(last["note_checker"].model)}
+        elif f.type == "personal_use" and "personal_judge" in last:
+            out[f.id] = {"by": "personal_judge", "model": _model_label(last["personal_judge"].model)}
+        elif f.type in book_review.UNJUDGED_TYPES or f.agent_reviewed_at is None:
+            out[f.id] = {"by": "code", "model": None}
+    return out
+
+
+def _reviewer_call(reviewer: list[AgentCall], at: datetime) -> Optional[AgentCall]:
+    """La llamada del ① que juzgó un hallazgo juzgado en `at`. El ① fija `agent_reviewed_at` (UTC sin zona) y
+    guarda su `agentcall` milisegundos después — pero `agentcall.created_at` se guarda CON zona y Postgres lo
+    pasa a su hora local (✅ 23-oct, base local: 7 h justas detrás; `DEUDA TECNICA.md` #26). Así que se empareja
+    por lo que queda dentro de la hora (≤ 60 s), con hasta 14 h de corrimiento: vale en Neon (UTC) y en local."""
+    best, gap = None, timedelta(seconds=60)
+    for c in reviewer:
+        d = (at - c.created_at).total_seconds()
+        hours = round(d / 3600)
+        residual = timedelta(seconds=abs(d - hours * 3600))
+        if abs(hours) <= 14 and residual <= gap:
+            best, gap = c, residual
+    return best
+
+
+_VACATION = re.compile(r"vacation|vacacion|europe|europa|\btrip\b|viaje", re.I)
+
+
+def guide_pick(session: Session, company: Company) -> dict:
+    """El hallazgo de la parada 5. El de la nota de las vacaciones SOLO si la revisión guardada está limpia: que
+    el ① no ate Netflix a las vacaciones (#4 del plan del 22-oct) y que Starbucks no salga partido por ciudades
+    (#5). Si no, "Nómina: el banco solo ve lo neto"; si tampoco, el primero con veredicto."""
+    fs = session.exec(select(Finding).where(Finding.company_id == company.id, Finding.status == "open")
+                      .order_by(Finding.id)).all()
+    notes = {n.id: n.text or "" for n in session.exec(select(BookNote).where(BookNote.company_id == company.id)).all()}
+
+    def note_text(f: Finding) -> str:
+        parts = (f.key or "").split(":")
+        return notes.get(int(parts[1]), "") if len(parts) > 1 and parts[1].isdigit() else ""
+
+    netflix_tied = any("NETFLIX" in (f.merchant or "").upper()
+                       and _VACATION.search(f"{f.agent_observation_en or ''} {f.agent_observation_es or ''}")
+                       for f in fs)
+    starbucks = {(f.merchant or "").upper() for f in fs if (f.merchant or "").upper().startswith("STARBUCKS")}
+    vacation = [f for f in fs if f.type == "note_check" and _VACATION.search(note_text(f))]
+    if vacation and not netflix_tied and len(starbucks) <= 1:
+        return {"finding_id": vacation[0].id, "kind": "vacation"}
+    payroll = next((f for f in fs if f.type == "payroll_net_only"), None)
+    if payroll:
+        return {"finding_id": payroll.id, "kind": "payroll",
+                "why": "netflix" if netflix_tied else "starbucks" if len(starbucks) > 1 else "no_note"}
+    first = next((f for f in fs if f.agent_verdict), fs[0] if fs else None)
+    return {"finding_id": first.id if first else None, "kind": "finding"}
 
 
 # ── Limpieza de las oficinas vencidas ───────────────────────────────────────────────────────────
@@ -647,7 +778,8 @@ def status(session: Session) -> dict:
 
 
 _USAGE = """uso (siempre con DEMO_MODE=true y el DATABASE_URL de la base del DEMO):
-  .venv/bin/python demo.py tour [--no-review]   crea la visita guiada y guarda la revisión de los agentes (UNA vez)
+  .venv/bin/python demo.py tour [--no-review]   crea la visita guiada y guarda la revisión y las reglas propuestas (UNA vez)
+  .venv/bin/python demo.py tour-proposals       solo el ④ sobre la visita que ya existe (guarda sus reglas propuestas)
   .venv/bin/python demo.py pool                 rellena las oficinas en espera hasta DEMO_POOL_SIZE
   .venv/bin/python demo.py status               qué hay: la visita, la piscina, los códigos canjeados
   .venv/bin/python demo.py cleanup              borra lo vencido"""
@@ -655,7 +787,7 @@ _USAGE = """uso (siempre con DEMO_MODE=true y el DATABASE_URL de la base del DEM
 
 if __name__ == "__main__":
     cmd, args = (sys.argv[1] if len(sys.argv) > 1 else ""), sys.argv[2:]
-    if cmd not in {"tour", "pool", "status", "cleanup"} or (args and args != ["--no-review"]):
+    if cmd not in {"tour", "tour-proposals", "pool", "status", "cleanup"} or (args and args != ["--no-review"]):
         sys.exit(_USAGE)
     if not DEMO_MODE:
         sys.exit("Se niega: DEMO_MODE no está encendido (esto es solo para la base del demo).")
@@ -667,6 +799,13 @@ if __name__ == "__main__":
             os.environ.setdefault("AGENT_DAILY_CALLS", "200")
             f = build_tour(s, review="--no-review" not in args)
             print(f"visita guiada lista: oficina {f.id}")
+        elif cmd == "tour-proposals":
+            # Solo el ④ sobre una visita que ya existe (la creada antes del 23-oct no guardaba sus propuestas).
+            os.environ.setdefault("AGENT_DAILY_CALLS", "200")
+            tid = tour_firm_id(s)
+            if tid is None:
+                sys.exit("No hay visita guiada todavía: primero `demo.py tour`.")
+            draft_tour(s, s.get(Firm, tid), _system_user(s, TOUR_UID))
         elif cmd == "pool":
             print(refill_pool(s))
         elif cmd == "status":

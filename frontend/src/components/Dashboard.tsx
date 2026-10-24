@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { getAuditSummary, getBankConnections, getCompany, getIncomeStatement, getTransactions, money, type AuditBoard, type BankConnection } from "../api";
-import { DEMO_MODE, openDemoTour } from "../demo";
+import { DEMO_MODE, openDemoGuide } from "../demo";
 import type { IncomeStatement as IS, Transaction } from "../types";
 import IncomeStatement from "./IncomeStatement";
 import NotesCard from "./NotesCard";
@@ -54,7 +54,7 @@ function DemoIntro({ onNavigate, book }: { onNavigate: (v: View) => void; book: 
           </p>
         </div>
         <div className="ms-auto flex items-center gap-1.5 shrink-0">
-          <button onClick={openDemoTour} className={BTN_SECONDARY}>{t("page.summary.demo.tour")}</button>
+          <button onClick={openDemoGuide} className={BTN_SECONDARY}>{t("demoGuide.open")}</button>
           <button onClick={hide} aria-label={t("page.summary.demo.hide")} title={t("page.summary.demo.hide")}
                   className="p-1 rounded text-slate-400 hover:text-slate-700">✕</button>
         </div>
@@ -230,11 +230,11 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
       )}
 
       {/* El P&L al 60 %, la columna de atención al 40 % (19-oct, Jose). */}
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] items-start">
         {/* 3. EL P&L DEL AÑO EN CURSO — lo que al final recibe el cliente, en su modo COMPACTO (Entregables,
             18-oct): secciones plegadas a su total y lo Pendiente siempre a la vista. `id`: el punto 1 de
             "Qué mirar" del demo hace scroll hasta aquí en vez de navegar (20-oct). */}
-        <div id="demo-pnl" className="relative bg-white rounded-xl border border-slate-200 p-5">
+        <div id="demo-pnl" data-tour="pnl" className="relative bg-white rounded-xl border border-slate-200 p-5">
           <button onClick={() => onNavigate("pnl")} className="absolute top-5 end-5 text-xs text-emerald-800 font-medium hover:underline">
             {t("dashboard.seePnl", { defaultValue: "See full P&L →" })}
           </button>

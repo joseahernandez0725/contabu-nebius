@@ -13,8 +13,9 @@ import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Login from "./components/Login";
 import Sidebar, { viewLabel, type View } from "./components/Sidebar";
 import DemoTour from "./components/DemoTour";
-import { DEMO_MODE, ENTER_CODE_EVENT, setTouring, type DemoDoor } from "./demo";
+import { DEMO_MODE, ENTER_CODE_EVENT, openDemoGuide, setTouring, type DemoDoor } from "./demo";
 import { AccessCodeScreen, TourBanner, TourMissing } from "./components/DemoDoors";
+import DemoGuide from "./components/DemoGuide";
 import { auth } from "./firebase";
 import { getCompanies, getCompany, setActiveCompany, createCompany, getAuditSummary, confirmCheckout, demoDoor } from "./api";
 import type { AuditBoard } from "./api";
@@ -54,6 +55,12 @@ function App() {
   const [door, setDoor] = useState<DemoDoor | null>(null);
   const [browsingTour, setBrowsingTour] = useState(false);
   const [session, setSession] = useState(0);
+  // El recorrido guiado (23-oct): en su parada 2 abre la barra lateral (escritorio) o el cajón (celular).
+  const [guideSidebar, setGuideSidebar] = useState(false);
+  const onGuideSidebar = useCallback((open: boolean) => {
+    if (window.innerWidth < 768) setMenuOpen(open);
+    else setGuideSidebar(open);
+  }, []);
   useEffect(() => {
     const enterCode = () => setBrowsingTour(false);
     window.addEventListener(ENTER_CODE_EVENT, enterCode);
@@ -192,6 +199,7 @@ function App() {
         auditCount={auditCount}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
+        forceExpand={guideSidebar}
       />
 
       <div className="flex-1 min-w-0 flex flex-col">
@@ -208,8 +216,15 @@ function App() {
             </svg>
           </button>
           <h1 className="font-semibold text-slate-900 truncate">{viewLabel(t, view)}</h1>
-          {company && <span className="text-sm text-slate-400 truncate">· {company.name}</span>}
-          {touring && <TourBanner />}
+          {company && <span className={`text-sm text-slate-400 truncate ${DEMO_MODE ? "hidden sm:inline" : ""}`}>· {company.name}</span>}
+          {DEMO_MODE && company && (
+            <div className="ms-auto min-w-0 flex items-center gap-2">
+              <button onClick={openDemoGuide} className="shrink-0 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+                {t("demoGuide.open")}
+              </button>
+              {touring && <TourBanner />}
+            </div>
+          )}
         </header>
 
         <main className="flex-1 w-full px-3 sm:px-4 py-3">
@@ -267,8 +282,12 @@ function App() {
         </main>
       </div>
 
-      {/* El recorrido guiado: SOLO en el despliegue de demo (docs/DEMO Y ENTREGA.md, FASE 13). */}
-      {DEMO_MODE && <DemoTour />}
+      {/* El recorrido guiado (23-oct): pantalla de inicio + 7 paradas, en las dos puertas (`key`: uno por puerta).
+          La lista de antes (`DemoTour`) queda solo en el demo en vivo, como "Cosas para probar". */}
+      {DEMO_MODE && company && (
+        <DemoGuide key={touring ? "tour" : "live"} door={touring ? "tour" : "live"} onNavigate={setView} onSidebar={onGuideSidebar} />
+      )}
+      {DEMO_MODE && !touring && <DemoTour />}
     </div>
   );
 }

@@ -1228,7 +1228,7 @@
     "close": "Close menu",
     "settings": "Book settings",
     "tour": {
-      "title": "Demo tour",
+      "title": "Things to try",
       "progress": "{{done}} of {{total}}",
       "minimize": "Minimize",
       "reset": "Start over",
@@ -1515,5 +1515,92 @@
       }
     },
     "tourMissing": "The guided tour isn't ready yet. Please come back in a little while."
+  },
+  "demoGuide": {
+    "open": "Guide",
+    "progress": "{{n}} of {{total}}",
+    "skip": "Skip",
+    "next": "Next",
+    "done": "Done",
+    "agent": {
+      "reviewer": "Reviews each finding",
+      "drafter": "Drafts rules",
+      "personal": "Spots personal spending",
+      "notes": "Reads your notes"
+    },
+    "intro": {
+      "powered": "Powered by NVIDIA Nemotron on Nebius Token Factory",
+      "title": "Big-firm AI, for the small bookkeeper",
+      "lead_one": "An AI agent reviews your clients' books and explains what looks wrong. It never touches a number.",
+      "lead_other": "A team of {{count}} AI agents reviews your clients' books and explains what looks wrong. They never touch a number.",
+      "before": "Before",
+      "rows_one": "{{n}} row from the bank statement",
+      "rows_other": "{{n}} rows from the bank statement",
+      "noCategory": "No categories, no P&L",
+      "issues_one": "{{n}} error nobody has seen",
+      "issues_other": "{{n}} errors nobody has seen",
+      "after": "After",
+      "pnl_one": "The P&L, ready, with {{n}} Pending row declared, never hidden",
+      "pnl_other": "The P&L, ready, with {{n}} Pending rows declared, never hidden",
+      "explained_one": "{{n}} finding explained by the agents",
+      "explained_other": "{{n}} findings explained by the agents",
+      "proposals_one": "{{n}} rule proposed, tested against the history",
+      "proposals_other": "{{n}} rules proposed, each tested against the history",
+      "source": "Counted by the database on the sample book {{book}}.",
+      "blind": "{{min}}–{{max}} of {{of}} hidden errors found in a blind exam (rules alone: {{rules}})",
+      "note": "One note from the bookkeeper, on a real client's books",
+      "noteSource": "An authorized client account · accuracy of the rules the AI drafted",
+      "start": "Start the 60-second tour"
+    },
+    "s1": {
+      "t": "You're the bookkeeper",
+      "b": "You keep the books for three clients. A team of AI agents on NVIDIA Nemotron reviews them for you, and never touches a number."
+    },
+    "s2": {
+      "t": "Three clients, one console",
+      "b": "Switch between your clients' books here. You're in Rivera HVAC, a heating and cooling contractor."
+    },
+    "s3": {
+      "t": "The P&L, before Pending",
+      "b": "The database adds up the totals, not the AI. Whatever has no category yet is declared below the result, never hidden."
+    },
+    "s4": {
+      "tour": "The agents already reviewed this book. Each step shows which Nemotron model did the work and what it found.",
+      "live": "Tap “Review the book” and wait for the three steps to finish (about a minute). Each step shows which Nemotron model did the work.",
+      "measured": "Chosen by measuring: the bigger models found fewer errors.",
+      "t": "The agent team"
+    },
+    "s5": {
+      "t": "A finding, with its evidence",
+      "vacation": "Your note (the owner was on vacation in Europe) became a check: the coffee bought there that week is personal, not a business meal. The web evidence is linked.",
+      "payroll": "Accounting knowledge, not just text: the bank only sees the net pay, so the taxes and the gross payroll are missing from the books.",
+      "finding": "Each finding comes with the agent's verdict and its evidence. You decide what to do.",
+      "judged": "The label says which model really judged it, taken from the log of the agents' calls."
+    },
+    "s6": {
+      "t": "A rule, tested before it changes anything",
+      "b": "The AI doesn't categorize: it proposes a rule. Before you approve it, you see every row it would change.",
+      "tourOnly": "In the guided tour you can look, not approve.",
+      "none": {
+        "tour": "The rules the agents proposed show up here.",
+        "live": "The rules the agents propose show up here after “Review the book”."
+      }
+    },
+    "s7": {
+      "tour": {
+        "t": "Want to run the agents yourself?",
+        "b": "Sign in with Google and enter the access code: you get your own copy of the three books, and you run the agents."
+      },
+      "live": {
+        "t": "This office is yours",
+        "b": "Fix a row by hand in Transactions (what you type always wins over the rules), or link a bank: it's Plaid's sandbox, with test data."
+      }
+    },
+    "judged": {
+      "reviewer": "Judged by {{model}}",
+      "note_checker": "Checked by {{model}} (from your note)",
+      "personal_judge": "Judged by {{model}}",
+      "code": "Found by code, no AI"
+    }
   }
 }

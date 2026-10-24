@@ -494,7 +494,8 @@ def check_demo_doors(client: TestClient) -> list[str]:
         # Un POST que solo LEE (qué cazaría una regla; ni escribe ni llama a la IA): un VIEWER puede.
         viewer_ok = refill_ok | {("POST", "/api/companies/{company_id}/rules/preview")}
         # Sin código, `/api/firm` es la VISITA (no la oficina del otro): se comprueba aparte, abajo.
-        reads_ok = {("GET", "/api/me"), ("GET", "/api/hello"), ("GET", "/api/firm")} | refill_ok
+        # `/api/demo/intro`: los conteos de la VISITA (pública), no de la oficina del otro.
+        reads_ok = {("GET", "/api/me"), ("GET", "/api/hello"), ("GET", "/api/firm"), ("GET", "/api/demo/intro")} | refill_ok
 
         # 1) La visita guiada: el anónimo la ve como VIEWER y no nace nada suyo.
         r = client.get("/api/me", headers=H("anon"))
