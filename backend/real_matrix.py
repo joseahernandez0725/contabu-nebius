@@ -52,8 +52,22 @@ COMPANY_ID = 1
 SINCE = datetime(2026, 10, 20, 20, 50)          # la prueba de Jose: reloj de la base
 MODELS = ("nano", "lightning", "super", "ultra", "vl")
 CONFIGS = [(m, r) for m in MODELS for r in (False, True)]
-USD_CAP = 4.00                                   # tope de TODO el experimento (Nebius)
-SEAT = {"drafter": "drafter", "drafter_note": "drafter", "drafter_note_fix": "drafter", "personal": "personal", "exam_reviewer": "reviewer",
+USD_CAP = 4.00                                   # tope de cada tanda (Nebius); ver `_spent`
+# Los exámenes ciegos sembrados (23-oct): base, clave, prefijo del `kind`, cuántos comercios NUEVOS busca el ② por
+# revisión y un archivo de evidencia propio (lo de un examen no se mezcla con la evidencia del libro real).
+EXAMS = {
+    "1": {"db": "contabu_real_examen", "key": "real_exam", "prefix": "exam", "web_limit": 50, "evidence": None},
+    "1_2026": {"db": "contabu_real_examen1_2026", "key": "real_exam", "prefix": "exam1_2026", "web_limit": 50,
+               "evidence": None},
+    # El examen 2 trae filas INSERTADAS (comercios que el ② no conoce): en vivo la primera vez, con tope de 10 comercios
+    # nuevos (≤ 30 créditos: 1 básica + 2 avanzada cada uno), y su evidencia en un archivo aparte.
+    "2": {"db": "contabu_real_examen2", "key": "real_exam2", "prefix": "exam2", "web_limit": 10,
+          "evidence": "web_evidencia_examen2.json"},
+}
+TAVILY_CAP = 30
+SEAT = {"drafter": "drafter", "drafter_note": "drafter", "drafter_note_fix": "drafter",
+        **{f"{e['prefix']}{x}_{k}": seat for e in EXAMS.values() for x in ("", "_nonote")
+           for k, seat in (("reviewer", "reviewer"), ("personal", "personal"))}, "personal": "personal", "exam_reviewer": "reviewer",
         "exam_personal": "personal"}
 KEY_SIZE = (386, 118)    # la clave del ④ tras volver al "antes" (total, 2026): si cambia, el libro ya no es el de la medición
 
@@ -70,8 +84,11 @@ def _read() -> list[dict]:
     return [json.loads(x) for x in open(OUT, encoding="utf-8")] if OUT.exists() else []
 
 
+SPENT_SINCE = "2026-10-22T20:38"   # cada tanda tiene su tope: el inicio de la tanda (reloj del sistema, `ts`)
+
+
 def _spent() -> float:
-    return sum(r.get("cost_usd") or 0.0 for r in _read())
+    return sum(r.get("cost_usd") or 0.0 for r in _read() if r.get("ts", "") >= SPENT_SINCE)
 
 
 def _db(session: Session) -> str:
@@ -296,11 +313,16 @@ def personal(n: int) -> int:
 
 # ── el examen ciego en la COPIA ─────────────────────────────────────────────────────────────────
 
-def _exam_truth(session: Session, company) -> list[dict]:
+def _key_path(exam: str) -> Path:
+    return HERE / "private" / EXAMS[exam]["key"] / "key.json"
+
+
+def _exam_truth(session: Session, company, exam: str = "1") -> list[dict]:
     """La clave → la forma que puntúa `measure.measure_review` (filas por descripción, fecha, monto y dirección),
-    con cada fila tomada de la COPIA por su id. No se imprime nada de la clave."""
+    con cada fila tomada de la COPIA por su id. `blind` (examen 2): los errores con `blind: false` se puntúan APARTE.
+    No se imprime nada de la clave."""
     from models import Transaction
-    raw = json.loads(KEY.read_text(encoding="utf-8"))
+    raw = json.loads(_key_path(exam).read_text(encoding="utf-8"))
     errors = raw if isinstance(raw, list) else next(v for v in raw.values() if isinstance(v, list))
     by_id = {t.id: t for t in session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()}
     out = []
@@ -310,11 +332,18 @@ def _exam_truth(session: Session, company) -> list[dict]:
             t = by_id.get(r.get("id"))
             if t is not None:
                 rows.append({"description": t.description, "date": t.date, "amount": t.amount, "is_inflow": t.is_inflow})
-        out.append({"type": e.get("type"), "rows": rows, "expected": e.get("expected")})
+        out.append({"type": e.get("type"), "rows": rows, "expected": e.get("expected"),
+                    "blind": e.get("blind", True) is not False, "id_rows": len(e.get("rows", []))})
     return out
 
 
-def exam_once(session: Session, company, *, oracle: bool) -> dict:
+def _evidence_paths(company, exam: str) -> list[Path]:
+    import field_test
+    extra = EXAMS[exam]["evidence"]
+    return [field_test._oracle_path(company)] + ([field_test.OUT_DIR / extra] if extra else [])
+
+
+def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_note: bool = False) -> dict:
     """UNA revisión completa sobre la copia, como `measure.py --audit --web oracle`: los veredictos y las opiniones
     del ⑤ de antes se borran DENTRO de la transacción, para que cada modelo juzgue desde cero."""
     import agents
@@ -322,8 +351,11 @@ def exam_once(session: Session, company, *, oracle: bool) -> dict:
     import measure
     import merchant_verifier
     import nemotron
-    from models import Finding, MerchantJudgment, Transaction
+    from models import BookNote, Finding, MerchantJudgment, Transaction
     session.commit = session.flush  # type: ignore[method-assign]
+    if drop_note:   # el equipo de hoy SIN las notas del libro (dentro de la transacción)
+        for n in session.exec(select(BookNote).where(BookNote.company_id == company.id)).all():
+            session.delete(n)
     for j in session.exec(select(MerchantJudgment).where(MerchantJudgment.company_id == company.id)).all():
         session.delete(j)
     for f in session.exec(select(Finding).where(Finding.company_id == company.id)).all():
@@ -333,8 +365,11 @@ def exam_once(session: Session, company, *, oracle: bool) -> dict:
     # que falta; con `oracle`, lo que falta sale "no encontrado" sin red (0 créditos).
     from models import MerchantLookup
     have = set(merchant_verifier.cached(session, company))
-    for r in json.load(open(field_test._oracle_path(company), encoding="utf-8")):
+    saved_rows = [r for path in _evidence_paths(company, exam) if path.exists()
+                  for r in json.load(open(path, encoding="utf-8"))]
+    for r in saved_rows:
         if r["fingerprint"] not in have:
+            have.add(r["fingerprint"])
             session.add(MerchantLookup(firm_id=company.firm_id, company_id=None if company.firm_id else company.id,
                                        fingerprint=r["fingerprint"], query=r["fingerprint"],
                                        status="ok" if r.get("results_count") else "not_found",
@@ -344,12 +379,17 @@ def exam_once(session: Session, company, *, oracle: bool) -> dict:
     session.flush()
     merchant_verifier.ORACLE = {} if oracle else None
     nemotron.SENT.clear()
-    truth = _exam_truth(session, company)
+    truth = _exam_truth(session, company, exam)
     before = set(merchant_verifier.cached(session, company))
-    web = measure.web_flow(session, company)
+    # El flujo de `measure.web_flow` (auditar → ② → ① otra vez) con el tope de búsquedas de ESTE examen.
+    agents.review(session, company, lang="en")
+    vres = merchant_verifier.verify_flagged(session, company, limit=EXAMS[exam]["web_limit"])
+    if vres.finding_ids:
+        agents.review(session, company, lang="en", finding_ids=vres.finding_ids)
+    web = {"searched": vres.searched, "credits": vres.credits}
     if not oracle:   # la corrida en vivo: su evidencia se SUMA a la guardada, para que las demás la reusen (0 créditos)
-        path = field_test._oracle_path(company)
-        saved = {r["fingerprint"]: r for r in json.load(open(path, encoding="utf-8"))}
+        path = _evidence_paths(company, exam)[-1]
+        saved = {r["fingerprint"]: r for r in json.load(open(path, encoding="utf-8"))} if path.exists() else {}
         for fp, m in merchant_verifier.cached(session, company).items():
             if fp not in before:
                 saved[fp] = {"fingerprint": m.fingerprint, "business_type": m.business_type, "confidence": m.confidence,
@@ -366,9 +406,20 @@ def exam_once(session: Session, company, *, oracle: bool) -> dict:
         AgentCall.company_id == company.id, AgentCall.agent != "verifier", AgentCall.created_at >= SINCE)).all())
     by_type = Counter(k.split("#")[0] for k in rev["found_keys"])
     planted_types = Counter(e["type"] for e in truth)
+    keys = [f"{e['type']}#{i + 1}" for i, e in enumerate(truth)]
+    blind = {k for k, e in zip(keys, truth) if e["blind"]}
+    code_keys = set(keys) - set(rev["auditor"]["missed"])
+    team_keys = set(rev["found_keys"])
+    pers_keys = set(keys) - set(rev["personal"]["missed"])
     privacy = agents.privacy_scan(list(nemotron.SENT), txs, merchant_verifier.protected_names(txs))
     a, rv, team = rev["auditor"], rev["reviewer"], rev["team"]
     return {"planted": rev["planted"], "unmatched": len(rev["unmatched"]),
+            "blind_planted": len(blind), "open_planted": len(keys) - len(blind),
+            "code_blind": len(code_keys & blind), "code_open": len(code_keys - blind),
+            "agents_blind": len(team_keys & blind), "agents_open": len(team_keys - blind),
+            "personal_blind": len(pers_keys & blind), "personal_open": len(pers_keys - blind),
+            "personal_false_alerts": rev["personal"]["alerts"] - rev["personal"]["true_alerts"],
+            "rows_in_key": sum(e["id_rows"] for e in truth), "rows_found": sum(len(e["rows"]) for e in truth),
             "code_found": a["found"], "code_alerts": a["alerts"], "code_on_planted": a["true_alerts"],
             "agents_found": team["found"], "agents_alerts": team["alerts"], "agents_on_planted": team["true_alerts"],
             "reviewer_found": rv["found"], "personal_found": rev["personal"]["found"],
@@ -381,42 +432,59 @@ def exam_once(session: Session, company, *, oracle: bool) -> dict:
             "latency_ms": lat + (pend.usage.latency_ms if pend.usage else 0), "privacy": privacy}
 
 
-def exam(n: int, live_first: bool) -> int:
+def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False) -> int:
     import agent_models
     from db import engine
     from models import Company
-    sha0 = KEY_SHA1.read_text().split()[0]
-    kinds = [("exam_reviewer", "reviewer"), ("exam_personal", "personal")]
+    cfg = EXAMS[exam_id]
+    key_path = _key_path(exam_id)
+    sha0 = (key_path.parent / "key_frozen_sha1.txt").read_text().split()[0]
+    sha = lambda: hashlib.sha1(key_path.read_bytes()).hexdigest()   # noqa: E731
+    prefix = cfg["prefix"] + ("_nonote" if drop_note else "")
+    kinds = [(f"{prefix}_reviewer", "reviewer"), (f"{prefix}_personal", "personal")]
     plan = []
     for kind, seat in kinds:
-        plan += [(kind, seat, m, r) for m, r in _cfg_runs(kind, n)]
+        runs = list(_cfg_runs(kind, n))
+        if drop_note:   # sin nota: solo el equipo de hoy
+            runs = [(m, r) for m, r in runs if (m, r) == agent_models.DEFAULTS[seat]][:n]
+            if kind.endswith("_personal"):
+                runs = []   # el equipo de hoy es UNO: con el asiento del ① basta
+        plan += [(kind, seat, m, r) for m, r in runs]
     first = True
     for kind, seat, m, r in plan:
         if _over_cap():
             break
-        if _key_sha1() != sha0:
+        if sha() != sha0:
             sys.exit("⛔ la clave cambió (sha1): me detengo")
         with Session(engine) as s:
             try:
-                _require_db(s, "contabu_real_examen")
+                _require_db(s, cfg["db"])
                 company = s.get(Company, COMPANY_ID)
                 agent_models.OVERRIDES[seat] = (m, r)
                 t0 = time.time()
                 try:
-                    out, err = exam_once(s, company, oracle=not (live_first and first)), None
+                    out, err = exam_once(s, company, oracle=not (live_first and first), exam=exam_id,
+                                         drop_note=drop_note), None
                 except Exception as e:
                     out, err = None, type(e).__name__
             finally:
                 s.rollback()
                 agent_models.OVERRIDES.pop(seat, None)
-        if _key_sha1() != sha0:
+        if sha() != sha0:
             sys.exit("⛔ la clave cambió (sha1) durante la corrida: me detengo")
+        if out and out.get("credits_if_live", 0) > TAVILY_CAP and live_first and first:
+            print(f"⚠️ Tavily: {out['credits_if_live']} créditos (> {TAVILY_CAP})", flush=True)
         row = {"kind": kind, "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
+               "exam": exam_id, "drop_note": drop_note,
                "wall_s": round(time.time() - t0, 1), "error": err, "web": "live" if (live_first and first) else "saved",
                **(out or {"cost_usd": 0.0})}
         first = False
         _append(row)
-        print(f"{kind} {m}{'+r' if r else ''}: {err or 'ok'} · código solo {row.get('code_found')}/{row.get('planted')} · "
+        print(f"{kind} {m}{'+r' if r else ''}: {err or 'ok'} · ciegos: código {row.get('code_blind')} · con agentes "
+              f"{row.get('agents_blind')} de {row.get('blind_planted')} · no ciegos {row.get('agents_open')}/{row.get('open_planted')} · "
+              f"⑤ {row.get('personal_blind')} (+{row.get('personal_false_alerts')} sin clasificar) · "
+              f"filas de la clave {row.get('rows_found')}/{row.get('rows_in_key')} · créditos {row.get('credits_if_live')} · "
+              f"código solo {row.get('code_found')}/{row.get('planted')} · "
               f"con agentes {row.get('agents_found')}/{row.get('planted')} · ⑤ {row.get('personal_found')} · "
               f"① despachó {row.get('dismissed_true')} verdaderos · ${row.get('cost_usd', 0):.5f} · "
               f"{(row.get('latency_ms') or 0) / 1000:.1f}s", flush=True)
@@ -432,7 +500,9 @@ def _fmt(vals, f="{}"):
 def table() -> int:
     rows = _read()
     print(f"Gastado en Nebius: ${_spent():.4f} (tope ${USD_CAP})\n")
-    for kind in ("drafter", "drafter_note", "drafter_note_fix", "personal", "exam_reviewer", "exam_personal"):
+    known = ["drafter", "drafter_note", "drafter_note_fix", "personal", "exam_reviewer", "exam_personal"]
+    kinds = known + sorted({r["kind"] for r in rows} - set(known))
+    for kind in kinds:
         mine = [r for r in rows if r["kind"] == kind]
         if not mine:
             continue
@@ -460,20 +530,44 @@ def table() -> int:
                       f"del negocio alertados {_fmt([f'{r['business_alerted']}/{r['business_truth']}' for r in ok])} · "
                       f"contestó {_fmt([f'{r['answered']}/{r['sent']}' for r in ok])} · fallas {len(rs) - len(ok)} · "
                       f"${cost:.5f} · {lat:.1f}s")
+            elif "blind_planted" in (ok[0] if ok else {}):
+                b = ok[0]["blind_planted"]
+                print(f"  {name:16} CIEGOS (de {b}): código {_fmt([r['code_blind'] for r in ok])} · con agentes "
+                      f"{_fmt([r['agents_blind'] for r in ok])} · ⑤ {_fmt([r['personal_blind'] for r in ok])} "
+                      f"(⑤ sin clasificar {_fmt([r['personal_false_alerts'] for r in ok])}) · no ciegos (de {ok[0]['open_planted']}) "
+                      f"{_fmt([r['agents_open'] for r in ok])} · ① despachó verdaderos {_fmt([r['dismissed_true'] for r in ok])} · "
+                      f"alertas sembradas/sin clasificar {_fmt([f'{r['agents_on_planted']}/{r['agents_alerts'] - r['agents_on_planted']}' for r in ok])} · "
+                      f"fallas {len(rs) - len(ok)} · ${cost:.5f} · {lat:.1f}s")
             else:
                 print(f"  {name:16} código solo {_fmt([r['code_found'] for r in ok])} · con agentes "
                       f"{_fmt([r['agents_found'] for r in ok])} de {ok[0]['planted'] if ok else '?'} · ⑤ "
                       f"{_fmt([r['personal_found'] for r in ok])} · ① despachó verdaderos {_fmt([r['dismissed_true'] for r in ok])} · "
                       f"alertas (sobre sembradas / sin clasificar) {_fmt([f'{r['agents_on_planted']}/{r['agents_alerts'] - r['agents_on_planted']}' for r in ok])} · "
                       f"fallas {len(rs) - len(ok)} · ${cost:.5f} · {lat:.1f}s")
+        if kind.endswith(("_reviewer", "_personal")) and any("blind_planted" in r for r in mine):
+            _adoption(mine, kind)
         print()
     return 0
+
+
+def _adoption(mine: list[dict], kind: str) -> None:
+    """La regla de siempre: un candidato gana si su PEOR corrida supera la MEJOR del modelo de hoy (errores ciegos)."""
+    import agent_models
+    today = agent_models.DEFAULTS[SEAT[kind]]
+    score = lambda m, r: [x["agents_blind"] for x in mine if x["model"] == m and x["reasoning"] == r and _ok(x)]   # noqa: E731
+    best_today = max(score(*today), default=None)
+    if best_today is None:
+        return
+    wins = [f"{m}{' razona' if r else ''}" for m, r in CONFIGS if (m, r) != today and score(m, r) and min(score(m, r)) > best_today]
+    print(f"  → regla de adopción (peor del candidato > mejor de hoy = {best_today}): {', '.join(wins) or 'ninguno gana'}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "table"))
     ap.add_argument("--n", type=int, default=3, help="corridas por configuración")
+    ap.add_argument("--exam", choices=tuple(EXAMS), default="1", help="exam: cuál examen sembrado (base, clave, kind)")
+    ap.add_argument("--drop-note", action="store_true", help="exam: el equipo de hoy con las notas borradas (en la transacción)")
     ap.add_argument("--keep-note", type=int, help="drafter: conservar esta nota al volver al 'antes' (kind drafter_note)")
     ap.add_argument("--live-first", action="store_true",
                     help="drafter/exam: la PRIMERA corrida busca en Tavily de verdad y guarda la evidencia; las demás la reusan")
@@ -486,7 +580,7 @@ def main() -> int:
         return drafter(args.n, args.live_first, args.keep_note)
     if args.what == "personal":
         return personal(args.n)
-    return exam(args.n, args.live_first)
+    return exam(args.n, args.live_first, args.exam, args.drop_note)
 
 
 if __name__ == "__main__":
