@@ -52,7 +52,7 @@ COMPANY_ID = 1
 SINCE = datetime(2026, 10, 20, 20, 50)          # la prueba de Jose: reloj de la base
 MODELS = ("nano", "lightning", "super", "ultra", "vl")
 CONFIGS = [(m, r) for m in MODELS for r in (False, True)]
-USD_CAP = 4.00                                   # tope de cada tanda (Nebius); ver `_spent`
+USD_CAP = float(os.getenv("REAL_MATRIX_CAP", "4.00"))   # tope de cada tanda (Nebius); ver `_spent`
 # Los exámenes ciegos sembrados (23-oct): base, clave, prefijo del `kind`, cuántos comercios NUEVOS busca el ② por
 # revisión y un archivo de evidencia propio (lo de un examen no se mezcla con la evidencia del libro real).
 EXAMS = {
@@ -132,8 +132,16 @@ def _cfg_runs(kind: str, n: int):
 
 
 def _seat(kind: str) -> str:
-    """El asiento de un `kind` (también los que llevan etiqueta, `--tag`)."""
-    return SEAT.get(kind) or ("reviewer" if kind.endswith("_reviewer") else "personal")
+    """El asiento de un `kind` (también los que llevan etiqueta o espacio de nombres)."""
+    if kind in SEAT:
+        return SEAT[kind]
+    if "r3" in kind.split("_"):   # el ④ contra el bookkeeper (`p2_r3`, `p2_r3_note`)
+        return "drafter"
+    for suffix, seat in (("_reviewer", "reviewer"), ("_personal", "personal"), ("_notes", "notes"),
+                         ("_drafter", "drafter"), ("_team", "reviewer")):
+        if kind.endswith(suffix):
+            return seat
+    return "personal"
 
 
 def _over_cap() -> bool:
@@ -429,6 +437,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
     code_keys = set(keys) - set(rev["auditor"]["missed"])
     team_keys = set(rev["found_keys"])
     pers_keys = set(keys) - set(rev["personal"]["missed"])
+    note_keys = set(keys) - set(rev["notes"]["missed"])
     privacy = agents.privacy_scan(list(nemotron.SENT), txs, merchant_verifier.protected_names(txs))
     a, rv, team = rev["auditor"], rev["reviewer"], rev["team"]
     return {"planted": rev["planted"], "unmatched": len(rev["unmatched"]),
@@ -438,6 +447,8 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
             "personal_blind": len(pers_keys & blind), "personal_open": len(pers_keys - blind),
             "personal_false_alerts": rev["personal"]["alerts"] - rev["personal"]["true_alerts"],
             "citation_rejected": dict(Counter(agents.CITATION_REJECTED)),
+            "notes_blind": len(note_keys & blind), "notes_open": len(note_keys - blind),
+            "notes_false_alerts": rev["notes"]["alerts"] - rev["notes"]["true_alerts"],
             "rows_in_key": sum(e["id_rows"] for e in truth), "rows_found": sum(len(e["rows"]) for e in truth),
             "code_found": a["found"], "code_alerts": a["alerts"], "code_on_planted": a["true_alerts"],
             "agents_found": team["found"], "agents_alerts": team["alerts"], "agents_on_planted": team["true_alerts"],
@@ -451,7 +462,8 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
             "latency_ms": lat + (pend.usage.latency_ms if pend.usage else 0), "privacy": privacy}
 
 
-def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, tag: str | None = None) -> int:
+def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, tag: str | None = None,
+         ns: str | None = None, seat: str = "team") -> int:
     import agent_models
     from db import engine
     from models import Company
@@ -460,7 +472,12 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
     sha0 = (key_path.parent / "key_frozen_sha1.txt").read_text().split()[0]
     sha = lambda: hashlib.sha1(key_path.read_bytes()).hexdigest()   # noqa: E731
     prefix = cfg["prefix"] + ("_nonote" if drop_note else "") + (f"_{tag}" if tag else "")
-    kinds = [(f"{prefix}_reviewer", "reviewer"), (f"{prefix}_personal", "personal")]
+    if ns:   # 24-oct: un espacio de nombres (p. ej. los prompts reescritos) y UN asiento, o el equipo de hoy
+        prefix = f"{cfg['prefix']}_{ns}" + ("_nonote" if drop_note else "")
+        kinds = [(f"{prefix}_team", "reviewer")] if seat == "team" else [(f"{prefix}_{seat}", seat)]
+        tag = tag or ("team" if seat == "team" else None)
+    else:
+        kinds = [(f"{prefix}_reviewer", "reviewer"), (f"{prefix}_personal", "personal")]
     plan = []
     for kind, seat in kinds:
         runs = list(_cfg_runs(kind, n))
@@ -507,6 +524,109 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
               f"con agentes {row.get('agents_found')}/{row.get('planted')} · ⑤ {row.get('personal_found')} · "
               f"① despachó {row.get('dismissed_true')} verdaderos · ${row.get('cost_usd', 0):.5f} · "
               f"{(row.get('latency_ms') or 0) / 1000:.1f}s", flush=True)
+    return 0
+
+
+# ── el demo: D1 y D2 en UNA revisión (24-oct) ───────────────────────────────────────────────────
+
+def demo_once() -> dict:
+    """Los 3 libros del demo sembrados (en una transacción que se deshace) y UNA revisión completa, como
+    `team_matrix.run_once` (memoria de la oficina vacía, ② por oráculo, 0 créditos). Se puntúa DOS veces con la misma
+    revisión: D1 (el primer examen, escondiendo las filas del ciego, como siempre) y D2 (el ciego, con el primer examen
+    como neutral). El ciego no cambia lo que hacen los agentes, solo la clave: así cada corrida cuesta la mitad."""
+    import demo_data
+    import demo_web_evidence
+    import formula
+    import measure
+    import merchant_verifier
+    import nemotron
+    import agents
+    from db import engine
+    from models import AgentCall, Firm, MerchantLookup, Transaction, User
+    merchant_verifier.ORACLE = {r["fingerprint"]: r for r in demo_web_evidence.load()}
+    nemotron.SENT.clear()
+    agents.CITATION_REJECTED.clear()
+    out = Counter()
+    with Session(engine) as s:
+        try:
+            s.commit = s.flush  # type: ignore[method-assign]
+            owner = User(firebase_uid=f"__p2_{time.time_ns()}__", email="p2@test.local"); s.add(owner); s.flush()
+            firm = Firm(name="P2 DEMO", owner_user_id=owner.id); s.add(firm); s.flush()
+            books = demo_data.seed_demo_books(s, firm, owner)
+            for m in s.exec(select(MerchantLookup).where(MerchantLookup.firm_id == firm.id)).all():
+                s.delete(m)
+            s.flush()
+            all_txs = []
+            for b in books:
+                tp, te1 = measure._truth(b.name, blind=False)
+                _tp, te2 = measure._truth(b.name, blind=True)
+                txs = s.exec(select(Transaction).where(Transaction.company_id == b.id)).all()
+                all_txs += txs
+                measure.web_flow(s, b)
+                pend = measure.measure_pending(s, b, tp, record=True)
+                nc = measure.note_case(formula.BookContext(s, b), pend["rows"]) or {}
+                r1 = measure.measure_review(s, b, te1, draft_rows=pend["rows"], hide=frozenset(measure._blind_ids(txs)),
+                                            already_reviewed=True)
+                r2 = measure.measure_review(s, b, te2, draft_rows=pend["rows"],
+                                            other_exam=frozenset(measure._exam_ids(txs, "DEMO_TRUTH_ERRORS")),
+                                            already_reviewed=True)
+                for tag, r in (("d1", r1), ("d2", r2)):
+                    out[f"{tag}_planted"] += r["team"]["planted"]
+                    out[f"{tag}_found"] += r["team"]["found"]
+                    out[f"{tag}_code"] += r["auditor"]["found"]
+                    out[f"{tag}_alerts"] += r["team"]["alerts"]
+                    out[f"{tag}_true_alerts"] += r["team"]["true_alerts"]
+                    out[f"{tag}_dismissed_true"] += len(r["dismissed_true"])
+                    out[f"{tag}_personal_found"] += r["personal"]["found"]
+                    out[f"{tag}_personal_false"] += r["personal"]["alerts"] - r["personal"]["true_alerts"]
+                    out[f"{tag}_notes_found"] += r["notes"]["found"]
+                    out[f"{tag}_notes_false"] += r["notes"]["alerts"] - r["notes"]["true_alerts"]
+                out["pending_known"] += pend["known"]
+                out["pending_decided"] += pend["decided"]
+                out["pending_right"] += pend["right"]
+                out["vacation_expected"] += nc.get("expected", 0)
+                out["vacation_hit"] += nc.get("hit", 0)
+                out["vacation_extra"] += nc.get("extra", 0)
+            calls = s.exec(select(AgentCall).where(AgentCall.company_id.in_([b.id for b in books]))).all()
+            out["cost_usd"] = sum(c.cost_usd or 0 for c in calls if c.agent != "verifier")
+            out["latency_ms"] = sum(c.latency_ms for c in calls if c.agent != "verifier")
+            out["out_of_tokens"] = sum(1 for c in calls if c.outcome == "out_of_tokens")
+            privacy = agents.privacy_scan(list(nemotron.SENT), all_txs, merchant_verifier.protected_names(all_txs))
+        finally:
+            s.rollback()
+    return {**dict(out), "citation_rejected": dict(Counter(agents.CITATION_REJECTED)), "privacy": privacy}
+
+
+def demo(n: int, seat: str, ns: str) -> int:
+    """`seat="team"`: el equipo de hoy × n. Si no, ESE asiento varía (los 10 candidatos × n) y los demás quedan en el de
+    hoy. Las filas: `kind = f"{ns}_demo_{seat}"`."""
+    import agent_models
+    kind = f"{ns}_demo_{seat}"
+    configs = [agent_models.DEFAULTS["reviewer"]] if seat == "team" else None
+    today = agent_models.DEFAULTS[seat] if seat != "team" else None
+    order = [(m, r) for m, r in ([today] + [c for c in CONFIGS if c != today])] if seat != "team" else configs
+    for m, r in order:
+        for _ in range(max(0, n - _done(kind, m, r))):
+            if _over_cap():
+                return 1
+            agent_models.OVERRIDES.clear()
+            if seat != "team":
+                agent_models.OVERRIDES[seat] = (m, r)
+            t0 = time.time()
+            try:
+                out, err = demo_once(), None
+            except Exception as e:
+                out, err = {"cost_usd": 0.0}, type(e).__name__
+            finally:
+                agent_models.OVERRIDES.clear()
+            row = {"kind": kind, "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
+                   "wall_s": round(time.time() - t0, 1), "error": err, **out}
+            _append(row)
+            print(f"{kind} {m}{'+r' if r else ''}: {err or 'ok'} · D1 {out.get('d1_found')}/{out.get('d1_planted')} · "
+                  f"D2 {out.get('d2_found')}/{out.get('d2_planted')} (código {out.get('d2_code')}) · ④ {out.get('pending_right')}/"
+                  f"{out.get('pending_decided')} de {out.get('pending_known')} · vacaciones {out.get('vacation_hit')}/"
+                  f"{out.get('vacation_expected')} · ⑥ {out.get('d1_notes_found')}+{out.get('d2_notes_found')} · "
+                  f"${out.get('cost_usd', 0):.4f}", flush=True)
     return 0
 
 
@@ -584,7 +704,10 @@ def _adoption(mine: list[dict], kind: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "table"))
+    ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "demo", "table"))
+    ap.add_argument("--seat", default="team", choices=("team", "reviewer", "personal", "drafter", "notes"),
+                    help="demo/exam: el asiento que varía (team = el equipo de hoy)")
+    ap.add_argument("--ns", help="exam/demo: espacio de nombres de los kinds (p. ej. p2 = los prompts reescritos)")
     ap.add_argument("--n", type=int, default=3, help="corridas por configuración")
     ap.add_argument("--exam", choices=tuple(EXAMS), default="1", help="exam: cuál examen sembrado (base, clave, kind)")
     ap.add_argument("--tag", help="exam: medición con etiqueta (solo el equipo de hoy, kind aparte)")
@@ -602,7 +725,9 @@ def main() -> int:
         return drafter(args.n, args.live_first, args.keep_note, db=args.db)
     if args.what == "personal":
         return personal(args.n)
-    return exam(args.n, args.live_first, args.exam, args.drop_note, args.tag)
+    if args.what == "demo":
+        return demo(args.n, args.seat, args.ns or "p2")
+    return exam(args.n, args.live_first, args.exam, args.drop_note, args.tag, args.ns, args.seat)
 
 
 if __name__ == "__main__":

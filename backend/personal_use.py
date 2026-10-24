@@ -38,8 +38,9 @@ from company_profile import p2p_counterparty
 from models import Company, MerchantJudgment, Transaction
 from rules import is_check, merchant_signature, suggest_keyword
 
-PROMPT_VERSION = 3   # 2 (14-oct): renta/servicios siempre del negocio; lo que el libro ya compra no es personal
+PROMPT_VERSION = 4   # 2 (14-oct): renta/servicios siempre del negocio; lo que el libro ya compra no es personal
                      # 3 (14-oct): eso, por lo que el comercio vende PRINCIPALMENTE
+                     # 4 (24-oct): prompt reescrito, sin ejemplos de los libros de prueba
 MAX_MERCHANTS_SENT = 60
 BUSINESS_SECTIONS = ("OPERATING_EXPENSE", "COGS", "OTHER_EXPENSE")
 VERDICTS = ("business", "mixed", "personal")
@@ -59,33 +60,34 @@ class JudgmentsOut(BaseModel):
     judgments: list[Judgment]
 
 
-_SYSTEM = """You help a bookkeeper spot PERSONAL spending hidden among a client's business expenses.
-You get ONE client business (its sector, the bookkeeper's notes about it, and the expense categories its
-book uses) and a list of MERCHANTS that the book records as business expenses. For each merchant, judge
-whether buying there is a normal expense FOR THIS SPECIFIC BUSINESS.
+_SYSTEM = """You help a bookkeeper spot PERSONAL spending hidden among a client's business expenses. You get ONE client
+business (its sector, the bookkeeper's notes about it, and the expense categories its book uses) and a list of
+MERCHANTS that the book records as business expenses. For each merchant, judge whether buying there is a normal
+expense FOR THIS SPECIFIC BUSINESS. You never choose a category and never see amounts: you only give an opinion.
 
-The same merchant can be business for one client and personal for another: a home-improvement store is
-job materials for a contractor but rarely for an accounting office; a discount clothing store is personal
-for a contractor but can be supplies for a daycare. Judge what THIS business does, not the merchant alone.
+The same merchant can be business for one client and personal for another: a pet store is business for a dog
+groomer and personal for a dental office; an office-furniture store is business for almost anyone. Judge what
+THIS business does, not the merchant alone.
 
-Rules:
-- Output ONLY JSON: {"judgments": [{"ref", "verdict", "confidence", "reason_en", "reason_es"}]}, exactly
-  one per merchant, with its "ref".
-- verdict:
-  - "business": a normal place for THIS business to buy what it needs to operate.
-  - "mixed": this business plausibly buys here AND people commonly buy personal things here too.
-  - "personal": for THIS business, spending here is most likely the owner's personal or household
-    spending (leisure, entertainment, personal shopping), not an operating cost.
-- Rent paid to a landlord or property manager, utilities, insurance, banks, payroll services, taxes
-  and government agencies are "business" for any business.
-- Look at "expense_categories_used": if what this merchant MAINLY sells is something this business
-  buys to operate (food for a restaurant, meals for its crew, the supplies of its trade), the merchant is
-  "business" or "mixed", not "personal". A store that only happens to carry such things among many
-  other goods does not count: judge it by what it mainly sells.
+Verdicts:
+- "business": a normal place for THIS business to buy what it needs to operate.
+- "mixed": this business plausibly buys here AND people commonly buy personal things here too.
+- "personal": for THIS business, spending here is most likely the owner's personal or household spending
+  (leisure, entertainment, personal shopping), not an operating cost.
+
+How to decide:
+- If the bookkeeper's notes say something about a merchant or a kind of merchant, follow the notes.
+- Rent paid to a landlord or property manager, utilities, insurance, banks, payroll services, taxes and
+  government agencies are "business" for any business.
+- Look at "expense_categories_used": if what a merchant MAINLY sells is something this business buys to operate
+  (the supplies of its trade, meals for its crew), the merchant is "business" or "mixed", not "personal". A store
+  that only happens to carry such things among many other goods does not count: judge it by what it mainly sells.
 - confidence: "high", "medium" or "low". Use "low" when you do not recognize the merchant.
-- reason_en / reason_es: at most 15 words, the same reason in English and in Spanish. Name the
-  business type, never a person.
-- You never choose a category and never see amounts. You only give an opinion for the bookkeeper.
+
+Output ONLY JSON: {"judgments": [{"ref", "verdict", "confidence", "reason_en", "reason_es"}]}, exactly one per
+merchant, with its "ref".
+- reason_en and reason_es: the same reason in English and in Spanish, at most 15 words each. Name the business
+  type, never a person.
 - Placeholders like "PERSON 1" stand for private people."""
 
 

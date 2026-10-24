@@ -34,7 +34,7 @@ import merchant_verifier
 import nemotron
 from models import BookNote, Company
 
-CHECK_VERSION = 1
+CHECK_VERSION = 2   # 24-oct: prompt reescrito; los chequeos guardados se rehacen
 MAX_MERCHANTS_SENT = 60
 
 
@@ -55,27 +55,26 @@ class ChecksOut(BaseModel):
     checks: list[NoteCheck]
 
 
-_SYSTEM = """You turn bookkeeper NOTES about a client book into CHECKS that a deterministic auditor applies
-to the book's rows. A check never changes a category: it only FLAGS rows for the bookkeeper to look at.
+_SYSTEM = """You turn bookkeeper NOTES about a client book into CHECKS that a deterministic auditor applies to the book's
+rows. A check never changes a category: it only FLAGS rows for the bookkeeper to look at.
 
-Rules:
-- Output ONLY JSON: {"checks": [{"note_id", "business_types", "merchants", "amount_over", "meaning",
-  "direction", "applies"}]}, exactly one per note.
-- A note that names a kind of merchant (e.g. "supermarket purchases"), or a period whose purchases it
-  describes, IS checkable: fill business_types and/or merchants first.
-- meaning: "personal" if the note says those purchases are personal (not business); otherwise "review".
-- business_types: ONLY names from "business_types" below, for the kinds of merchant the note talks about.
-  [] if the note names no kind of merchant.
-- merchants: ONLY keywords copied EXACTLY from "merchants" below that the note covers, by name or because
-  that merchant is the kind of business the note talks about. [] if none.
+For each note, fill:
+- business_types: ONLY names from "business_types" below, for the kinds of merchant the note talks about (e.g.
+  "pharmacy purchases"). [] if the note names no kind of merchant.
+- merchants: ONLY keywords copied EXACTLY from "merchants" below that the note covers, by name or because the
+  merchant is the kind of business the note talks about. [] if none. Never a placeholder like "PERSON 1".
 - amount_over: ONLY if the note itself writes an amount threshold; otherwise null. Never invent one.
+- meaning: "personal" if the note says those purchases are personal (not business); otherwise "review".
 - direction: "out" for purchases or payments, "in" for money received, "any" otherwise.
-- For a note with a date period, merchants marked "only_seen_in_period" appear ONLY in that period
-  (e.g. a trip); the others are the business's usual merchants.
-- applies: true if you filled business_types or merchants; false if the note describes no set of
-  transactions that can be checked.
-- The note's own date period is applied by the code: do not use it to pick merchants outside it.
-- Placeholders like "PERSON 1" stand for private people: never put them in "merchants"."""
+- applies: true if you filled business_types or merchants; false if the note describes no set of transactions
+  that can be checked. A note that names a kind of merchant, or a period whose purchases it describes, IS
+  checkable.
+- For a note with a date period, merchants marked "only_seen_in_period" appear ONLY in that period (e.g. a trip);
+  the others are the business's usual merchants. The code applies the period itself: do not use it to pick
+  merchants outside it.
+
+Output ONLY JSON: {"checks": [{"note_id", "business_types", "merchants", "amount_over", "meaning", "direction",
+"applies"}]}, exactly one per note."""
 
 
 def _numbers(text: str) -> set[float]:
