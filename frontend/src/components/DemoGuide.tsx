@@ -12,15 +12,16 @@ import type { View } from "./Sidebar";
 // Las marcas que ilumina son `data-tour="…"` en los componentes (PageKit, Sidebar, Dashboard, AuditWorkspace).
 
 // ── LAS DOS PRUEBAS MEDIDAS: un solo lugar, cada una con su fuente ─────────────────────────────────────────────
-// docs/FASE 11.A.md → "21 de octubre de 2026 (2)": el examen ciego con el código final, 6 corridas: 13–15 de 22
-// errores nunca vistos; el auditor solo (las reglas, sin IA): 8 de 22.
-// 🔁 Se ACTUALIZA con la medición final (M2 en docs/EVALUACION.md: D1 y D2 con el código congelado).
-const BLIND = { min: 13, max: 15, of: 22, rulesAlone: 8 };
+// docs/JUECES - IMPLEMENTACION TECNOLOGICA.md → §5 (la medición final, M2, 24-oct): el ciego del demo (D2) con el
+// código que se entrega (sha1 congelado), 5 corridas: 13 · 12 · 13 · 14 · 16 de 22 errores nunca vistos; solo el
+// código (las reglas, sin IA): 8 de 22.
+const BLIND = { min: 12, max: 16, of: 22, rulesAlone: 8 };
 // docs/FASE 11.A.md → "22 de octubre de 2026 (2)": el ④ (Super VL) con y sin la nota del libro, en el libro real:
 // 62 → 112 aciertos de 121 (51 % → 93 %). Se publica como "an authorized client account", sin el tipo de empresa
 // ni el parentesco (permiso del dueño, 23-oct).
 // ⏸️ PENDIENTE (Jose, 24-oct): se midió sobre el libro ENTERO y solo vale 2026. Mientras `pending` sea true la
-// tarjeta NO se muestra. Cuando Auditoría dé el número de 2026 (M1 en docs/EVALUACION.md), se cambian `before`,
+// tarjeta NO se muestra. Cuando Auditoría dé el número de 2026 (M1 en `DEMO Y ENTREGA.md` → "Los documentos para los
+// jueces"; el resultado irá a `JUECES - IMPLEMENTACION TECNOLOGICA.md` §5, fila R3), se cambian `before`,
 // `after` y `of`, se pone `pending: false` y se cita aquí la entrada nueva.
 const NOTE = { before: 62, after: 112, of: 121, pending: true };
 // docs/FASE 11.A.md → "17 de octubre de 2026": el ⑤ en Lightning, Super y Ultra encontró MENOS errores nunca vistos
