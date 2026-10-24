@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  getCompany, getTransactionInsight, money, resolveFinding, updateTransaction,
+  getMyRole, getTransactionInsight, money, resolveFinding, updateTransaction,
   type FlagLevel, type TxInsight,
 } from "../api";
 import type { Company } from "../types";
@@ -53,9 +53,10 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
   const [busy, setBusy] = useState<number | null>(null);
   // Candado de "Nota de este movimiento" (19-oct): visor (rol VIEWER) la ve, no la edita. Mismo
   // criterio que `Settings.tsx` (`canEdit = role !== "VIEWER"`); se pide una sola vez, no por movimiento.
-  const [company, setCompany] = useState<Company | null>(null);
-  useEffect(() => { getCompany().then(setCompany).catch(() => {}); }, []);
-  const canEditNote = (company?.role ?? "OWNER") !== "VIEWER";
+  // 🔄 23-oct: era `getCompany()`, que no trae `role` (ver api.ts) — el candado quedaba siempre abierto.
+  const [role, setRole] = useState<Company["role"]>(undefined);
+  useEffect(() => { getMyRole().then(setRole).catch(() => {}); }, []);
+  const canEditNote = (role ?? "OWNER") !== "VIEWER";
 
   useEffect(() => {
     let alive = true;

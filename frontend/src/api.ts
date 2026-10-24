@@ -58,6 +58,14 @@ export async function getCompanies(): Promise<Company[]> {
   return me.companies.map((c) => ({ ...c, role: roles[c.id] as Company["role"] }));
 }
 
+// El rol del usuario sobre el libro ACTIVO (23-oct, VIEWER de solo lectura): `getCompany()` (una sola
+// empresa, por id) no trae `role` — solo `/api/me` lo manda, por el `roles` map. No uses `company?.role`
+// de un `getCompany()`: siempre sale `undefined` y el candado de VIEWER queda abierto en silencio.
+export async function getMyRole(): Promise<Company["role"]> {
+  const list = await getCompanies();
+  return list.find((c) => c.id === cid())?.role;
+}
+
 // --- Equipo: roles y permisos por empresa ---
 export interface Member {
   id: number | null; // null = el dueño (OWNER)

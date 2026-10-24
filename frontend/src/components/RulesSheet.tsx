@@ -12,7 +12,8 @@ import {
   CATEGORY_EDITOR, categoryEditors, sectionOfCategory, setEditorChart,
 } from "./CategoryEditor";
 import {
-  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useExternalClipboardGuard, useCaseStyle, applyCase,
+  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useExternalClipboardGuard, useReadOnlyNotice,
+  ReadOnlyNotice, useCaseStyle, applyCase,
   CellMenu, CellViewer, cellFromEvent, FormulaBar, moveFocus, type MenuItem,
 } from "./gridKit";
 
@@ -128,7 +129,7 @@ export type RulesCommands = {
 };
 
 export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, formulaBar = true, onCommands,
-  focusRule, onFocusRuleDone, showPriority = false, memory }: {
+  focusRule, onFocusRuleDone, showPriority = false, memory, canEdit = true }: {
   /** Descripción de una transacción con la que arrancar la regla (viene de la hoja). */
   seedKeyword?: string | null;
   onSeedUsed?: () => void;
@@ -145,8 +146,16 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   /** DÓNDE QUEDÓ (Jose, 19-oct): lo guarda la Hoja, que no se desmonta al cambiar de pestaña. Al volver a
    *  Reglas, el desplazamiento y la celda enfocada de antes (`gridMemory.ts`). */
   memory?: { current: GridSpot };
+  /** SOLO LECTURA para un VIEWER (23-oct): el rol del libro, calculado una sola vez en `Sheet.tsx`
+   *  (así no se pide la empresa dos veces). Por defecto `true`: RulesSheet no vive en ningún otro
+   *  lugar hoy, pero el valor por defecto deja al componente funcionando si alguna vez lo hiciera. */
+  canEdit?: boolean;
 } = {}) {
   const { t } = useTranslation();
+  // `hostRef` nace temprano (23-oct): `saveCell`, más abajo, ya necesita `roNotify`. Los otros hooks
+  // que lo usan (deshacer, el candado del portapapeles) se enganchan donde ya vivían, mismo ref.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const { show: roShow, notify: roNotify } = useReadOnlyNotice(hostRef, canEdit);
   const [rules, setRules] = useState<Rule[] | null>(null);
   // Un pedido de otra parte (ir a una regla, crear una desde una fila) gana sobre "volver a donde estaba".
   const skipRestore = useRef(false);
@@ -232,6 +241,10 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   /** Guarda UNA celda (edición, pegado, borrado o "Pegar" del menú) y deja cómo deshacerla.
    *  Devuelve false si no guardó nada. `reload=false` cuando son varias celdas (rango). */
   const saveCell = useCallback(async (model: any, prop: string, raw: unknown, reload = true): Promise<boolean> => {
+    // SOLO LECTURA (23-oct): el candado real. El `readonly` del grid ya bloquea escribir/pegar/
+    // borrar/rellenar desde la grilla misma; esto cubre además "Pegar" del menú, el borrador nuevo
+    // (la fila se crearía sola, más abajo) y cualquier llamada directa.
+    if (!canEdit) { roNotify(); return false; }
     if (!model?.id) return false;
     if (!["match_text", "category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop)) return false;
     const value = String(raw ?? "").trim();
@@ -435,9 +448,12 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       load();  // la base manda
     } finally { setSaving(null); }
     return true;
-  }, [load, t, pushUndo]);
+  }, [load, t, pushUndo, canEdit, roNotify]);
 
-  const openAmountEditor = useCallback((m: Row) => { setError(null); setNote(null); setAmountEdit(m); }, []);
+  const openAmountEditor = useCallback((m: Row) => {
+    if (!canEdit) { roNotify(); return; }
+    setError(null); setNote(null); setAmountEdit(m);
+  }, [canEdit, roNotify]);
 
   // LAS OTRAS REGLAS DE LA MISMA PALABRA CLAVE (21-oct): con qué comparar huecos/cruces en el diálogo.
   const amountSiblings = useMemo((): AmountSibling[] => {
@@ -453,6 +469,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
    *  las demás props del borrador); regla viva → PATCH de los dos campos juntos (un solo cambio, un
    *  solo "deshacer"). `updateRule` ya valida el rango y re-decide las filas que quedan afuera. */
   const saveAmount = useCallback(async (next: { amount_min: number | null; amount_max: number | null }) => {
+    if (!canEdit) { roNotify(); return; }
     const m = amountEdit;
     if (!m) return;
     if (m.id === -1) {
@@ -478,7 +495,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         ? t("rules.dup", { defaultValue: "There is already a rule with that keyword and those conditions." })
         : String((err as Error)?.message ?? err));
     }
-  }, [amountEdit, pushUndo, t, load]);
+  }, [amountEdit, pushUndo, t, load, canEdit, roNotify]);
 
   /** `afteredit` trae UNA celda ({prop, val, model}) o un RANGO ({data, models}: pegar con Ctrl+V,
    *  borrar varias con Supr). Antes el rango cambiaba la pantalla pero NO se guardaba. */
@@ -507,6 +524,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   // RESALTAR (Jose, 4-oct): lo mismo que en la Hoja — negrita, cursiva, los 4 colores con nombre,
   // cualquier color y limpiar —, por FILA y guardado en la regla (`style`). Deja su deshacer.
   const restyle = useCallback(async (patch: Partial<RuleStyle> | "clear") => {
+    if (!canEdit) { roNotify(); return; }
     const targets = (rulesRef.current ?? []).filter((r) => selected.includes(r.id) && r.scope === "COMPANY");
     if (!targets.length) return;
     const before = targets.map((r) => ({ id: r.id, style: r.style ?? null }));
@@ -527,7 +545,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       load();
     } catch (err) { setError(String((err as Error)?.message ?? err)); load(); }
     finally { setSaving(null); }
-  }, [selected, load, t, pushUndo]);
+  }, [selected, load, t, pushUndo, canEdit, roNotify]);
 
   const rowCss = useMemo(() => {
     const seen = new Map<string, RuleStyle>();
@@ -604,7 +622,6 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     return () => { alive = false; };
   }, [gridMounts]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const hostRef = useRef<HTMLDivElement | null>(null);
   useUndoShortcut(hostRef, () => void undo());
   useExternalClipboardGuard(hostRef);
 
@@ -648,10 +665,11 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
       : (m[prop] ?? ""));
   // MONTO (21-oct): su propio candado, no el genérico — se edita con el diálogo (`openAmountEditor`),
   // no escribiendo encima de la celda, pero las mismas filas pueden tocarlo (borrador, o este libro).
-  const canEditAmount = (m: any) => !!m?._draft || m?.scope === "COMPANY";
-  const editable = (m: any, prop: string) => m?._draft
+  // Las dos (23-oct) exigen además `canEdit`: el libro no sea de solo lectura para este usuario.
+  const canEditAmount = (m: any) => canEdit && (!!m?._draft || m?.scope === "COMPANY");
+  const editable = (m: any, prop: string) => canEdit && (m?._draft
     ? ["match_text", "category", "subcategory", "valid_from", "valid_to"].includes(prop)
-    : ["match_text", "category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop) && m?.scope === "COMPANY";
+    : ["match_text", "category", "subcategory", "priority", "valid_from", "valid_to"].includes(prop) && m?.scope === "COMPANY");
   const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
     const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
     const items: MenuItem[] = [
@@ -670,7 +688,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         } },
     ];
     if (!m._draft && m.scope === "COMPANY") items.push("sep",
-      { label: t("rules.deleteRule", { defaultValue: "Delete rule…" }), onClick: () => void removeRule(m) });
+      { label: t("rules.deleteRule", { defaultValue: "Delete rule…" }), disabled: !canEdit, onClick: () => void removeRule(m) });
     if (prop === "subcategory" && !m._draft && !m.subcategory && m.match_text && editable(m, prop)) {
       items.push({ label: t("sheet.menu.useSuggestion", { defaultValue: "Use the suggestion: {{s}}", s: m.match_text }),
                    onClick: () => void saveCell(m, "subcategory", m.match_text) });
@@ -749,15 +767,18 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     { prop: "_amount", name: t("rules.amount.col", { defaultValue: "Amount" }), size: 190,
       readonly: (p: any) => !p.model?._draft && p.model?.scope !== "COMPANY",
       cellTemplate: (h: any, p: any) => {
-        const canEdit = p.model._draft || p.model.scope === "COMPANY";
+        // Esta fila lo permite (borrador, o regla de este libro): se ve y se comporta IGUAL para un
+        // VIEWER — clic sigue llamando a `openAmountEditor`, que es quien de verdad decide (23-oct:
+        // si el libro es de solo lectura, avisa y no abre nada; la celda no cambia de aspecto).
+        const rowOk = p.model._draft || p.model.scope === "COMPANY";
         const r = { amount_min: p.model.amount_min ?? null, amount_max: p.model.amount_max ?? null };
         const any = r.amount_min == null && r.amount_max == null;
         return h("span", {
-          onClick: canEdit ? () => openAmountEditor(p.model) : undefined,
-          title: canEdit ? t("rules.amountHint", { defaultValue: "The rule only applies when the transaction's amount (without sign) fits this condition. Click to change it." }) : undefined,
-          style: { display: "block", cursor: canEdit ? "pointer" : "default",
+          onClick: rowOk ? () => openAmountEditor(p.model) : undefined,
+          title: rowOk ? t("rules.amountHint", { defaultValue: "The rule only applies when the transaction's amount (without sign) fits this condition. Click to change it." }) : undefined,
+          style: { display: "block", cursor: rowOk ? "pointer" : "default",
                    color: any ? "#b9b2a2" : "#0f172a", fontWeight: any ? 400 : 600,
-                   textDecoration: canEdit ? "underline" : "none", textDecorationColor: "#d5d0c4",
+                   textDecoration: rowOk ? "underline" : "none", textDecorationColor: "#d5d0c4",
                    textDecorationStyle: "dotted", textUnderlineOffset: "3px" },
         }, amountLabel(r, t));
       } },
@@ -843,6 +864,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     const file = e.target.files?.[0];
     e.target.value = ""; // permite volver a elegir el mismo archivo
     if (!file) return;
+    if (!canEdit) { roNotify(); return; }
     setImporting(true); setError(null); setNote(null);
     try {
       const { rules: read } = await importRules(file);
@@ -926,6 +948,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   /** ELIMINAR UNA REGLA (Jose, 4-oct): primero dice cuántos movimientos decide y a dónde irán (otra
    *  regla → transferencia → Pendiente; lo escrito a mano no se toca). Se deshace re-creándola. */
   async function removeRule(r: Rule) {
+    if (!canEdit) { roNotify(); return; }
     setError(null); setNote(null);
     let p;
     try { p = await previewRuleDelete(r.id); } catch (e) { setError(String((e as Error).message)); return; }
@@ -994,13 +1017,13 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   // Los menús de arriba (en la Hoja) usan estas mismas acciones.
   useEffect(() => {
     onCommands?.({
-      newRule: () => setDraft({ match_text: "", category: "", subcategory: "" }),
-      importRules: () => fileRef.current?.click(),
+      newRule: () => { if (!canEdit) { roNotify(); return; } setDraft({ match_text: "", category: "", subcategory: "" }); },
+      importRules: () => { if (!canEdit) { roNotify(); return; } fileRef.current?.click(); },
       exportRules: () => downloadRulesCsv((rulesRef.current ?? []).filter((r) => r.scope === "COMPANY")),
       canExport: !!rules?.length,
       undo: () => void undo(), canUndo, lastUndo,
       restyle: (p) => void restyle(p), selectedCount: selected.length,
-      deleteRule: () => { const r = focusedRule(); if (r) void removeRule(r); }, canDelete: !!focusedRule(),
+      deleteRule: () => { const r = focusedRule(); if (r) void removeRule(r); }, canDelete: !!focusedRule() && canEdit,
       toggleFormula: () => setFormulaOpen((o) => !o), formulaOpen,
     });
   });
@@ -1012,14 +1035,16 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
         {toolbar && <>
-        <button onClick={() => setDraft({ match_text: "", category: "", subcategory: "" })}
+        <button disabled={!canEdit} onClick={() => setDraft({ match_text: "", category: "", subcategory: "" })}
+          title={!canEdit ? t("sheet.readOnly", { defaultValue: "This book is read-only" }) : undefined}
           style={{ border: "1px solid #1A8754", background: "#1A8754", color: "#fff",
                    borderRadius: 8, padding: "6px 14px", fontWeight: 600, fontSize: 13,
-                   cursor: "pointer", whiteSpace: "nowrap" }}>
+                   cursor: canEdit ? "pointer" : "default", whiteSpace: "nowrap", opacity: canEdit ? 1 : 0.5 }}>
           + {t("rules.add", { defaultValue: "New rule" })}
         </button>
-        <button onClick={() => fileRef.current?.click()} disabled={importing || imp !== null}
-          style={{ ...TOOL_BTN, opacity: importing || imp !== null ? 0.5 : 1 }}>
+        <button onClick={() => fileRef.current?.click()} disabled={!canEdit || importing || imp !== null}
+          title={!canEdit ? t("sheet.readOnly", { defaultValue: "This book is read-only" }) : undefined}
+          style={{ ...TOOL_BTN, opacity: !canEdit || importing || imp !== null ? 0.5 : 1 }}>
           {importing && imp === null
             ? t("rules.importReading", { defaultValue: "Reading file…" })
             : t("rules.import", { defaultValue: "Import" })}
@@ -1030,12 +1055,13 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
         </button>
         {/* "Ver como fórmula" ya no va aquí (Jose, 14-oct): queda en el menú Ver, para el demo. El "por qué"
             de cada movimiento está en el panel de la transacción, en la Hoja. */}
-        <button onClick={() => { const r = focusedRule(); if (r) void removeRule(r); }} disabled={!focusedRule()}
-          title={focusedRule() ? undefined : t("rules.deletePick", { defaultValue: "Select a cell of the rule to delete" })}
-          style={{ ...TOOL_BTN, color: "#991b1b", opacity: focusedRule() ? 1 : 0.5 }}>
+        <button onClick={() => { const r = focusedRule(); if (r) void removeRule(r); }} disabled={!canEdit || !focusedRule()}
+          title={!canEdit ? t("sheet.readOnly", { defaultValue: "This book is read-only" })
+            : focusedRule() ? undefined : t("rules.deletePick", { defaultValue: "Select a cell of the rule to delete" })}
+          style={{ ...TOOL_BTN, color: "#991b1b", opacity: canEdit && focusedRule() ? 1 : 0.5 }}>
           {t("rules.deleteRule", { defaultValue: "Delete rule…" })}
         </button>
-        {selected.length > 0 && imp === null && (
+        {canEdit && selected.length > 0 && imp === null && (
           <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#fff",
                         border: "1px solid #d5d0c4", borderRadius: 8, padding: "3px 6px" }}>
             <span style={{ fontSize: 11.5, color: "#5b6b62", fontWeight: 600, marginInlineEnd: 2, whiteSpace: "nowrap" }}>
@@ -1124,6 +1150,8 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
               editors={RULE_EDITORS as any}
               rowClass="_rowClass"
               resize range canFocus rowSize={32} rowHeaders
+              // SOLO LECTURA (23-oct): del GRID entero, no por columna — sin gris (ver Sheet.tsx).
+              readonly={!canEdit}
             />}
       </div>
       {rowCss && <style>{rowCss}</style>}
@@ -1139,6 +1167,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
           onSave={saveAmount}
         />
       )}
+      <ReadOnlyNotice show={roShow} text={t("sheet.readOnly", { defaultValue: "This book is read-only" })} />
     </div>
   );
 }

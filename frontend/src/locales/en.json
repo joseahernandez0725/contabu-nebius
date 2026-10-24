@@ -1063,6 +1063,7 @@
     "addLabel": "New label",
     "count": "{{n}} transactions",
     "hint": "Type to start editing · Enter or the arrows confirm · drag to select a range · right-click a cell for more options · Ctrl+Z undoes. Editing a cell only changes that transaction — it does not rewrite your rules.",
+    "readOnly": "This book is read-only",
     "ruleFromRow": "Create a rule from this description",
     "newRule": "Rule",
     "nSelected_one": "{{count}} selected",

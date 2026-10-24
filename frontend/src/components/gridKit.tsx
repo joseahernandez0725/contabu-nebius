@@ -276,6 +276,66 @@ export function useExternalClipboardGuard(hostRef: React.RefObject<HTMLElement |
   }, [hostRef]);
 }
 
+// ── SOLO LECTURA para un VIEWER (23-oct-2026) ───────────────────────────────────────────────────
+// La Hoja y las Reglas no ofrecen editar nada cuando el rol del libro es VIEWER: ni celdas, ni
+// pegar, ni borrar, ni arrastrar para rellenar — pero SIN gris (Jose, 21-oct): nada de `readonly`
+// por COLUMNA, que pinta `.rgCell.disabled` (fondo gris) en cada celda. El candado real es el
+// `readonly` del GRID ENTERO (prop de `<RevoGrid>`, no de columna — comprobado leyendo
+// `column.service.js`: el fondo gris SOLO lo calcula el `readonly` por columna, nunca el del grid) +
+// el mismo candado al INICIO de `saveCell` (cubre pegar por el menú, que no pasa por RevoGrid). El
+// grid en solo lectura bloquea todo eso solo, pero no avisa nada — así que esto además ESCUCHA el
+// intento (una tecla que editaría, un doble clic) y muestra el aviso.
+
+/** ¿Esta tecla, si el libro no fuera de solo lectura, empezaría a editar o pegar? */
+function looksLikeEditAttempt(e: KeyboardEvent): boolean {
+  if (e.ctrlKey || e.metaKey) return e.key.toLowerCase() === "v";
+  if (["Enter", "F2", "Delete", "Backspace"].includes(e.key)) return true;
+  return e.key.length === 1 && !e.altKey;   // un carácter imprimible, escrito sobre la celda
+}
+
+/** El aviso discreto + cuándo mostrarlo. Monta UNA vez por grilla, sobre el mismo `hostRef` que ya
+ *  usan `useUndoShortcut`/`useExternalClipboardGuard`. No hace nada si `canEdit` es true. */
+export function useReadOnlyNotice(hostRef: React.RefObject<HTMLElement | null>, canEdit: boolean) {
+  const [show, setShow] = useState(false);
+  const timer = useRef<number | null>(null);
+  const notify = useCallback(() => {
+    setShow(true);
+    if (timer.current != null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setShow(false), 2600);
+  }, []);
+  useEffect(() => () => { if (timer.current != null) window.clearTimeout(timer.current); }, []);
+  useEffect(() => {
+    if (canEdit) return;
+    const host = hostRef.current;
+    if (!host) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName))) return;
+      if (looksLikeEditAttempt(e)) notify();
+    };
+    const onDbl = () => notify();
+    host.addEventListener("keydown", onKey);
+    host.addEventListener("dblclick", onDbl);
+    return () => { host.removeEventListener("keydown", onKey); host.removeEventListener("dblclick", onDbl); };
+  }, [canEdit, hostRef, notify]);
+  return { show, notify };
+}
+
+/** El aviso en sí: discreto, abajo al centro, se esconde solo. */
+export function ReadOnlyNotice({ show, text }: { show: boolean; text: string }) {
+  if (!show) return null;
+  return (
+    <div role="status" style={{
+      position: "fixed", bottom: 22, left: "50%", transform: "translateX(-50%)", zIndex: 3000,
+      background: "#1f2a24", color: "#fff", padding: "8px 16px", borderRadius: 8,
+      fontSize: 13, fontWeight: 600, boxShadow: "0 10px 28px rgba(15,23,42,.3)",
+      pointerEvents: "none",
+    }}>
+      {text}
+    </div>
+  );
+}
+
 // ── Mayúsculas (solo presentación) ────────────────────────────────────────────────────────────
 
 export type CaseStyle = "asis" | "upper" | "title";

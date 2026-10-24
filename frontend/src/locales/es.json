@@ -1182,6 +1182,7 @@
     "following": "Buscando la regla…",
     "fromRule": "Viene de una regla",
     "hint": "Escribe para empezar a editar · Enter o las flechas confirman · arrastra para seleccionar un rango · clic derecho en una celda para más opciones · Ctrl+Z deshace. Editar una celda cambia solo esa transacción — no reescribe tus reglas.",
+    "readOnly": "Este libro es de solo lectura",
     "labels": "Etiquetas",
     "manualClick": "Escrita a mano — clic para volver a seguir la regla",
     "nSelected": "{{n}} seleccionadas",

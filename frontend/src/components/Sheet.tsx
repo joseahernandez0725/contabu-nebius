@@ -4,16 +4,17 @@ import i18n from "../i18n";
 import { RevoGrid } from "@revolist/react-datagrid";
 import {
   getSheetRows, getCategories, updateTransaction, undoTransactionChange, getLabels, createLabel, followRule, deleteRule,
-  decideBankRemoved, getBankConnections, syncBankConnection, BankApiError, getTransactionFlags,
+  decideBankRemoved, getBankConnections, syncBankConnection, BankApiError, getTransactionFlags, getMyRole,
   type FlagLevel,
   type BankConnection, type BankSync,
   setTransactionLabels, applyCellFormat, type ChartOfAccounts, previewRule, currentCompanyId,
 } from "../api";
-import type { CellFormat, SheetLabel, SheetRow } from "../types";
+import type { CellFormat, Company, SheetLabel, SheetRow } from "../types";
 import { CATEGORY_EDITOR, categoryEditors, setEditorChart } from "./CategoryEditor";
 import RuleDialog from "./RuleDialog";
 import {
-  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useExternalClipboardGuard, useCaseStyle, applyCase,
+  TEXT_EDITOR, textEditors, useUndo, useUndoShortcut, useExternalClipboardGuard, useReadOnlyNotice,
+  ReadOnlyNotice, useCaseStyle, applyCase,
   CellMenu, CellViewer, cellFromEvent, FormulaBar, MenuBar, type Menu, type MenuItem, type CaseStyle,
 } from "./gridKit";
 import type { View } from "./Sidebar";
@@ -158,6 +159,16 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   onFocusTxDone?: () => void;
 } = {}) {
   const { t } = useTranslation();
+  // SOLO LECTURA para un VIEWER (23-oct): el ROL del libro, no `inTour()` — así sirve también fuera
+  // del demo. Mismo candado que `Settings.tsx` (`role !== "VIEWER"`). `getMyRole()`, NO `getCompany()`:
+  // esta última no trae `role` (ver api.ts) y el candado quedaría siempre abierto.
+  const [role, setRole] = useState<Company["role"]>(undefined);
+  useEffect(() => { getMyRole().then(setRole).catch(() => {}); }, []);
+  const canEdit = (role ?? "OWNER") !== "VIEWER";
+  // `hostRef` nace acá (temprano: `saveCell`, más abajo, ya necesita `roNotify`) — los otros hooks
+  // que lo usan (deshacer, el candado del portapapeles) se enganchan donde ya vivían, mismo ref.
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const { show: roShow, notify: roNotify } = useReadOnlyNotice(hostRef, canEdit);
   const [rows, setRows] = useState<SheetRow[] | null>(null);
   const [chart, setChart] = useState<ChartOfAccounts>({});
   // Ventana "Crear regla" (4-oct): `seed` = la fila de la que parte, o null para una regla en blanco.
@@ -417,6 +428,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
 
   /** Guarda UNA celda (edición, pegado, borrado o "Pegar" del menú) y deja cómo deshacerla. */
   const saveCell = useCallback(async (model: any, prop: string, raw: unknown, reload = true): Promise<boolean> => {
+    // SOLO LECTURA (23-oct): el candado real. El `readonly` del grid ya bloquea escribir/pegar/
+    // borrar/rellenar desde la grilla misma; esto cubre además "Pegar" del menú (clic derecho), que
+    // llama aquí directo sin pasar por RevoGrid.
+    if (!canEdit) { roNotify(); return false; }
     if (!model?.id || !["category", "subcategory", "description_extra"].includes(prop)) return false;
     const value = String(raw ?? "").trim();
     // OJO: RevoGrid ya aplicó el valor nuevo a `model` ANTES de disparar `afteredit`, así que
@@ -469,7 +484,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       load(); // revierte: la base manda
       return false;
     }
-  }, [load, t, pushUndo, undoCategorization]);
+  }, [load, t, pushUndo, undoCategorization, canEdit, roNotify]);
 
   /** Una celda ({prop, val, model}) o un RANGO ({data, models}: Ctrl+V sobre varias, Supr). Antes
    *  el rango cambiaba la pantalla pero NO se guardaba. */
@@ -620,6 +635,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   /** Formato sobre la selección. `column: null` = la fila entera (es lo que un bookkeeper
    *  espera al resaltar: se marca el movimiento, no una casilla suelta). */
   const format = useCallback(async (patch: Omit<Parameters<typeof applyCellFormat>[0], "transaction_ids">) => {
+    if (!canEdit) { roNotify(); return; }
     if (!selected.length) return;
     // Para DESHACER: el formato de fila que tenía cada una antes (Jose, 4-oct: todo deja su deshacer).
     const before = (rowsRef.current ?? []).filter((r) => selected.includes(r.id))
@@ -638,10 +654,11 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       load();
     } catch (err) { setError(String((err as Error)?.message ?? err)); }
     finally { setSaving(null); }
-  }, [selected, load, t, pushUndo]);
+  }, [selected, load, t, pushUndo, canEdit, roNotify]);
 
   /** Alternar una etiqueta en todas las filas seleccionadas. */
   const toggleLabel = useCallback(async (labelId: number) => {
+    if (!canEdit) { roNotify(); return; }
     if (!selected.length) return;
     const rs = (rowsRef.current ?? []).filter((r) => selected.includes(r.id));
     const allHave = rs.every((r) => r.labels?.some((l) => l.id === labelId));
@@ -654,7 +671,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       load();
     } catch (err) { setError(String((err as Error)?.message ?? err)); }
     finally { setSaving(null); }
-  }, [selected, load, t]);
+  }, [selected, load, t, canEdit, roNotify]);
 
   /** Estilo de una celda = formato de la fila + formato de esa columna (la columna gana). */
   const styleOf = (m: any, col: string): Record<string, string> => {
@@ -675,6 +692,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   /** VOLVER A SEGUIR LA REGLA: la celda deja de ser un valor escrito y vuelve a ser "fórmula".
    *  Si ninguna regla la cubre, se dice claro — no se inventa nada. */
   const backToRule = useCallback(async (id: number) => {
+    if (!canEdit) { roNotify(); return; }
     setSaving(t("sheet.following", { defaultValue: "Looking up the rule…" }));
     try {
       await followRule(id);
@@ -685,7 +703,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         ? t("sheet.noRule", { defaultValue: "No rule covers this transaction. Create one in the Rules tab." })
         : String((err as Error).message));
     } finally { setSaving(null); }
-  }, [load, t, undoCategorization]);
+  }, [load, t, undoCategorization, canEdit, roNotify]);
   const backToRuleRef = useRef(backToRule);
   useEffect(() => { backToRuleRef.current = backToRule; }, [backToRule]);
 
@@ -922,7 +940,6 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
 
   // MENÚ DE CLIC DERECHO (Jose, 4-oct): ver, editar, copiar, pegar, deshacer, seguir la regla,
   // crear una regla desde la fila y cómo se ve el texto.
-  const hostRef = useRef<HTMLDivElement | null>(null);
   useUndoShortcut(hostRef, () => void undo());
   useExternalClipboardGuard(hostRef);
 
@@ -969,7 +986,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     : String(m[prop] ?? "");
   const menuItems = (m: any, prop: string, row: number): MenuItem[] => {
     const colName = (columns as any[]).find((c) => c.prop === prop)?.name ?? prop;
-    const can = EDITABLE.includes(prop);
+    const can = EDITABLE.includes(prop) && canEdit;
     const items: MenuItem[] = [
       { label: t("sheet.menu.view", { defaultValue: "View full content" }),
         onClick: () => setViewer({ title: `${colName} · ${row + 1}`, text: sheetCellText(m, prop) }) },
@@ -985,28 +1002,28 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       "sep",
     ];
     if (m.source === "manual") items.push({ label: t("sheet.menu.followRule", { defaultValue: "Follow the rule again" }),
-      onClick: () => void backToRule(m.id) });
+      disabled: !canEdit, onClick: () => void backToRule(m.id) });
     // IR A LA REGLA (Jose, 4-oct): la fórmula de esta celda, en la hoja de Reglas.
     if (m.source === "rule" && m.matched_rule_id != null) items.push({
       label: t("sheet.menu.goToRule", { defaultValue: "Go to the rule" }),
       onClick: () => { setGoRule({ id: m.matched_rule_id, n: Date.now() }); setTab("rules"); } });
     // El banco vinculado lo retiró: el bookkeeper decide (Movimientos, 4-oct).
     if (m.bank_removed_at) items.push(
-      { label: t("sheet.menu.bankKeep", { defaultValue: "Keep it (clear the bank's mark)" }),
+      { label: t("sheet.menu.bankKeep", { defaultValue: "Keep it (clear the bank's mark)" }), disabled: !canEdit,
         onClick: async () => { try { await decideBankRemoved(m.id, "keep"); } catch (e) { setError(String((e as Error).message)); } load(); } },
-      { label: t("sheet.menu.bankDelete", { defaultValue: "Delete it from the book" }),
+      { label: t("sheet.menu.bankDelete", { defaultValue: "Delete it from the book" }), disabled: !canEdit,
         onClick: async () => {
           if (!window.confirm(t("sheet.menu.bankDeleteConfirm", { defaultValue: "Delete this transaction? The bank withdrew it. This can't be undone." }))) return;
           try { await decideBankRemoved(m.id, "delete"); } catch (e) { setError(String((e as Error).message)); }
           load();
         } },
     );
-    items.push({ label: t("sheet.menu.newRule", { defaultValue: "Create a rule from this row" }),
+    items.push({ label: t("sheet.menu.newRule", { defaultValue: "Create a rule from this row" }), disabled: !canEdit,
       onClick: () => setRuleDialog({ seed: m as SheetRow }) });
     // LAS NOTAS (19-oct): la de ESTA fila se escribe en el panel; la del libro, en su ventana.
     items.push("sep",
       { label: t("sheet.menu.note"), onClick: () => openPanelFor(m.id, prop, row) },
-      { label: t("sheet.menu.bookNote"), onClick: () => void openBookNote(m as SheetRow) });
+      { label: t("sheet.menu.bookNote"), disabled: !canEdit, onClick: () => void openBookNote(m as SheetRow) });
     items.push("sep",
       { label: lastUndo ? t("sheet.undoWhat", { defaultValue: "Undo: {{what}}", what: lastUndo }) : t("sheet.undo", { defaultValue: "Undo" }),
         hint: "Ctrl+Z", disabled: !canUndo, onClick: () => void undo() },
@@ -1167,6 +1184,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
   const selRow = selected.length === 1 ? (rowsRef.current ?? []).find((r) => r.id === selected[0]) ?? null : null;
   const nSel = onRules ? (rc?.selectedCount ?? 0) : (tab === "sheet" ? selected.length : 0);
   const doFormat = (p: { bold?: boolean; italic?: boolean; bg?: string; clear?: boolean }) => {
+    if (!canEdit) { roNotify(); return; }
     if (onRules) { rc?.restyle(p.clear ? "clear" : p); return; }
     void format(p);
   };
@@ -1184,7 +1202,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       { label: t("sheet.mb.linkBank"), onClick: () => onNavigate?.("upload"), disabled: !onNavigate },
       ...(bankConns.length ? [{ label: t("sheet.bank.update"), disabled: bankBusy, onClick: () => void syncAllBanks() }] : []),
       "sep",
-      { label: t("sheet.mb.importRules"), onClick: () => withRules((c) => c.importRules()) },
+      { label: t("sheet.mb.importRules"), disabled: !canEdit, onClick: () => withRules((c) => c.importRules()) },
       { label: t("sheet.mb.exportRules"), onClick: () => withRules((c) => c.exportRules()) },
       "sep",
       { label: t("sheet.mb.exportSheet"), onClick: () => downloadSheetCsv(visible), disabled: tab !== "sheet" || !visible.length },
@@ -1198,19 +1216,20 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         onClick: () => void navigator.clipboard?.writeText(formula?.text ?? "") },
       "sep",
       onRules
-        ? { label: t("rules.add", { defaultValue: "New rule" }), onClick: () => rc?.newRule() }
+        ? { label: t("rules.add", { defaultValue: "New rule" }), disabled: !canEdit, onClick: () => rc?.newRule() }
         : { label: selRow ? t("sheet.createRuleFromRow", { defaultValue: "Create rule from this row" })
                           : t("sheet.createRule", { defaultValue: "Create rule" }),
+            disabled: !canEdit,
             onClick: () => { if (tab !== "sheet") setTab("sheet"); setRuleDialog({ seed: selRow }); } },
       { label: t("sheet.menu.followRule", { defaultValue: "Follow the rule again" }),
-        disabled: tab !== "sheet" || selRow?.source !== "manual", onClick: () => selRow && void backToRule(selRow.id) },
+        disabled: !canEdit || tab !== "sheet" || selRow?.source !== "manual", onClick: () => selRow && void backToRule(selRow.id) },
       onRules
-        ? { label: t("rules.deleteRule", { defaultValue: "Delete rule…" }), disabled: !rc?.canDelete, onClick: () => rc?.deleteRule() }
+        ? { label: t("rules.deleteRule", { defaultValue: "Delete rule…" }), disabled: !canEdit || !rc?.canDelete, onClick: () => rc?.deleteRule() }
         : { label: t("sheet.menu.goToRule", { defaultValue: "Go to the rule" }),
             disabled: tab !== "sheet" || selRow?.source !== "rule" || selRow?.matched_rule_id == null,
             onClick: () => { if (selRow?.matched_rule_id != null) { setGoRule({ id: selRow.matched_rule_id, n: Date.now() }); setTab("rules"); } } },
       "sep",
-      { label: t("sheet.mb.newBookNote"), onClick: () => void openBookNote(null) },
+      { label: t("sheet.mb.newBookNote"), disabled: !canEdit, onClick: () => void openBookNote(null) },
       "sep",
       { label: t("sheet.mb.find"), hint: "Ctrl+F", disabled: tab !== "sheet",
         onClick: () => setTimeout(() => { searchRef.current?.focus(); searchRef.current?.select(); }, 0) },
@@ -1244,12 +1263,12 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
     ] },
     { id: "format", label: t("sheet.mb.format"), items: [
       { heading: nSel ? t("sheet.nSelected", { defaultValue: "{{count}} selected", count: nSel }) : t("sheet.mb.selectFirst") },
-      { label: t("sheet.fmt.bold"), hint: "B", disabled: !nSel, onClick: () => doFormat({ bold: true }) },
-      { label: t("sheet.fmt.italic"), hint: "I", disabled: !nSel, onClick: () => doFormat({ italic: true }) },
+      { label: t("sheet.fmt.bold"), hint: "B", disabled: !nSel || !canEdit, onClick: () => doFormat({ bold: true }) },
+      { label: t("sheet.fmt.italic"), hint: "I", disabled: !nSel || !canEdit, onClick: () => doFormat({ italic: true }) },
       "sep",
-      ...COLORS.map(([c, label]) => ({ label, swatch: c, disabled: !nSel, onClick: () => doFormat({ bg: c }) })),
+      ...COLORS.map(([c, label]) => ({ label, swatch: c, disabled: !nSel || !canEdit, onClick: () => doFormat({ bg: c }) })),
       "sep",
-      { label: t("sheet.fmt.clear"), disabled: !nSel, onClick: () => doFormat({ clear: true }) },
+      { label: t("sheet.fmt.clear"), disabled: !nSel || !canEdit, onClick: () => doFormat({ clear: true }) },
     ] },
     { id: "options", label: t("sheet.mb.options"), items: [
       { label: t("sheet.mb.chart"), onClick: () => onNavigate?.("settings"), disabled: !onNavigate },
@@ -1417,17 +1436,18 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             la palabra clave que quieres, no "CHECK 1234"); sin selección, abre una regla en blanco. */}
         {toolbar && tab === "sheet" && (
           <button
+            disabled={!canEdit}
             onClick={() => {
               const row = selected.length === 1 ? (rowsRef.current ?? []).find((r) => r.id === selected[0]) : null;
               setRuleDialog({ seed: row ?? null });
             }}
-            title={selected.length === 1
+            title={!canEdit ? t("sheet.readOnly", { defaultValue: "This book is read-only" }) : selected.length === 1
               ? t("sheet.ruleFromRow", { defaultValue: "Create a rule from this description" })
               : t("sheet.ruleBlank", { defaultValue: "Create a new rule (select a row first to start from its description)" })}
             style={{ border: "1px solid #1A8754", background: "#1A8754", color: "#fff", borderRadius: 8,
-                     padding: "6px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer",
+                     padding: "6px 14px", fontWeight: 700, fontSize: 13, cursor: canEdit ? "pointer" : "default",
                      whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6,
-                     boxShadow: "0 1px 2px rgba(26,135,84,.35)" }}>
+                     boxShadow: "0 1px 2px rgba(26,135,84,.35)", opacity: canEdit ? 1 : 0.5 }}>
             <span style={{ fontStyle: "italic", fontWeight: 800 }}>ƒ+</span>
             {selected.length === 1
               ? t("sheet.createRuleFromRow", { defaultValue: "Create rule from this row" })
@@ -1438,9 +1458,11 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         {/* 📌 NOTA DEL LIBRO (19-oct): lo que el bookkeeper sabe del libro, sin salir de la Hoja. Con texto y
             junto a "Crear regla" (Jose: "el botón está muy escondido" cuando era solo el 📌). */}
         {toolbar && tab === "sheet" && (
-          <button onClick={() => void openBookNote(null)} title={t("sheet.bookNoteHint")}
+          <button disabled={!canEdit} onClick={() => void openBookNote(null)}
+            title={!canEdit ? t("sheet.readOnly", { defaultValue: "This book is read-only" }) : t("sheet.bookNoteHint")}
             style={{ border: "1px solid #d5d0c4", background: "#fff", borderRadius: 8, padding: "5px 12px",
-                     fontWeight: 600, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+                     fontWeight: 600, fontSize: 13, cursor: canEdit ? "pointer" : "default",
+                     whiteSpace: "nowrap", opacity: canEdit ? 1 : 0.5 }}>
             📌 {t("sheet.bookNote")}
           </button>
         )}
@@ -1466,8 +1488,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         )}
 
         {/* BARRA DE FORMATO — actúa sobre la SELECCIÓN. Deshabilitada si no hay nada marcado,
-            para que nunca se aplique "a lo que sea" sin que el bookkeeper lo haya elegido. */}
-        {toolbar && tab === "sheet" && selected.length > 0 && (
+            para que nunca se aplique "a lo que sea" sin que el bookkeeper lo haya elegido. Para un
+            VIEWER (23-oct) se esconde entera: `format()` ya está candado, pero no hay nada que
+            ofrecer (sería una barra entera de botones que solo muestran el aviso). */}
+        {toolbar && tab === "sheet" && canEdit && selected.length > 0 && (
           <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#fff",
                         border: "1px solid #d5d0c4", borderRadius: 8, padding: "3px 6px" }}>
             <span style={{ fontSize: 11.5, color: "#5b6b62", fontWeight: 600, marginInlineEnd: 2 }}>
@@ -1605,7 +1629,8 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         {tab === "rules"
           ? <RulesSheet seedKeyword={ruleSeed} onSeedUsed={() => setRuleSeed(null)} memory={rulesSpot}
               toolbar={toolbar} formulaBar={showFormula} onCommands={onRulesCommands}
-              focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} showPriority={showPriority} />
+              focusRule={goRule} onFocusRuleDone={() => setGoRule(null)} showPriority={showPriority}
+              canEdit={canEdit} />
           : tab === "pivot"
           ? <div style={{ height: "100%", overflowY: "auto" }}><Pivot accounts={acctSel} range={dateRange} /></div>
           : rows === null
@@ -1623,6 +1648,10 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
               rowHeaders={true}   /* números de fila: para poder decir "la fila 47" al reportar */
               rowClass="_rowClass"
               editors={SHEET_EDITORS as any}
+              // SOLO LECTURA (23-oct): del GRID entero, no por columna — así no pinta ninguna celda
+              // de gris (eso solo lo hace el `readonly` por columna). Bloquea editar/pegar/borrar/
+              // rellenar solo; Copiar sigue andando (RevoGrid no lo frena en modo readonly).
+              readonly={!canEdit}
             />}
       </div>
       {panelTx != null && (
@@ -1678,6 +1707,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
       )}
       {viewer && <CellViewer title={viewer.title} text={viewer.text} onClose={() => setViewer(null)}
                     closeLabel={t("sheet.menu.close", { defaultValue: "Close" })} />}
+      <ReadOnlyNotice show={roShow} text={t("sheet.readOnly", { defaultValue: "This book is read-only" })} />
 
       <p style={{ fontSize: 12, color: "#5b6b62", marginTop: 8 }}>
         {t("sheet.hint", {
