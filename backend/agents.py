@@ -751,6 +751,10 @@ class Verdict(BaseModel):
     observation_en: str = ""
     observation_es: str = ""
     hint_for_drafter: str = ""
+    # 23-oct: si el veredicto se apoya en una nota CON FECHAS, cuál y qué filas dice que caen en ella. El código lo
+    # comprueba (`_check_note_citation`): una fila fuera de la ventana de la nota no puede ser "de las vacaciones".
+    note_id: Optional[int] = None
+    note_rows: list[str] = Field(default_factory=list)
 
 
 class ReviewOut(BaseModel):
@@ -763,10 +767,14 @@ both Materials and Office for good reasons; rows the bookkeeper set by hand are 
 or UNSURE. You never change any category: you only write an observation for the bookkeeper.
 
 Rules:
-- Output ONLY JSON: {"reviews": [{"ref", "verdict", "observation_en", "observation_es", "hint_for_drafter"}]},
-  one per finding.
-- Judge ONLY from the "facts" given for each finding; never assume facts that are not there. A note
-  applies to a finding only if its id is in "note_periods_covering_these_dates" (for dated notes).
+- Output ONLY JSON: {"reviews": [{"ref", "verdict", "observation_en", "observation_es", "hint_for_drafter",
+  "note_id", "note_rows"}]}, one per finding.
+- Judge ONLY from the "facts" given for each finding; never assume facts that are not there.
+- Dated notes (a period, e.g. a vacation): "rows" lists each row with its date and "inside_notes", the dated notes
+  whose period CONTAINS that date (computed by code). A dated note explains ONLY the rows inside its period, never
+  the rows outside. If you rely on a dated note, put its id in "note_id" and the rows inside it in "note_rows"
+  (their "row" refs); otherwise note_id null and note_rows []. LEGITIMATE because of a dated note only if EVERY
+  row of the finding is inside that note.
 - rule_deviation where the row was "decided by rule": the row is stale against its own rule → PROBLEM.
 - rule_collision: two rules fight over the same transactions → PROBLEM (the bookkeeper should decide
   which one wins or change one).
@@ -774,6 +782,10 @@ Rules:
   business expense → PROBLEM unless a note explains it (e.g. a gym that is the client's business).
 - sign_mismatch: the bank direction contradicts the section → PROBLEM. If money came IN from a supplier
   booked against a cost (it may be a refund) → UNSURE. LEGITIMATE only if a note explains it.
+- inconsistent_merchant with "split_by_rules": the bookkeeper's OWN rules split this merchant on purpose (by
+  amount or dates), and the rows of this finding are the ones that do NOT follow those rules ("rules_say": what
+  each row has and what its rules decide). A note that describes the split explains the RULES, not these rows:
+  it is never a reason for LEGITIMATE here. → PROBLEM; UNSURE if every such row was set by hand (ask).
 - inconsistent_merchant: you cannot see what was bought, so the merchant "could sell different things"
   is NOT evidence. LEGITIMATE only with evidence: a note that explains the split, or every differing row
   set by hand ("differing_rows_set_by_hand" equals "rows_differing_from_majority"). If the rows fall in
@@ -793,18 +805,53 @@ Rules:
 - Placeholders like "PERSON 1" stand for private people: keep them as written."""
 
 
-def _notes_covering(view: BookView, txs: list[Transaction]) -> list[int]:
-    """Ids de las notas cuyo periodo INCLUYE alguna de estas fechas (lo calcula el código: el modelo
-    inventaba que un gasto caía en las vacaciones, ✅ 7-oct)."""
-    out = []
-    for n in view.notes:
-        if not (n["valid_from"] or n["valid_to"]):
-            continue
-        lo = date.fromisoformat(n["valid_from"]) if n["valid_from"] else date.min
-        hi = date.fromisoformat(n["valid_to"]) if n["valid_to"] else date.max
-        if any(lo <= t.date <= hi for t in txs):
-            out.append(n["id"])
-    return out
+MAX_ROWS_DATED = 12   # filas con fecha que ve el ① por hallazgo
+CITATION_REJECTED: list[str] = []   # motivos de las citas rechazadas (para la medición; en memoria)
+
+
+def _windows(view: BookView) -> dict[int, tuple[date, date]]:
+    """Las notas CON fechas: id → (desde, hasta), inclusivo."""
+    return {n["id"]: (date.fromisoformat(n["valid_from"]) if n["valid_from"] else date.min,
+                      date.fromisoformat(n["valid_to"]) if n["valid_to"] else date.max)
+            for n in view.notes if n["valid_from"] or n["valid_to"]}
+
+
+def _dated_rows(view: BookView, txs: list[Transaction]) -> tuple[list[dict], dict[str, Transaction]]:
+    """(23-oct) Cada fila del hallazgo con su FECHA y las notas con fechas que la contienen (lo calcula el código;
+    el ① ligaba un cargo a las vacaciones porque 1 de sus 3 caía dentro). Sin montos ni descripciones. Solo si el
+    libro tiene notas con fechas."""
+    win = _windows(view)
+    if not win:
+        return [], {}
+    ordered = sorted(txs, key=lambda t: (t.date, t.id))[:MAX_ROWS_DATED]
+    refs = {f"R{i}": t for i, t in enumerate(ordered, 1)}
+    return [{"row": r, "date": t.date.isoformat(),
+             "inside_notes": [nid for nid, (lo, hi) in win.items() if lo <= t.date <= hi]} for r, t in refs.items()], refs
+
+
+def _check_note_citation(view: BookView, txs: list[Transaction], v: "Verdict") -> Optional[str]:
+    """¿El veredicto cita bien la nota con fechas? None si sí; si no, el motivo. Una fila citada tiene que caer
+    DENTRO de la ventana de la nota, y un "legítimo" por una nota con fechas exige que TODAS las filas del hallazgo
+    caigan dentro."""
+    win = _windows(view)
+    if v.note_id is None:
+        return "note_rows_without_note" if v.note_rows else None
+    if v.note_id not in win:
+        return None if v.note_id in {n["id"] for n in view.notes} else "unknown_note"   # nota sin fechas: nada que medir
+    lo, hi = win[v.note_id]
+    _rows, refs = _dated_rows(view, txs)
+    if any(r not in refs or not (lo <= refs[r].date <= hi) for r in v.note_rows):
+        return "row_outside_note"
+    if v.verdict == "legitimate" and any(not (lo <= t.date <= hi) for t in txs):
+        return "legitimate_beyond_note"
+    return None
+
+
+# El texto que ve el bookkeeper cuando el código rechaza la cita del ① (EN y ES, 23-oct).
+_CITATION_REJECTED = {
+    "en": "The reviewer tied these rows to a dated note, but not all of them fall inside its dates: check them yourself.",
+    "es": "El revisor ligó estas filas a una nota con fechas, pero no todas caen dentro de su periodo: revísalas tú.",
+}
 
 
 def review_input(session: Session, company: Company, view: BookView,
@@ -863,6 +910,16 @@ def review_input(session: Session, company: Company, view: BookView,
             facts["rows_differing_from_majority"] = len(odd)
             facts["differing_rows_set_by_hand"] = len(odd & manual)
             facts["different_pnl_sections"] = len(sections) > 1
+            if p.get("by_rules"):
+                # 23-oct: separado A PROPÓSITO por las reglas del bookkeeper (monto o fechas); estas filas las rompen.
+                by_tx = p.get("suggested_by_tx") or {}
+                facts.pop("rows_differing_from_majority")
+                facts["split_by_rules"] = True
+                facts["rows_not_following_rules"] = len(odd)
+                facts["rules_say"] = dict(Counter(f"row has {_label(t)}, its rules say {by_tx.get(str(t.id)) or 'no rule'}"
+                                                  for t in group))
+                facts["meaning"] = ("the bookkeeper split this merchant on purpose with rules by amount or dates; these "
+                                    "rows break those rules")
         elif f.type == "merchant_type_mismatch":
             facts["meaning"] = ("the internet says this merchant is a business for PERSONAL use, but the book "
                                 "has it as a business expense")
@@ -872,8 +929,9 @@ def review_input(session: Session, company: Company, view: BookView,
         hit = view.web.get(group[0].id)
         if hit is not None and hit.confidence in ("high", "medium"):
             facts["web_business_type"] = f"{hit.business_type} ({hit.confidence} confidence, verified on the internet)"
+        dated, _refs = _dated_rows(view, group)
         out.append({"ref": ref, "type": f.type, "merchant": phrase, "facts": facts,
-                    "note_periods_covering_these_dates": _notes_covering(view, group)})
+                    **({"rows": dated} if dated else {})})
         if len(out) >= MAX_FINDINGS:
             break
     return out, silenced, ids_of
@@ -967,6 +1025,14 @@ Findings to review:
     reviews = []
     for item in findings:
         f, v = ids_of[item["ref"]], verdicts.get(item["ref"])
+        bad = (_check_note_citation(view, [t for t in view.ctx.txs if t.id in set(f.transaction_ids or [])], v)
+               if v is not None else None)
+        if bad is not None:
+            # 23-oct: la cita de la nota con fechas no se sostiene (lo comprueba el código) → no se guarda lo que dijo el
+            # modelo: queda "inseguro" con un texto fijo, para que el bookkeeper lo mire.
+            v = v.model_copy(update={"verdict": "unsure", "observation_en": _CITATION_REJECTED["en"],
+                                     "observation_es": _CITATION_REJECTED["es"], "note_id": None, "note_rows": []})
+            CITATION_REJECTED.append(bad)
         if v is not None:
             # El ① explica, pero no despacha lo que no puede despachar: un "legítimo" ahí no se guarda.
             f.agent_verdict = None if (v.verdict == "legitimate" and book_review.ai_cannot_dismiss(f)) else v.verdict

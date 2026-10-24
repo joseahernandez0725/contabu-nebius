@@ -84,7 +84,7 @@ def _read() -> list[dict]:
     return [json.loads(x) for x in open(OUT, encoding="utf-8")] if OUT.exists() else []
 
 
-SPENT_SINCE = "2026-10-22T20:38"   # cada tanda tiene su tope: el inicio de la tanda (reloj del sistema, `ts`)
+SPENT_SINCE = os.getenv("REAL_MATRIX_SINCE", "2026-10-22T20:38")   # tope por tanda: su inicio (reloj del sistema, `ts`)
 
 
 def _spent() -> float:
@@ -123,11 +123,16 @@ def _done(kind: str, model: str, reasoning: bool) -> int:
 def _cfg_runs(kind: str, n: int):
     """(modelo, razona) pendientes, en orden: primero la configuración de hoy (el control)."""
     import agent_models
-    today = agent_models.DEFAULTS[SEAT[kind]]
+    today = agent_models.DEFAULTS[_seat(kind)]
     order = [today] + [c for c in CONFIGS if c != today]
     for m, r in order:
         for _ in range(max(0, n - _done(kind, m, r))):
             yield m, r
+
+
+def _seat(kind: str) -> str:
+    """El asiento de un `kind` (también los que llevan etiqueta, `--tag`)."""
+    return SEAT.get(kind) or ("reviewer" if kind.endswith("_reviewer") else "personal")
 
 
 def _over_cap() -> bool:
@@ -379,6 +384,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
     session.flush()
     merchant_verifier.ORACLE = {} if oracle else None
     nemotron.SENT.clear()
+    agents.CITATION_REJECTED.clear()
     truth = _exam_truth(session, company, exam)
     before = set(merchant_verifier.cached(session, company))
     # El flujo de `measure.web_flow` (auditar → ② → ① otra vez) con el tope de búsquedas de ESTE examen.
@@ -419,6 +425,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
             "agents_blind": len(team_keys & blind), "agents_open": len(team_keys - blind),
             "personal_blind": len(pers_keys & blind), "personal_open": len(pers_keys - blind),
             "personal_false_alerts": rev["personal"]["alerts"] - rev["personal"]["true_alerts"],
+            "citation_rejected": dict(Counter(agents.CITATION_REJECTED)),
             "rows_in_key": sum(e["id_rows"] for e in truth), "rows_found": sum(len(e["rows"]) for e in truth),
             "code_found": a["found"], "code_alerts": a["alerts"], "code_on_planted": a["true_alerts"],
             "agents_found": team["found"], "agents_alerts": team["alerts"], "agents_on_planted": team["true_alerts"],
@@ -432,7 +439,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
             "latency_ms": lat + (pend.usage.latency_ms if pend.usage else 0), "privacy": privacy}
 
 
-def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False) -> int:
+def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, tag: str | None = None) -> int:
     import agent_models
     from db import engine
     from models import Company
@@ -440,12 +447,12 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False) 
     key_path = _key_path(exam_id)
     sha0 = (key_path.parent / "key_frozen_sha1.txt").read_text().split()[0]
     sha = lambda: hashlib.sha1(key_path.read_bytes()).hexdigest()   # noqa: E731
-    prefix = cfg["prefix"] + ("_nonote" if drop_note else "")
+    prefix = cfg["prefix"] + ("_nonote" if drop_note else "") + (f"_{tag}" if tag else "")
     kinds = [(f"{prefix}_reviewer", "reviewer"), (f"{prefix}_personal", "personal")]
     plan = []
     for kind, seat in kinds:
         runs = list(_cfg_runs(kind, n))
-        if drop_note:   # sin nota: solo el equipo de hoy
+        if drop_note or tag:   # sin nota, o una medición con etiqueta: solo el equipo de hoy
             runs = [(m, r) for m, r in runs if (m, r) == agent_models.DEFAULTS[seat]][:n]
             if kind.endswith("_personal"):
                 runs = []   # el equipo de hoy es UNO: con el asiento del ① basta
@@ -553,7 +560,7 @@ def table() -> int:
 def _adoption(mine: list[dict], kind: str) -> None:
     """La regla de siempre: un candidato gana si su PEOR corrida supera la MEJOR del modelo de hoy (errores ciegos)."""
     import agent_models
-    today = agent_models.DEFAULTS[SEAT[kind]]
+    today = agent_models.DEFAULTS[_seat(kind)]
     score = lambda m, r: [x["agents_blind"] for x in mine if x["model"] == m and x["reasoning"] == r and _ok(x)]   # noqa: E731
     best_today = max(score(*today), default=None)
     if best_today is None:
@@ -567,6 +574,7 @@ def main() -> int:
     ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "table"))
     ap.add_argument("--n", type=int, default=3, help="corridas por configuración")
     ap.add_argument("--exam", choices=tuple(EXAMS), default="1", help="exam: cuál examen sembrado (base, clave, kind)")
+    ap.add_argument("--tag", help="exam: medición con etiqueta (solo el equipo de hoy, kind aparte)")
     ap.add_argument("--drop-note", action="store_true", help="exam: el equipo de hoy con las notas borradas (en la transacción)")
     ap.add_argument("--keep-note", type=int, help="drafter: conservar esta nota al volver al 'antes' (kind drafter_note)")
     ap.add_argument("--live-first", action="store_true",
@@ -580,7 +588,7 @@ def main() -> int:
         return drafter(args.n, args.live_first, args.keep_note)
     if args.what == "personal":
         return personal(args.n)
-    return exam(args.n, args.live_first, args.exam, args.drop_note)
+    return exam(args.n, args.live_first, args.exam, args.drop_note, args.tag)
 
 
 if __name__ == "__main__":
