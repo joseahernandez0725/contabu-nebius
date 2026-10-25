@@ -571,6 +571,26 @@ _VACATION = re.compile(r"vacation|vacacion|europe|europa|\btrip\b|viaje", re.I)
 
 
 def guide_pick(session: Session, company: Company) -> dict:
+    """El hallazgo de las paradas 9, 11 y 12 del recorrido, MÁS `transaction_id`: la primera fila (por fecha) de ese
+    hallazgo, para que la parada 11 abra su panel lateral. Ver `_guide_finding` para cómo se elige el hallazgo."""
+    pick = _guide_finding(session, company)
+    tx_id, f = None, None
+    if pick["finding_id"] is not None:
+        f = session.get(Finding, pick["finding_id"])
+        ids = [int(i) for i in (f.transaction_ids or [])] if f else []
+        if ids:
+            first = session.exec(select(Transaction).where(Transaction.company_id == company.id, Transaction.id.in_(ids))
+                                 .order_by(Transaction.date, Transaction.id)).first()
+            tx_id = first.id if first else None
+    # La nota de la parada 7: el hallazgo `note_check` lleva su id en la clave (`note:<id>:<comercio>`).
+    note_id = None
+    if pick["kind"] == "vacation" and pick["finding_id"] is not None:
+        parts = (f.key or "").split(":") if f else []
+        note_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+    return {**pick, "transaction_id": tx_id, "note_id": note_id}
+
+
+def _guide_finding(session: Session, company: Company) -> dict:
     """El hallazgo de la parada 5. El de la nota de las vacaciones SOLO si la revisión guardada está limpia: que
     el ① no ate Netflix a las vacaciones (#4 del plan del 22-oct) y que Starbucks no salga partido por ciudades
     (#5). Si no, "Nómina: el banco solo ve lo neto"; si tampoco, el primero con veredicto."""

@@ -1477,7 +1477,6 @@
   },
   "demoGuide": {
     "open": "Guide",
-    "progress": "{{n}} of {{total}}",
     "skip": "Skip",
     "next": "Next",
     "done": "Done",
@@ -1510,37 +1509,7 @@
       "blind": "Our fixed checks, without AI, find {{rules}} of {{of}}. With the agents: {{min}}–{{max}}.",
       "note": "One note from the bookkeeper, on a real client's books",
       "noteSource": "An authorized client account · accuracy of the rules the AI drafted",
-      "start": "Start the 60-second tour"
-    },
-    "s1": {
-      "t": "You're the bookkeeper",
-      "b": "You keep the books for three clients. A team of AI agents on NVIDIA Nemotron reviews them for you, and never touches a number."
-    },
-    "s2": {
-      "t": "Three clients, one console",
-      "b": "Switch between your clients' books here. You're in Rivera HVAC, a heating and cooling contractor."
-    },
-    "s3": {
-      "t": "The P&L, before Pending",
-      "b": "The database adds up the totals, not the AI. Whatever has no category yet is declared below the result, never hidden."
-    },
-    "s4": {
-      "measured": "Chosen by measuring: the bigger models found fewer errors.",
-      "t": "The agent team",
-      "b": "The agents already reviewed this book. Each step shows which Nemotron model did the work and what it found."
-    },
-    "s5": {
-      "t": "A finding, with its evidence",
-      "vacation": "Your note (the owner was on vacation in Europe) became a check: the coffee bought there that week is personal, not a business meal. The web evidence is linked.",
-      "payroll": "Accounting knowledge, not just text: the bank only sees the net pay, so the taxes and the gross payroll are missing from the books.",
-      "finding": "Each finding comes with the agent's verdict and its evidence. You decide what to do.",
-      "judged": "The label says which model really judged it, taken from the log of the agents' calls."
-    },
-    "s6": {
-      "t": "A rule, tested before it changes anything",
-      "b": "The AI doesn't categorize: it proposes a rule. Before you approve it, you see every row it would change.",
-      "tourOnly": "In the guided tour you can look, not approve.",
-      "none": "The rules the agents proposed show up here."
+      "start": "Start the quick guide"
     },
     "judged": {
       "reviewer": "Judged by {{model}}",
@@ -1548,13 +1517,85 @@
       "personal_judge": "Judged by {{model}}",
       "code": "Found by code, no AI"
     },
-    "s7": {
+    "progressLabel": "Guide progress",
+    "who": {
+      "t": "You're the bookkeeper",
+      "b": "You keep the books for three clients. A team of AI agents on NVIDIA Nemotron reviews them for you, and never touches a number."
+    },
+    "clients": {
+      "t": "Three clients, one console",
+      "b": "Switch between your clients' books here. You're in Rivera HVAC, a heating and cooling contractor."
+    },
+    "pnl": {
+      "t": "The P&L, before Pending",
+      "b": "The database adds up the totals, not the AI. Whatever has no category yet is declared below the result, never hidden."
+    },
+    "team": {
+      "measured": "Chosen by measuring: the bigger models found fewer errors.",
+      "t": "The agent team",
+      "b": "The agents already reviewed this book. Each step shows which Nemotron model did the work and what it found."
+    },
+    "finding": {
+      "t": "A finding, with its evidence",
+      "vacation": "Your note (the owner was on vacation in Europe) became a check: the coffee bought there that week is personal, not a business meal. The web evidence is linked.",
+      "payroll": "Accounting knowledge, not just text: the bank only sees the net pay, so the taxes and the gross payroll are missing from the books.",
+      "finding": "Each finding comes with the agent's verdict and its evidence. You decide what to do.",
+      "judged": "The label says which model really judged it, taken from the log of the agents' calls."
+    },
+    "proposal": {
+      "t": "A rule, tested before it changes anything",
+      "b": "The AI doesn't categorize: it proposes a rule. Before you approve it, you see the rows it would change.",
+      "tourOnly": "In the guided tour you can look, not approve.",
+      "none": "The rules the agents proposed show up here."
+    },
+    "rules": {
       "t": "Your rules are the book's formula",
       "b": "This is the engine: an ordered list of IF-THEN rows. The AI only proposes rows here — you approve them, and what you type by hand (✎) always wins over any rule."
     },
-    "s8": {
+    "live": {
       "t": "Want to run the agents yourself?",
       "b": "Sign in with Google and enter the access code: you get your own copy of the three books, and you run the agents."
+    },
+    "nav": {
+      "t": "All the work in one place",
+      "lead": "One section per job:",
+      "l": [
+        "Summary — the P&L and what needs attention",
+        "Bank feeds — Plaid or a statement",
+        "Transactions — the sheet and its rules",
+        "Notes — what you know about the client",
+        "Audit — the AI team",
+        "P&L — what the client receives",
+        "Book settings — the chart of accounts, each with its IRS line"
+      ],
+      "end": "Let's walk through it in order."
+    },
+    "bank": {
+      "t": "The bank comes in by itself",
+      "b": "Accounts connect through Plaid and the transactions update with ↻ Update bank; a statement file also comes in, through the same engine. In the guided tour you can only look: linking a bank is for the live demo (Plaid sandbox)."
+    },
+    "book": {
+      "t": "The bookkeeping sheet",
+      "lead": "Every row shows who decided its category:",
+      "l": [
+        "ƒ — a rule put it there, like a spreadsheet cell with a formula.",
+        "✎ (soft yellow) — you typed it by hand, and what you type beats the formula: no rule touches it again. Click the ✎ to follow the rule again.",
+        "Red — Pending: no rule covers it. Never hidden."
+      ],
+      "tools": "Tools: formula bar, right-click, color labels, filters, undo."
+    },
+    "notes": {
+      "t": "What you know about the client",
+      "b": "All your notes about this client live here, with what the AI understood from each one. You can pause any of them.",
+      "vacation": "The one lit up is the note about the owner's vacation."
+    },
+    "row": {
+      "t": "One row, its whole story",
+      "b": "Select any row and its panel opens: the rule that categorized it, your note, what the agents found and its history of changes, all in one place."
+    },
+    "agents": {
+      "t": "What the agents found stays on the row",
+      "b": "The finding, the verdict, who judged it and the web evidence from Tavily with its link. The agents' work is saved on the row: it is not paid for again."
     }
   }
 }
