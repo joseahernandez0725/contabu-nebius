@@ -12,18 +12,13 @@ import type { View } from "./Sidebar";
 // Las marcas que ilumina son `data-tour="…"` en los componentes (PageKit, Sidebar, Dashboard, AuditWorkspace).
 
 // ── LAS DOS PRUEBAS MEDIDAS: un solo lugar, cada una con su fuente ─────────────────────────────────────────────
-// docs/JUECES - IMPLEMENTACION TECNOLOGICA.md → §5 (la medición final, M2, 24-oct): el ciego del demo (D2) con el
-// código que se entrega (sha1 congelado), 5 corridas: 13 · 12 · 13 · 14 · 16 de 22 errores nunca vistos; solo el
-// código (las reglas, sin IA): 8 de 22.
-const BLIND = { min: 12, max: 16, of: 22, rulesAlone: 8 };
-// docs/FASE 11.A.md → "22 de octubre de 2026 (2)": el ④ (Super VL) con y sin la nota del libro, en el libro real:
-// 62 → 112 aciertos de 121 (51 % → 93 %). Se publica como "an authorized client account", sin el tipo de empresa
-// ni el parentesco (permiso del dueño, 23-oct).
-// ⏸️ PENDIENTE (Jose, 24-oct): se midió sobre el libro ENTERO y solo vale 2026. Mientras `pending` sea true la
-// tarjeta NO se muestra. Cuando Auditoría dé el número de 2026 (M1 en `DEMO Y ENTREGA.md` → "Los documentos para los
-// jueces"; el resultado irá a `JUECES - IMPLEMENTACION TECNOLOGICA.md` §5, fila R3), se cambian `before`,
-// `after` y `of`, se pone `pending: false` y se cita aquí la entrada nueva.
-const NOTE = { before: 62, after: 112, of: 121, pending: true };
+// docs/JUECES - IMPLEMENTACION TECNOLOGICA.md → §5 (los prompts finales, 24-oct): el ciego del demo (D2) con el
+// código que se entrega, 3 corridas: 14 · 15 · 14 de 22 errores nunca vistos; solo el código (las reglas, sin IA): 8.
+const BLIND = { min: 14, max: 15, of: 22, rulesAlone: 8 };
+// docs/JUECES - IMPLEMENTACION TECNOLOGICA.md → §5, fila R3 (24-oct): el ④ decide 15 de los 118 Pendientes de 2026
+// del libro real (×3 corridas); sin la nota del bookkeeper acierta 7 de esos 15, con la nota acierta los 15. Una
+// cuenta de cliente autorizada, sin el tipo de empresa ni el parentesco (permiso del dueño, 23-oct).
+const NOTE = { before: 7, after: 15, of: 15, pending: false };
 // docs/FASE 11.A.md → "17 de octubre de 2026": el ⑤ en Lightning, Super y Ultra encontró MENOS errores nunca vistos
 // que en Nano (control 14–15; Lightning 12–13, Super 12–13, Ultra 13). Es la línea de la parada 4.
 
@@ -290,7 +285,6 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
 function IntroScreen({ intro, onStart, onSkip }: { intro: DemoIntro | null; onStart: () => void; onSkip: () => void }) {
   const { t } = useTranslation();
   const n = (v?: number) => (v == null ? "…" : v.toLocaleString());
-  const pct = (a: number) => Math.round((a / NOTE.of) * 100);
   return (
     <div className="fixed inset-0 z-[70] bg-slate-900/50 overflow-y-auto" role="dialog" aria-modal="true" aria-label={t("demoGuide.intro.title")}>
       <div className="min-h-full flex items-center justify-center p-4">
@@ -305,7 +299,9 @@ function IntroScreen({ intro, onStart, onSkip }: { intro: DemoIntro | null; onSt
               <ul className="flex flex-wrap justify-center gap-1.5 pt-1">
                 {intro.team.map((a) => (
                   <li key={a.agent} className="text-xs rounded-full border border-slate-200 px-2.5 py-1 text-slate-700">
-                    {t(`demoGuide.agent.${a.agent}`)} · <span className="font-semibold">{a.model}</span>
+                    {/* El ② es la búsqueda en la web (Tavily) MÁS el modelo que juzga lo que encontró: el nombre del
+                        modelo sale medido (`agent_models.DEFAULTS`), "Tavily +" es fijo. */}
+                    {t(`demoGuide.agent.${a.agent}`)} · <span className="font-semibold">{a.agent === "classifier" ? `Tavily + ${a.model}` : a.model}</span>
                   </li>
                 ))}
               </ul>
@@ -335,7 +331,8 @@ function IntroScreen({ intro, onStart, onSkip }: { intro: DemoIntro | null; onSt
             </div>
             {!NOTE.pending && (
               <div className="rounded-2xl border border-slate-200 p-4">
-                <div className="text-2xl font-bold text-slate-900 tabular-nums">{pct(NOTE.before)}% → {pct(NOTE.after)}%</div>
+                {/* Son 15 movimientos, no un porcentaje (7 de 15 → 15 de 15 con la nota): un % inventaría una base. */}
+                <div className="text-2xl font-bold text-slate-900 tabular-nums">{NOTE.before} / {NOTE.of} → {NOTE.after} / {NOTE.of}</div>
                 <p className="text-sm text-slate-600">{t("demoGuide.intro.note")}</p>
                 <p className="text-[11px] text-slate-400 mt-0.5">{t("demoGuide.intro.noteSource")}</p>
               </div>

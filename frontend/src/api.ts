@@ -1262,7 +1262,7 @@ export async function redeemDemoCode(code: string): Promise<{ ok: true; code_nam
 // ── El recorrido guiado (FASE 13, Firm · 23-oct): la pantalla de inicio y las paradas ──────────────
 
 export interface DemoIntro {
-  team: { agent: "reviewer" | "drafter" | "personal" | "notes"; model: string }[];
+  team: { agent: "reviewer" | "drafter" | "personal" | "notes" | "classifier"; model: string }[];
   book: string | null;          // Rivera HVAC de la visita (los números de abajo salen de ese libro, por SQL)
   rows?: number; pending?: number; issues?: number; explained?: number; proposals?: number;
 }

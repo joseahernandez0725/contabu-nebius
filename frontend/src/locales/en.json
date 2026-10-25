@@ -1527,7 +1527,8 @@
       "reviewer": "Reviews each finding",
       "drafter": "Drafts rules",
       "personal": "Spots personal spending",
-      "notes": "Reads your notes"
+      "notes": "Reads your notes",
+      "classifier": "Checks merchants on the web"
     },
     "intro": {
       "powered": "Powered by NVIDIA Nemotron on Nebius Token Factory",

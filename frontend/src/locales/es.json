@@ -1656,7 +1656,8 @@
       "reviewer": "Revisa cada hallazgo",
       "drafter": "Redacta reglas",
       "personal": "Detecta gastos personales",
-      "notes": "Lee tus notas"
+      "notes": "Lee tus notas",
+      "classifier": "Busca comercios en internet"
     },
     "intro": {
       "powered": "Con NVIDIA Nemotron en Nebius Token Factory",
