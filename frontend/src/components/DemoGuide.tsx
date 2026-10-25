@@ -24,9 +24,10 @@ import type { View } from "./Sidebar";
 
 type Pick = Awaited<ReturnType<typeof getGuidePick>>;
 // Las 15 paradas, en orden (la guía rápida, 25-oct). La clave es el tema: los textos viven en `demoGuide.<clave>`.
-type StopKey = "who" | "clients" | "nav" | "bank" | "book" | "rules" | "newrule" | "notes" | "team" | "finding" | "proposal"
+// 🔄 25-oct (4, Jose): el equipo de agentes (`team`) va justo después del banco, antes de la hoja.
+type StopKey = "who" | "clients" | "nav" | "bank" | "team" | "book" | "rules" | "newrule" | "notes" | "finding" | "proposal"
   | "row" | "agents" | "pnl" | "live";
-const STOPS: StopKey[] = ["who", "clients", "nav", "bank", "book", "rules", "newrule", "notes", "team", "finding", "proposal",
+const STOPS: StopKey[] = ["who", "clients", "nav", "bank", "team", "book", "rules", "newrule", "notes", "finding", "proposal",
   "row", "agents", "pnl", "live"];
 // Paradas con controles adentro que NO deben tocarse en la visita (vincular, actualizar, "Está bien"…): un tapón
 // sobre lo iluminado, y tocarlo no avanza (se avanza con Next). La visita es de solo lectura también por dentro.
@@ -133,6 +134,11 @@ export default function DemoGuide({ onNavigate, onSidebar, onOpenRow }: {
     else setPhase((p) => (typeof p === "number" ? p + 1 : p));
   }, [phase, close]);
 
+  // Atrás: de la primera parada vuelve a la pantalla de inicio. Cada parada abre sola lo suyo, así que se puede volver.
+  const back = useCallback(() => {
+    setPhase((p) => (typeof p === "number" ? (p === 0 ? "intro" : p - 1) : p));
+  }, []);
+
   // "Guide" (barra de arriba o el resumen del inicio) lo vuelve a abrir.
   useEffect(() => {
     const open = () => setPhase("intro");
@@ -210,7 +216,10 @@ export default function DemoGuide({ onNavigate, onSidebar, onOpenRow }: {
       if (key === "proposal") {
         onNavigate("audit");
         await clickWhenReady('[data-tour="tab-proposals"]');
-        const has = await clickWhenReady('[data-tour="proposal-0"]', 2500);
+        // La regla con mejor evidencia de la web (la elige el servidor: `proposal_index`), no la primera de la lista.
+        const p = await getPick();
+        if (!alive) return;
+        const has = await clickWhenReady(`[data-tour="proposal-${p?.proposal_index ?? 0}"]`, 2500);
         if (!alive) return;
         setNoProposal(!has);
         if (has) {
@@ -355,12 +364,14 @@ export default function DemoGuide({ onNavigate, onSidebar, onOpenRow }: {
           </>
         )}
         {extra && <p className="text-xs text-slate-500">{extra}</p>}
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 pt-1">
           <button type="button" onClick={close} className="text-sm text-slate-500 hover:text-slate-800">{t("demoGuide.skip")}</button>
+          <button type="button" onClick={back}
+                  className="px-2 py-1 rounded-lg text-sm text-slate-600 hover:bg-slate-100 whitespace-nowrap">← {t("demoGuide.back")}</button>
           <div className="ms-auto flex items-center gap-2">
             {last && (
               <button type="button" onClick={() => { close(); void goLive(); }}
-                      className="px-3 py-1.5 rounded-lg text-sm font-semibold border border-brand-green text-brand-green hover:bg-emerald-50">
+                      className="px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-brand-green text-brand-green hover:bg-emerald-50">
                 {t("demoDoor.signInGoogle")}
               </button>
             )}

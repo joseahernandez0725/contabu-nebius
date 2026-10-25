@@ -1479,6 +1479,7 @@
     "open": "Guide",
     "skip": "Skip",
     "next": "Next",
+    "back": "Back",
     "done": "Done",
     "agent": {
       "reviewer": "Reviews each finding",

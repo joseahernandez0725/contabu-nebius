@@ -1608,6 +1608,7 @@
     "open": "Guía",
     "skip": "Saltar",
     "next": "Siguiente",
+    "back": "Atrás",
     "done": "Listo",
     "agent": {
       "reviewer": "Revisa cada hallazgo",
