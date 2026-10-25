@@ -79,7 +79,7 @@ export function useNoteText() {
 // ── La página ────────────────────────────────────────────────────────────────────────────────────
 
 // "+ Nueva nota" desde la tarjeta del inicio, o una nota recién creada en `NoteQuickAdd` (19-oct): la
-// página abre con el editor vacío o con ESA nota ya elegida. Una marca de módulo (como `openDemoTour`)
+// página abre con el editor vacío o con ESA nota ya elegida. Una marca de módulo (como `openDemoGuide`)
 // para que el montaje en `Dashboard.tsx` (de Firm) siga siendo de una línea.
 let selOnOpen: Sel = null;
 export function openNewNoteNext() { selOnOpen = "new"; }

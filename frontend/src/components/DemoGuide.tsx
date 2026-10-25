@@ -5,37 +5,31 @@ import { goLive, OPEN_GUIDE_EVENT } from "../demo";
 import type { View } from "./Sidebar";
 
 // EL RECORRIDO GUIADO DEL DEMO (FASE 13, área Firm · 23-oct; aprobado por Jose sobre dos dibujos). Una pantalla de
-// inicio y 7 paradas: la pantalla se oscurece al 50 %, un recorte claro y redondeado sobre lo que hay que tocar, y
-// al lado una burbuja ("N of 7", título, 1–2 frases, Skip / Next). Se avanza tocando lo iluminado o con Next; Esc
-// o Skip lo cierran. Arranca solo la primera vez (por puerta) y se reabre con "Guide". En el celular, la burbuja va
-// abajo (o arriba, si lo iluminado queda abajo). Cada parada abre sola la página que le toca.
-// Las marcas que ilumina son `data-tour="…"` en los componentes (PageKit, Sidebar, Dashboard, AuditWorkspace).
+// inicio y 8 paradas: la pantalla se oscurece al 50 %, un recorte claro y redondeado sobre lo que hay que tocar, y
+// al lado una burbuja ("N of 8", título, 1–2 frases, Skip / Next). Se avanza tocando lo iluminado o con Next; Esc
+// o Skip lo cierran. En el celular, la burbuja va abajo (o arriba, si lo iluminado queda abajo). Cada parada abre
+// sola la página que le toca. Las marcas que ilumina son `data-tour="…"` en los componentes (PageKit, Sidebar,
+// Dashboard, AuditWorkspace, Sheet, RulesSheet).
+//
+// 🔄 25-oct (Jose, sobre el demo desplegado): SOLO vive en la VISITA GUIADA — se montaba también en el demo en
+// vivo con textos propios por puerta; ahí no debe aparecer nada de esto (`App.tsx` ya no lo monta fuera de la
+// visita). Se simplificó: sin prop `door`, sin textos "tour"/"live" separados. Y "visto" se guarda por SESIÓN
+// (`sessionStorage`, no `localStorage`): antes, saltarlo una vez lo apagaba para siempre en ese navegador; ahora
+// salir de la visita y volver a entrar lo reinicia.
 
-// ── LAS DOS PRUEBAS MEDIDAS: un solo lugar, cada una con su fuente ─────────────────────────────────────────────
-// docs/JUECES - IMPLEMENTACION TECNOLOGICA.md → §5 (los prompts finales, 24-oct): el ciego del demo (D2) con el
-// código que se entrega, 3 corridas: 14 · 15 · 14 de 22 errores nunca vistos; solo el código (las reglas, sin IA): 8.
-const BLIND = { min: 14, max: 15, of: 22, rulesAlone: 8 };
-// docs/JUECES - IMPLEMENTACION TECNOLOGICA.md → §5, fila R3 (24-oct): el ④ decide 15 de los 118 Pendientes de 2026
-// del libro real (×3 corridas); sin la nota del bookkeeper acierta 7 de esos 15, con la nota acierta los 15. Una
-// cuenta de cliente autorizada, sin el tipo de empresa ni el parentesco (permiso del dueño, 23-oct).
-const NOTE = { before: 7, after: 15, of: 15, pending: false };
-// docs/FASE 11.A.md → "17 de octubre de 2026": el ⑤ en Lightning, Super y Ultra encontró MENOS errores nunca vistos
-// que en Nano (control 14–15; Lightning 12–13, Super 12–13, Ultra 13). Es la línea de la parada 4.
-
-type Door = "tour" | "live";
 type Pick = Awaited<ReturnType<typeof getGuidePick>>;
-type StopKey = "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7";
-const STOPS: StopKey[] = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
+type StopKey = "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8";
+const STOPS: StopKey[] = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"];
 const PAD = 6;          // el aire alrededor de lo iluminado
 const GAP = 12;         // entre lo iluminado y la burbuja
 const BUBBLE_W = 340;
 
-const seenKey = (door: Door) => `contabu.demoGuide.seen.v1.${door}`;
-function readSeen(door: Door): boolean {
-  try { return window.localStorage.getItem(seenKey(door)) === "1"; } catch { return false; }
+const SEEN_KEY = "contabu.demoGuide.seen.v1";
+function readSeen(): boolean {
+  try { return window.sessionStorage.getItem(SEEN_KEY) === "1"; } catch { return false; }
 }
-function writeSeen(door: Door) {
-  try { window.localStorage.setItem(seenKey(door), "1"); } catch { /* modo privado: se ve otra vez, no pasa nada */ }
+function writeSeen() {
+  try { window.sessionStorage.setItem(SEEN_KEY, "1"); } catch { /* modo privado: se ve otra vez, no pasa nada */ }
 }
 
 /** El primer elemento VISIBLE que cumple el selector (la barra lateral tiene una copia oculta en el celular). */
@@ -63,14 +57,21 @@ async function clickWhenReady(sel: string, ms?: number): Promise<boolean> {
 
 type Box = { top: number; left: number; width: number; height: number };
 
-export default function DemoGuide({ door, onNavigate, onSidebar }: {
-  door: Door;
+// LAS DOS PRUEBAS MEDIDAS: un solo lugar, cada una con su fuente — docs/JUECES - IMPLEMENTACION TECNOLOGICA.md § 5
+// (los prompts finales, 24-oct). D2, el ciego del demo con el código que se entrega, 3 corridas: 14 · 15 · 14 de
+// 22 errores nunca vistos; solo el código (las reglas, sin IA): 8. R3, el ④ sobre los 118 Pendientes de 2026 del
+// libro real (×3 corridas): decide 15, acierta 7 sin la nota del bookkeeper y los 15 con ella (una cuenta de
+// cliente autorizada, sin el tipo de empresa ni el parentesco; permiso del dueño, 23-oct).
+const BLIND = { min: 14, max: 15, of: 22, rulesAlone: 8 };
+const NOTE = { before: 7, after: 15, of: 15 };
+
+export default function DemoGuide({ onNavigate, onSidebar }: {
   onNavigate: (v: View) => void;
   onSidebar: (open: boolean) => void;   // la parada 2 abre la barra (escritorio) o el cajón (celular)
 }) {
   const { t } = useTranslation();
-  // null = cerrado · "intro" = la pantalla de inicio · 0..6 = la parada
-  const [phase, setPhase] = useState<"intro" | number | null>(() => (readSeen(door) ? null : "intro"));
+  // null = cerrado · "intro" = la pantalla de inicio · 0..7 = la parada
+  const [phase, setPhase] = useState<"intro" | number | null>(() => (readSeen() ? null : "intro"));
   const [intro, setIntro] = useState<DemoIntro | null>(null);
   const [pick, setPick] = useState<Pick | null>(null);
   const [noProposal, setNoProposal] = useState(false);
@@ -92,8 +93,8 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
     setTarget(null);
     setHole(null);
     onSidebar(false);
-    writeSeen(door);
-  }, [door, onSidebar]);
+    writeSeen();
+  }, [onSidebar]);
   const next = useCallback(() => {
     if (typeof phase === "number" && phase + 1 >= STOPS.length) close();
     else setPhase((p) => (typeof p === "number" ? p + 1 : p));
@@ -154,6 +155,12 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
           sel = '[data-tour="detail"]';
         } else sel = '[data-tour="tab-proposals"]';
       }
+      if (key === "s7") {
+        // El criterio del bookkeeper manda: la hoja de reglas (la "fórmula" del libro), en Movimientos.
+        onNavigate("transactions");
+        await clickWhenReady('[data-tour="rules-tab"]');
+        sel = '[data-tour="rules-formula"]';
+      }
       if (!alive || !sel) return;
       const el = await waitFor(sel);
       if (!alive || !el) return;
@@ -184,18 +191,16 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
     return () => cancelAnimationFrame(raf);
   }, [target]);
 
-  // Tocar lo iluminado avanza (el clic sigue su camino: abre el menú, la fila…). En el demo en vivo, la parada 4
-  // NO avanza al tocar: ahí se toca "Review the book" y se espera a que termine.
+  // Tocar lo iluminado avanza (el clic sigue su camino: abre el menú, la fila…).
   useEffect(() => {
     if (typeof phase !== "number" || !target) return;
-    if (STOPS[phase] === "s4" && door === "live") return;
     const onClick = (e: MouseEvent) => {
       const el = visible(target);
       if (el && el.contains(e.target as Node)) window.setTimeout(next, 150);
     };
     document.addEventListener("click", onClick, true);
     return () => document.removeEventListener("click", onClick, true);
-  }, [phase, target, door, next]);
+  }, [phase, target, next]);
 
   useLayoutEffect(() => {
     const h = bubbleRef.current?.offsetHeight;
@@ -209,7 +214,7 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
   }
 
   const key = STOPS[phase];
-  const centered = key === "s1" || key === "s7";
+  const centered = key === "s1" || key === "s8";
   const mobile = vp.w < 640;
   const last = phase === STOPS.length - 1;
 
@@ -230,15 +235,13 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
     else bubbleStyle = { bottom: 8, right: 8, width: BUBBLE_W };   // lo iluminado ocupa casi todo: a la esquina
   }
 
-  const body = key === "s4" ? t(`demoGuide.s4.${door}`)
-    : key === "s5" ? t(`demoGuide.s5.${pick?.kind ?? "finding"}`)
-    : key === "s6" ? (noProposal ? t(`demoGuide.s6.none.${door}`) : t("demoGuide.s6.b"))
-    : key === "s7" ? t(`demoGuide.s7.${door}.b`)
+  const body = key === "s5" ? t(`demoGuide.s5.${pick?.kind ?? "finding"}`)
+    : key === "s6" ? (noProposal ? t("demoGuide.s6.none") : t("demoGuide.s6.b"))
     : t(`demoGuide.${key}.b`);
-  const title = key === "s7" ? t(`demoGuide.s7.${door}.t`) : t(`demoGuide.${key}.t`);
+  const title = t(`demoGuide.${key}.t`);
   const extra = key === "s4" ? t("demoGuide.s4.measured")
     : key === "s5" && pick?.kind !== "payroll" ? t("demoGuide.s5.judged")
-    : key === "s6" && door === "tour" && !noProposal ? t("demoGuide.s6.tourOnly") : null;
+    : key === "s6" && !noProposal ? t("demoGuide.s6.tourOnly") : null;
 
   return (
     <div className="fixed inset-0 z-[70] pointer-events-none" role="dialog" aria-modal="true" aria-label={title}>
@@ -264,7 +267,7 @@ export default function DemoGuide({ door, onNavigate, onSidebar }: {
         <div className="flex items-center gap-2 pt-1">
           <button type="button" onClick={close} className="text-sm text-slate-500 hover:text-slate-800">{t("demoGuide.skip")}</button>
           <div className="ms-auto flex items-center gap-2">
-            {last && door === "tour" && (
+            {last && (
               <button type="button" onClick={() => { close(); void goLive(); }}
                       className="px-3 py-1.5 rounded-lg text-sm font-semibold border border-brand-green text-brand-green hover:bg-emerald-50">
                 {t("demoDoor.signInGoogle")}
@@ -324,19 +327,17 @@ function IntroScreen({ intro, onStart, onSkip }: { intro: DemoIntro | null; onSt
           </div>
           {intro?.book && <p className="-mt-2 text-[11px] text-center text-slate-400">{t("demoGuide.intro.source", { book: intro.book })}</p>}
 
-          <div className={`grid gap-3 ${NOTE.pending ? "" : "sm:grid-cols-2"}`}>
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 p-4">
               <div className="text-2xl font-bold text-slate-900 tabular-nums">{BLIND.min}–{BLIND.max} / {BLIND.of}</div>
               <p className="text-sm text-slate-600">{t("demoGuide.intro.blind", { min: BLIND.min, max: BLIND.max, of: BLIND.of, rules: BLIND.rulesAlone })}</p>
             </div>
-            {!NOTE.pending && (
-              <div className="rounded-2xl border border-slate-200 p-4">
-                {/* Son 15 movimientos, no un porcentaje (7 de 15 → 15 de 15 con la nota): un % inventaría una base. */}
-                <div className="text-2xl font-bold text-slate-900 tabular-nums">{NOTE.before} / {NOTE.of} → {NOTE.after} / {NOTE.of}</div>
-                <p className="text-sm text-slate-600">{t("demoGuide.intro.note")}</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">{t("demoGuide.intro.noteSource")}</p>
-              </div>
-            )}
+            <div className="rounded-2xl border border-slate-200 p-4">
+              {/* Son 15 movimientos, no un porcentaje (7 de 15 → 15 de 15 con la nota): un % inventaría una base. */}
+              <div className="text-2xl font-bold text-slate-900 tabular-nums">{NOTE.before} / {NOTE.of} → {NOTE.after} / {NOTE.of}</div>
+              <p className="text-sm text-slate-600">{t("demoGuide.intro.note")}</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">{t("demoGuide.intro.noteSource")}</p>
+            </div>
           </div>
 
           <div className="flex flex-col-reverse sm:flex-row items-center justify-center gap-2">

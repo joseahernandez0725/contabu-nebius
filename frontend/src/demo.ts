@@ -7,16 +7,10 @@ import { auth, googleProvider } from "./firebase";
 
 export const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === "true";
 
-// El resumen del inicio (solo demo, 18-oct) ofrece el recorrido: este evento lo despliega si estaba
-// minimizado. `DemoTour.tsx` lo escucha; App.tsx no cambia.
-export const OPEN_TOUR_EVENT = "contabu:demo-tour-open";
-export function openDemoTour() {
-  window.dispatchEvent(new Event(OPEN_TOUR_EVENT));
-}
-
-// EL RECORRIDO GUIADO (23-oct): la pantalla de inicio + 7 paradas (`DemoGuide.tsx`). Lo abren el botón "Guide"
-// de la barra de arriba y el del resumen del inicio. La lista de antes (`DemoTour.tsx`) queda solo en el demo en
-// vivo, como "Cosas para probar".
+// EL RECORRIDO GUIADO (23-oct; 🔄 25-oct: solo en la visita guiada, nunca en el demo en vivo — ver
+// `DemoGuide.tsx`): la pantalla de inicio + 8 paradas. Lo abren el botón "Guide" de la barra de arriba y el
+// del resumen del inicio (los dos ya ocultos fuera de la visita). Reemplaza la lista de pasos de antes
+// (`DemoTour.tsx`, borrado: ya no se monta en ningún lado).
 export const OPEN_GUIDE_EVENT = "contabu:demo-guide-open";
 export function openDemoGuide() {
   window.dispatchEvent(new Event(OPEN_GUIDE_EVENT));

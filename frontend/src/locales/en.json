@@ -1227,48 +1227,7 @@
     "client": "Client",
     "menu": "Menu",
     "close": "Close menu",
-    "settings": "Book settings",
-    "tour": {
-      "title": "Things to try",
-      "progress": "{{done}} of {{total}}",
-      "minimize": "Minimize",
-      "reset": "Start over",
-      "finished": "That's the whole tour. Thanks for trying ContaBu.",
-      "steps": {
-        "s1": {
-          "t": "Get in with one click",
-          "d": "You land in your own office with 3 client books: nothing to install or set up."
-        },
-        "s2": {
-          "t": "Open Rivera HVAC's Summary",
-          "d": "Up top, the year to date in four figures. Below, the P&L — the same one the client gets. Net income is shown before Pending: what has no category is declared, never hidden. On the right, what needs your attention."
-        },
-        "s3": {
-          "t": "Audit → Review the book",
-          "d": "The agent team on Nemotron works in 3 visible steps: 1. Audit · 2. Check on the web · 3. Draft rules. Each finding is judged inside Audit and again after the web check. Meanwhile open “Payroll: the bank only sees the net”: that's accounting knowledge, not just text."
-        },
-        "s4": {
-          "t": "A note becomes one row",
-          "d": "In Proposals, the vacation note is ONE row of the formula: STARBUCKS → Owner Draw only from Aug 3 to 17. The history test shows the 9 rows it changes before anything moves. Approve it."
-        },
-        "s5": {
-          "t": "The book is a formula",
-          "d": "Transactions → Rules → View as formula: the whole book is one chain of IFs, read top to bottom. The row the agent proposed is marked."
-        },
-        "s6": {
-          "t": "One row, its whole story",
-          "d": "In Bookkeeping, select a row (try a Starbucks in Paris): the panel shows which rule set its category, its history, and the web evidence with its link. Rows with a dot also show what the agents found."
-        },
-        "s7": {
-          "t": "Fix a row by hand",
-          "d": "Change the category of a Pending row: it gets a ✎ and no rule ever touches it again. What you write by hand wins."
-        },
-        "s8": {
-          "t": "Link a bank",
-          "d": "Bank feeds → Link bank (Plaid sandbox: user_good / pass_good). Transactions come in through the same engine as a statement: rules first, the rest Pending."
-        }
-      }
-    }
+    "settings": "Book settings"
   },
   "panel": {
     "collapse": "Collapse (Esc)",
@@ -1397,7 +1356,6 @@
         "try3": "Notes — write a note in plain words (\"the owner was on vacation Aug 3–17\") and see what the AI understood and which transactions it flagged.",
         "try4": "Transactions — every category comes from a rule (ƒ) or was written by hand (✎). Select a row to see why, and what the agents found.",
         "try5": "Settings → Chart of accounts — every account carries its IRS Schedule C line.",
-        "tour": "Guided tour",
         "hide": "Hide"
       }
     },
@@ -1549,7 +1507,7 @@
       "proposals_one": "{{n}} rule proposed, tested against the history",
       "proposals_other": "{{n}} rules proposed, each tested against the history",
       "source": "Counted by the database on the sample book {{book}}.",
-      "blind": "{{min}}–{{max}} of {{of}} hidden errors found in a blind exam (rules alone: {{rules}})",
+      "blind": "Our fixed checks, without AI, find {{rules}} of {{of}}. With the agents: {{min}}–{{max}}.",
       "note": "One note from the bookkeeper, on a real client's books",
       "noteSource": "An authorized client account · accuracy of the rules the AI drafted",
       "start": "Start the 60-second tour"
@@ -1567,10 +1525,9 @@
       "b": "The database adds up the totals, not the AI. Whatever has no category yet is declared below the result, never hidden."
     },
     "s4": {
-      "tour": "The agents already reviewed this book. Each step shows which Nemotron model did the work and what it found.",
-      "live": "Tap “Review the book” and wait for the three steps to finish (about a minute). Each step shows which Nemotron model did the work.",
       "measured": "Chosen by measuring: the bigger models found fewer errors.",
-      "t": "The agent team"
+      "t": "The agent team",
+      "b": "The agents already reviewed this book. Each step shows which Nemotron model did the work and what it found."
     },
     "s5": {
       "t": "A finding, with its evidence",
@@ -1583,26 +1540,21 @@
       "t": "A rule, tested before it changes anything",
       "b": "The AI doesn't categorize: it proposes a rule. Before you approve it, you see every row it would change.",
       "tourOnly": "In the guided tour you can look, not approve.",
-      "none": {
-        "tour": "The rules the agents proposed show up here.",
-        "live": "The rules the agents propose show up here after “Review the book”."
-      }
-    },
-    "s7": {
-      "tour": {
-        "t": "Want to run the agents yourself?",
-        "b": "Sign in with Google and enter the access code: you get your own copy of the three books, and you run the agents."
-      },
-      "live": {
-        "t": "This office is yours",
-        "b": "Fix a row by hand in Transactions (what you type always wins over the rules), or link a bank: it's Plaid's sandbox, with test data."
-      }
+      "none": "The rules the agents proposed show up here."
     },
     "judged": {
       "reviewer": "Judged by {{model}}",
       "note_checker": "Checked by {{model}} (from your note)",
       "personal_judge": "Judged by {{model}}",
       "code": "Found by code, no AI"
+    },
+    "s7": {
+      "t": "Your rules are the book's formula",
+      "b": "This is the engine: an ordered list of IF-THEN rows. The AI only proposes rows here — you approve them, and what you type by hand (✎) always wins over any rule."
+    },
+    "s8": {
+      "t": "Want to run the agents yourself?",
+      "b": "Sign in with Google and enter the access code: you get your own copy of the three books, and you run the agents."
     }
   }
 }

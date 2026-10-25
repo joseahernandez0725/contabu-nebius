@@ -12,7 +12,6 @@ import Onboarding from "./components/Onboarding";
 import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Login from "./components/Login";
 import Sidebar, { viewLabel, type View } from "./components/Sidebar";
-import DemoTour from "./components/DemoTour";
 import { DEMO_MODE, ENTER_CODE_EVENT, openDemoGuide, setTouring, type DemoDoor } from "./demo";
 import { AccessCodeScreen, TourBanner, TourMissing } from "./components/DemoDoors";
 import DemoGuide from "./components/DemoGuide";
@@ -217,12 +216,14 @@ function App() {
           </button>
           <h1 className="font-semibold text-slate-900 truncate">{viewLabel(t, view)}</h1>
           {company && <span className={`text-sm text-slate-400 truncate ${DEMO_MODE ? "hidden sm:inline" : ""}`}>· {company.name}</span>}
-          {DEMO_MODE && company && (
+          {/* 🔄 25-oct (Jose): nada de la guía aparece en el demo EN VIVO — ni el botón "Guide" ni el aviso de la
+              visita. Solo en la visita guiada (`touring`). */}
+          {touring && (
             <div className="ms-auto min-w-0 flex items-center gap-2">
               <button onClick={openDemoGuide} className="shrink-0 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">
                 {t("demoGuide.open")}
               </button>
-              {touring && <TourBanner />}
+              <TourBanner />
             </div>
           )}
         </header>
@@ -282,12 +283,9 @@ function App() {
         </main>
       </div>
 
-      {/* El recorrido guiado (23-oct): pantalla de inicio + 7 paradas, en las dos puertas (`key`: uno por puerta).
-          La lista de antes (`DemoTour`) queda solo en el demo en vivo, como "Cosas para probar". */}
-      {DEMO_MODE && company && (
-        <DemoGuide key={touring ? "tour" : "live"} door={touring ? "tour" : "live"} onNavigate={setView} onSidebar={onGuideSidebar} />
-      )}
-      {DEMO_MODE && !touring && <DemoTour />}
+      {/* El recorrido guiado (23-oct; 🔄 25-oct, Jose: SOLO en la visita guiada — nada de esto en el demo en
+          vivo, ni el "Guide" de arriba ni la lista de antes, `DemoTour`, que se borró). */}
+      {touring && <DemoGuide onNavigate={setView} onSidebar={onGuideSidebar} />}
     </div>
   );
 }

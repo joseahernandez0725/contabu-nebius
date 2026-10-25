@@ -1340,7 +1340,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         <div style={{ display: "flex", gap: 2, background: "#fff", border: "1px solid #d5d0c4",
                       borderRadius: 8, padding: 2 }}>
           {(["sheet", "rules", "pivot"] as const).map((k) => (  /* Reglas 2ª (Jose, 4-oct) */
-            <button key={k} onClick={() => setTab(k)}
+            <button key={k} onClick={() => setTab(k)} data-tour={k === "rules" ? "rules-tab" : undefined}
               style={{ border: 0, borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13,
                        padding: "5px 13px",
                        background: tab === k ? "#1A8754" : "transparent",

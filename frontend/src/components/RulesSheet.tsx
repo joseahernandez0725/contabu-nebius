@@ -1032,7 +1032,7 @@ export default function RulesSheet({ seedKeyword, onSeedUsed, toolbar = true, fo
   if (error && !rules) return <p style={{ color: "#991b1b", padding: 16 }}>{error}</p>;
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+    <div data-tour="rules-formula" style={{ height: "100%", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
         {toolbar && <>
         <button disabled={!canEdit} onClick={() => setDraft({ match_text: "", category: "", subcategory: "" })}
