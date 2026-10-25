@@ -97,7 +97,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
                    text-slate-500 hover:text-slate-800 hover:bg-slate-50">
         <span aria-hidden="true">›</span>
       </button>
-      <DetailCard className="h-full overflow-y-auto space-y-2.5">
+      <DetailCard tour="tx-panel" className="h-full overflow-y-auto space-y-2.5">
         {!x && !error && <DetailEmpty text={t("panel.loading")} />}
         {error && !x && <DetailEmpty text={t("panel.error")} />}
         {x && tx && (
@@ -144,7 +144,7 @@ export default function TransactionPanel({ txId, refreshKey, onClose, onGoRule, 
 
             {/* 3. LO QUE ENCONTRARON LOS AGENTES (19-oct: sube antes de Categoría) — es lo más
                 importante del panel, se ve primero y con más aire que las demás secciones. */}
-            <section className="border-t border-slate-100 pt-3 space-y-2.5">
+            <section data-tour="panel-agents" className="border-t border-slate-100 pt-3 space-y-2.5">
               <h4 className="text-sm font-bold text-slate-900">{t("panel.agents")}</h4>
               {x.findings.length === 0 && <p className="text-xs text-slate-400">{t("panel.noFindings")}</p>}
               {x.findings.map((f) => (

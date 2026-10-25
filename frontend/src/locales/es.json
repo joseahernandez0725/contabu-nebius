@@ -1606,9 +1606,9 @@
   },
   "demoGuide": {
     "open": "Guía",
-    "progress": "{{n}} de {{total}}",
     "skip": "Saltar",
     "next": "Siguiente",
+    "back": "Atrás",
     "done": "Listo",
     "agent": {
       "reviewer": "Revisa cada hallazgo",
@@ -1639,37 +1639,7 @@
       "blind": "Nuestros chequeos fijos, sin IA, encuentran {{rules}} de {{of}}. Con los agentes: {{min}}–{{max}}.",
       "note": "Una nota del bookkeeper, en los libros de un cliente real",
       "noteSource": "Una cuenta de cliente autorizada · acierto de las reglas que redactó la IA",
-      "start": "Empezar la visita de 60 segundos"
-    },
-    "s1": {
-      "t": "Eres el bookkeeper",
-      "b": "Llevas los libros de tres clientes. Un equipo de agentes de IA sobre NVIDIA Nemotron los revisa por ti, y nunca toca un número."
-    },
-    "s2": {
-      "t": "Tres clientes, una sola consola",
-      "b": "Aquí cambias entre los libros de tus clientes. Estás en Rivera HVAC, un contratista de calefacción y aire."
-    },
-    "s3": {
-      "t": "El P&L, antes de lo Pendiente",
-      "b": "Los totales los suma la base de datos, no la IA. Lo que todavía no tiene categoría se declara debajo del resultado, nunca se esconde."
-    },
-    "s4": {
-      "measured": "Elegidos midiendo: los modelos más grandes encontraron menos errores.",
-      "t": "El equipo de agentes",
-      "b": "Los agentes ya revisaron este libro. Cada paso dice qué modelo de Nemotron hizo el trabajo y qué encontró."
-    },
-    "s5": {
-      "t": "Un hallazgo, con su evidencia",
-      "vacation": "Tu nota (el dueño estuvo de vacaciones en Europa) se volvió un chequeo: el café comprado allá esa semana es personal, no una comida de negocio. La evidencia de la web está enlazada.",
-      "payroll": "Conocimiento contable, no solo texto: el banco solo ve el pago neto, así que en los libros faltan los impuestos y la nómina bruta.",
-      "finding": "Cada hallazgo trae el veredicto del agente y su evidencia. Tú decides qué hacer.",
-      "judged": "La etiqueta dice qué modelo lo juzgó de verdad, sacado del registro de llamadas de los agentes."
-    },
-    "s6": {
-      "t": "Una regla, probada antes de cambiar nada",
-      "b": "La IA no categoriza: propone una regla. Antes de aprobarla ves cada fila que cambiaría.",
-      "tourOnly": "En la visita guiada puedes mirar, no aprobar.",
-      "none": "Aquí aparecen las reglas que propusieron los agentes."
+      "start": "Empezar la guía rápida"
     },
     "judged": {
       "reviewer": "Juzgado por {{model}}",
@@ -1677,13 +1647,89 @@
       "personal_judge": "Juzgado por {{model}}",
       "code": "Lo encontró el código, sin IA"
     },
-    "s7": {
+    "progressLabel": "Progreso de la guía",
+    "who": {
+      "t": "Eres el bookkeeper",
+      "b": "Llevas los libros de tres clientes. Un equipo de agentes de IA sobre NVIDIA Nemotron los revisa por ti, y nunca toca un número."
+    },
+    "clients": {
+      "t": "Tres clientes, una sola consola",
+      "b": "Aquí cambias entre los libros de tus clientes. Estás en Rivera HVAC, un contratista de calefacción y aire."
+    },
+    "pnl": {
+      "t": "El P&L, antes de lo Pendiente",
+      "b": "Los totales los suma la base de datos, no la IA. Lo que todavía no tiene categoría se declara debajo del resultado, nunca se esconde."
+    },
+    "team": {
+      "measured": "Elegidos midiendo: los modelos más grandes encontraron menos errores.",
+      "t": "El equipo de agentes",
+      "b": "Los agentes ya revisaron este libro. Cada paso dice qué modelo de Nemotron hizo el trabajo y qué encontró."
+    },
+    "finding": {
+      "t": "Un hallazgo, con su evidencia",
+      "vacation": "Tu nota (el dueño estuvo de vacaciones en Europa) se volvió un chequeo: el café comprado allá esa semana es personal, no una comida de negocio. La evidencia de la web está enlazada.",
+      "payroll": "Conocimiento contable, no solo texto: el banco solo ve el pago neto, así que en los libros faltan los impuestos y la nómina bruta.",
+      "finding": "Cada hallazgo trae el veredicto del agente y su evidencia. Tú decides qué hacer.",
+      "judged": "La etiqueta dice qué modelo lo juzgó de verdad, sacado del registro de llamadas de los agentes."
+    },
+    "proposal": {
+      "t": "Una regla, probada antes de cambiar nada",
+      "b": "La IA no categoriza: propone una regla. Antes de aprobarla ves las filas que cambiaría.",
+      "tourOnly": "En la visita guiada puedes mirar, no aprobar.",
+      "none": "Aquí aparecen las reglas que propusieron los agentes."
+    },
+    "rules": {
       "t": "Tus reglas son la fórmula del libro",
       "b": "Este es el motor: una lista ordenada de filas SI-ENTONCES. La IA solo propone filas aquí — tú las apruebas, y lo que escribes a mano (✎) siempre manda sobre cualquier regla."
     },
-    "s8": {
+    "newrule": {
+      "t": "Cómo se crea una regla",
+      "b": "Elige un movimiento Pendiente y pulsa Crear regla: sugiere la palabra clave y tú eliges la categoría. Antes de cambiar nada, la regla se prueba contra toda la historia y muestra cuántos movimientos atraparía."
+    },
+    "live": {
       "t": "¿Quieres correr los agentes tú mismo?",
       "b": "Entra con Google y escribe el código de acceso: te damos tu propia copia de los tres libros, y corres tú los agentes."
+    },
+    "nav": {
+      "t": "Todo el trabajo en un solo lugar",
+      "lead": "Una sección por tarea:",
+      "l": [
+        "Resumen — el P&L y lo que pide atención",
+        "Bancos — Plaid o un extracto",
+        "Movimientos — la hoja y sus reglas",
+        "Notas — lo que sabes del cliente",
+        "Auditoría — el equipo de IA",
+        "P&L — lo que recibe el cliente",
+        "Ajustes del libro — el plan de cuentas, cada cuenta con su línea del IRS"
+      ],
+      "end": "Vamos a recorrerlo en orden."
+    },
+    "bank": {
+      "t": "El banco entra solo",
+      "b": "Las cuentas se conectan por Plaid y los movimientos se actualizan con ↻ Actualizar banco; también entra un extracto, por el mismo motor. En la visita guiada solo se mira: vincular un banco es del demo en vivo (sandbox de Plaid)."
+    },
+    "book": {
+      "t": "La hoja de Bookkeeping",
+      "lead": "Cada fila dice quién decidió su categoría:",
+      "l": [
+        "ƒ — la puso una regla, como una celda con fórmula.",
+        "✎ (amarillo tenue) — la escribiste a mano, y lo escrito a mano le gana a la fórmula: ninguna regla la vuelve a tocar. Clic en el ✎ para volver a seguir la regla.",
+        "Rojo — Pendiente: ninguna regla la cubre. Nunca escondido."
+      ],
+      "tools": "Herramientas: barra de fórmulas, clic derecho, etiquetas de color, filtros, deshacer."
+    },
+    "notes": {
+      "t": "Lo que sabes del cliente",
+      "b": "Aquí viven todas tus notas sobre este cliente, con lo que la IA entendió de cada una. Puedes pausar cualquiera.",
+      "vacation": "La iluminada es la de las vacaciones del dueño."
+    },
+    "row": {
+      "t": "Una fila, toda su historia",
+      "b": "Selecciona cualquier fila y se abre su panel: la regla que le dio la categoría, tu nota, lo que encontraron los agentes y su historial de cambios, todo en un solo lugar."
+    },
+    "agents": {
+      "t": "Lo que encontraron los agentes queda en la fila",
+      "b": "El hallazgo, el veredicto, quién lo juzgó y la evidencia web de Tavily con su enlace. El trabajo de los agentes queda guardado en la fila: no se vuelve a pagar."
     }
   }
 }

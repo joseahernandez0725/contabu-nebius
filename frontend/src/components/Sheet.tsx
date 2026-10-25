@@ -1340,7 +1340,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
         <div style={{ display: "flex", gap: 2, background: "#fff", border: "1px solid #d5d0c4",
                       borderRadius: 8, padding: 2 }}>
           {(["sheet", "rules", "pivot"] as const).map((k) => (  /* Reglas 2ª (Jose, 4-oct) */
-            <button key={k} onClick={() => setTab(k)} data-tour={k === "rules" ? "rules-tab" : undefined}
+            <button key={k} onClick={() => setTab(k)} data-tour={k === "rules" ? "rules-tab" : k === "sheet" ? "sheet-tab" : undefined}
               style={{ border: 0, borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13,
                        padding: "5px 13px",
                        background: tab === k ? "#1A8754" : "transparent",
@@ -1436,7 +1436,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             la palabra clave que quieres, no "CHECK 1234"); sin selección, abre una regla en blanco. */}
         {toolbar && tab === "sheet" && (
           <button
-            disabled={!canEdit}
+            disabled={!canEdit} data-tour="create-rule"
             onClick={() => {
               const row = selected.length === 1 ? (rowsRef.current ?? []).find((r) => r.id === selected[0]) : null;
               setRuleDialog({ seed: row ?? null });
@@ -1622,7 +1622,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
           (21-oct, 2): el botón flotante de abrir, cuando el panel está recogido, se posiciona encima
           de la grilla (no le quita ancho: la Hoja usa TODO el ancho recogido). */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 8, position: "relative" }}>
-      <div ref={hostRef} onContextMenu={(e) => void onContextMenu(e)}
+      <div ref={hostRef} data-tour="sheet-grid" onContextMenu={(e) => void onContextMenu(e)}
         style={{ flex: 1, minHeight: 0, minWidth: 0,
                     border: tab === "sheet" ? "1px solid #e3ded2" : "0",
                     borderRadius: 10, overflow: "hidden" }}>

@@ -5,11 +5,16 @@ import { goLive, OPEN_GUIDE_EVENT } from "../demo";
 import type { View } from "./Sidebar";
 
 // EL RECORRIDO GUIADO DEL DEMO (FASE 13, área Firm · 23-oct; aprobado por Jose sobre dos dibujos). Una pantalla de
-// inicio y 8 paradas: la pantalla se oscurece al 50 %, un recorte claro y redondeado sobre lo que hay que tocar, y
-// al lado una burbuja ("N of 8", título, 1–2 frases, Skip / Next). Se avanza tocando lo iluminado o con Next; Esc
+// inicio y 15 paradas: la pantalla se oscurece al 50 %, un recorte claro y redondeado sobre lo que hay que tocar, y
+// al lado una burbuja (una barra de progreso sin números, título, 1–2 frases, Skip / Next). Se avanza tocando lo iluminado o con Next; Esc
 // o Skip lo cierran. En el celular, la burbuja va abajo (o arriba, si lo iluminado queda abajo). Cada parada abre
 // sola la página que le toca. Las marcas que ilumina son `data-tour="…"` en los componentes (PageKit, Sidebar,
-// Dashboard, AuditWorkspace, Sheet, RulesSheet).
+// Dashboard, AuditWorkspace, Sheet, RulesSheet, Upload, NotesPage, TransactionPanel).
+//
+// 🔄 25-oct (2), LA GUÍA RÁPIDA (Jose): de 8 a 14 paradas (cambió el orden: el P&L pasa casi al final, es el
+// resultado de todo el camino). Las paradas con controles adentro (`SHIELDED`) llevan un tapón: la visita es de
+// solo lectura también por dentro. La fila de la parada 11 sale de `/demo/guide` (`transaction_id`) y se abre
+// con el mismo "ir a la fila" de Auditoría (`onOpenRow` → `openInSheet`), sin tocar la lógica de la Hoja.
 //
 // 🔄 25-oct (Jose, sobre el demo desplegado): SOLO vive en la VISITA GUIADA — se montaba también en el demo en
 // vivo con textos propios por puerta; ahí no debe aparecer nada de esto (`App.tsx` ya no lo monta fuera de la
@@ -18,8 +23,17 @@ import type { View } from "./Sidebar";
 // salir de la visita y volver a entrar lo reinicia.
 
 type Pick = Awaited<ReturnType<typeof getGuidePick>>;
-type StopKey = "s1" | "s2" | "s3" | "s4" | "s5" | "s6" | "s7" | "s8";
-const STOPS: StopKey[] = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8"];
+// Las 15 paradas, en orden (la guía rápida, 25-oct). La clave es el tema: los textos viven en `demoGuide.<clave>`.
+// 🔄 25-oct (4, Jose): el equipo de agentes (`team`) va justo después del banco, antes de la hoja.
+type StopKey = "who" | "clients" | "nav" | "bank" | "team" | "book" | "rules" | "newrule" | "notes" | "finding" | "proposal"
+  | "row" | "agents" | "pnl" | "live";
+const STOPS: StopKey[] = ["who", "clients", "nav", "bank", "team", "book", "rules", "newrule", "notes", "finding", "proposal",
+  "row", "agents", "pnl", "live"];
+// Paradas con controles adentro que NO deben tocarse en la visita (vincular, actualizar, "Está bien"…): un tapón
+// sobre lo iluminado, y tocarlo no avanza (se avanza con Next). La visita es de solo lectura también por dentro.
+const SHIELDED: StopKey[] = ["bank", "book", "newrule", "notes", "row", "agents"];
+// Las que muestran una lista de líneas en la burbuja (`demoGuide.<clave>.l`).
+const LISTED: StopKey[] = ["nav", "book"];
 const PAD = 6;          // el aire alrededor de lo iluminado
 const GAP = 12;         // entre lo iluminado y la burbuja
 const BUBBLE_W = 340;
@@ -55,6 +69,20 @@ async function clickWhenReady(sel: string, ms?: number): Promise<boolean> {
   return !!el;
 }
 
+/** El rectángulo de `el` recortado por los contenedores con scroll que lo cortan (un panel angosto, la grilla…):
+ *  sin esto, el recorte iluminaría también lo que ese contenedor esconde. null si no se ve nada. */
+function clipped(el: HTMLElement): { top: number; left: number; right: number; bottom: number } | null {
+  const r = el.getBoundingClientRect();
+  let { top, left, right, bottom } = r;
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const o = getComputedStyle(p);
+    if ([o.overflowX, o.overflowY].every((v) => v === "visible")) continue;
+    const c = p.getBoundingClientRect();
+    top = Math.max(top, c.top); left = Math.max(left, c.left); right = Math.min(right, c.right); bottom = Math.min(bottom, c.bottom);
+  }
+  return right > left && bottom > top ? { top, left, right, bottom } : null;
+}
+
 type Box = { top: number; left: number; width: number; height: number };
 
 // LAS DOS PRUEBAS MEDIDAS: un solo lugar, cada una con su fuente — docs/JUECES - IMPLEMENTACION TECNOLOGICA.md § 5
@@ -65,8 +93,9 @@ type Box = { top: number; left: number; width: number; height: number };
 const BLIND = { min: 14, max: 15, of: 22, rulesAlone: 8 };
 const NOTE = { before: 7, after: 15, of: 15 };
 
-export default function DemoGuide({ onNavigate, onSidebar }: {
+export default function DemoGuide({ onNavigate, onSidebar, onOpenRow }: {
   onNavigate: (v: View) => void;
+  onOpenRow: (txId: number) => void;    // la parada 11 abre el panel lateral de una fila (el mismo "ir a la fila" de Auditoría)
   onSidebar: (open: boolean) => void;   // la parada 2 abre la barra (escritorio) o el cajón (celular)
 }) {
   const { t } = useTranslation();
@@ -75,6 +104,11 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
   const [intro, setIntro] = useState<DemoIntro | null>(null);
   const [pick, setPick] = useState<Pick | null>(null);
   const [noProposal, setNoProposal] = useState(false);
+  const [noteIsVacation, setNoteIsVacation] = useState(false);   // la parada de Notas ilumina la nota de las vacaciones
+  // `onOpenRow` llega como función nueva en cada pintada de App: en una ref, para que no re-dispare el efecto de las paradas.
+  const openRowRef = useRef(onOpenRow);
+  openRowRef.current = onOpenRow;
+  const pickRef = useRef<Promise<Pick | null> | null>(null);   // /demo/guide se pide una sola vez por recorrido
   const [target, setTarget] = useState<string | null>(null);
   const [hole, setHole] = useState<Box | null>(null);
   // El tamaño de la ventana se lee AL PINTAR (guardarlo al montar falla si el panel aún no tenía tamaño) y se
@@ -99,6 +133,11 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
     if (typeof phase === "number" && phase + 1 >= STOPS.length) close();
     else setPhase((p) => (typeof p === "number" ? p + 1 : p));
   }, [phase, close]);
+
+  // Atrás: de la primera parada vuelve a la pantalla de inicio. Cada parada abre sola lo suyo, así que se puede volver.
+  const back = useCallback(() => {
+    setPhase((p) => (typeof p === "number" ? (p === 0 ? "intro" : p - 1) : p));
+  }, []);
 
   // "Guide" (barra de arriba o el resumen del inicio) lo vuelve a abrir.
   useEffect(() => {
@@ -129,24 +168,58 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
     setTarget(null);
     setHole(null);
     (async () => {
-      onSidebar(key === "s2");
+      onSidebar(key === "clients" || key === "nav");
+      const getPick = () => (pickRef.current ??= getGuidePick().catch(() => null));
       let sel: string | null = null;
-      if (key === "s2") sel = '[data-tour="book-switcher"]';
-      if (key === "s3") { onNavigate("dashboard"); sel = '[data-tour="pnl"]'; }
-      if (key === "s4") { onNavigate("audit"); sel = '[data-tour="ai-team"]'; }
-      if (key === "s5") {
+      if (key === "clients") sel = '[data-tour="book-switcher"]';
+      if (key === "nav") sel = '[data-tour="nav-sections"]';
+      if (key === "bank") { onNavigate("upload"); sel = '[data-tour="banks"]'; }
+      if (key === "book") {
+        onNavigate("transactions");
+        await clickWhenReady('[data-tour="sheet-tab"]');
+        sel = '[data-tour="sheet-grid"]';
+      }
+      if (key === "rules") {
+        // El criterio del bookkeeper manda: la hoja de reglas (la "fórmula" del libro), en Movimientos.
+        onNavigate("transactions");
+        await clickWhenReady('[data-tour="rules-tab"]');
+        sel = '[data-tour="rules-formula"]';
+      }
+      if (key === "newrule") {
+        // Cómo se crea una regla: el botón "Crear regla" de la Hoja (su ventana prueba la regla contra la historia).
+        // Solo se ilumina: el tapón (`SHIELDED`) impide abrir la ventana, que flota por encima de la guía.
+        onNavigate("transactions");
+        await clickWhenReady('[data-tour="sheet-tab"]');
+        sel = '[data-tour="create-rule"]';
+      }
+      if (key === "notes") {
+        onNavigate("notes");
+        const p = await getPick();
+        if (!alive) return;
+        // La nota de las vacaciones; si el recorrido eligió la nómina, la primera de la lista; sin notas, la página.
+        const mine = p?.note_id != null ? `[data-tour="note-${p.note_id}"]` : null;
+        const found = !!mine && !!(await waitFor(mine, 2500));
+        if (!alive) return;
+        setNoteIsVacation(found);
+        sel = found ? mine! : await waitFor('[data-tour^="note-"]', 2500) ? '[data-tour^="note-"]' : '[data-tour="notes-page"]';
+      }
+      if (key === "team") { onNavigate("audit"); sel = '[data-tour="ai-team"]'; }
+      if (key === "finding") {
         onNavigate("audit");
-        const p = await getGuidePick().catch(() => null);
+        const p = await getPick();
         if (!alive) return;
         setPick(p);
         await clickWhenReady('[data-tour="tab-findings"]');
         if (p?.finding_id != null && await clickWhenReady(`[data-tour="finding-${p.finding_id}"]`)) sel = '[data-tour="detail"]';
         else sel = '[data-tour="tab-findings"]';
       }
-      if (key === "s6") {
+      if (key === "proposal") {
         onNavigate("audit");
         await clickWhenReady('[data-tour="tab-proposals"]');
-        const has = await clickWhenReady('[data-tour="proposal-0"]', 2500);
+        // La regla con mejor evidencia de la web (la elige el servidor: `proposal_index`), no la primera de la lista.
+        const p = await getPick();
+        if (!alive) return;
+        const has = await clickWhenReady(`[data-tour="proposal-${p?.proposal_index ?? 0}"]`, 2500);
         if (!alive) return;
         setNoProposal(!has);
         if (has) {
@@ -155,12 +228,20 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
           sel = '[data-tour="detail"]';
         } else sel = '[data-tour="tab-proposals"]';
       }
-      if (key === "s7") {
-        // El criterio del bookkeeper manda: la hoja de reglas (la "fórmula" del libro), en Movimientos.
+      if (key === "row" || key === "agents") {
+        // La fila del hallazgo de la parada 9 (el mismo hilo de la historia): su panel lateral, abierto. La 12 usa el
+        // mismo panel: si ya está abierto no se vuelve a pedir.
         onNavigate("transactions");
-        await clickWhenReady('[data-tour="rules-tab"]');
-        sel = '[data-tour="rules-formula"]';
+        if (!visible('[data-tour="tx-panel"]')) {
+          const p = await getPick();
+          if (!alive) return;
+          if (p?.transaction_id != null) openRowRef.current(p.transaction_id);
+        }
+        const panel = await waitFor('[data-tour="tx-panel"]', 6000);
+        if (!alive) return;
+        sel = !panel ? '[data-tour="sheet-grid"]' : key === "row" ? '[data-tour="tx-panel"]' : '[data-tour="panel-agents"]';
       }
+      if (key === "pnl") { onNavigate("dashboard"); sel = '[data-tour="pnl"]'; }
       if (!alive || !sel) return;
       const el = await waitFor(sel);
       if (!alive || !el) return;
@@ -176,7 +257,7 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
     let raf = 0;
     const tick = () => {
       const el = visible(target);
-      const r = el?.getBoundingClientRect();
+      const r = el ? clipped(el) : null;
       const w = window.innerWidth, h = window.innerHeight;
       setHole((prev) => {
         if (!r) return null;
@@ -193,7 +274,7 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
 
   // Tocar lo iluminado avanza (el clic sigue su camino: abre el menú, la fila…).
   useEffect(() => {
-    if (typeof phase !== "number" || !target) return;
+    if (typeof phase !== "number" || !target || SHIELDED.includes(STOPS[phase])) return;
     const onClick = (e: MouseEvent) => {
       const el = visible(target);
       if (el && el.contains(e.target as Node)) window.setTimeout(next, 150);
@@ -214,7 +295,7 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
   }
 
   const key = STOPS[phase];
-  const centered = key === "s1" || key === "s8";
+  const centered = key === "who" || key === "live";
   const mobile = vp.w < 640;
   const last = phase === STOPS.length - 1;
 
@@ -235,13 +316,18 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
     else bubbleStyle = { bottom: 8, right: 8, width: BUBBLE_W };   // lo iluminado ocupa casi todo: a la esquina
   }
 
-  const body = key === "s5" ? t(`demoGuide.s5.${pick?.kind ?? "finding"}`)
-    : key === "s6" ? (noProposal ? t("demoGuide.s6.none") : t("demoGuide.s6.b"))
+  const body = key === "finding" ? t(`demoGuide.finding.${pick?.kind ?? "finding"}`)
+    : key === "proposal" ? (noProposal ? t("demoGuide.proposal.none") : t("demoGuide.proposal.b"))
+    : LISTED.includes(key) ? null
     : t(`demoGuide.${key}.b`);
+  const lines = LISTED.includes(key) ? (t(`demoGuide.${key}.l`, { returnObjects: true }) as unknown as string[]) : null;
   const title = t(`demoGuide.${key}.t`);
-  const extra = key === "s4" ? t("demoGuide.s4.measured")
-    : key === "s5" && pick?.kind !== "payroll" ? t("demoGuide.s5.judged")
-    : key === "s6" && !noProposal ? t("demoGuide.s6.tourOnly") : null;
+  const extra = key === "team" ? t("demoGuide.team.measured")
+    : key === "finding" && pick?.kind !== "payroll" ? t("demoGuide.finding.judged")
+    : key === "proposal" && !noProposal ? t("demoGuide.proposal.tourOnly")
+    : key === "book" ? t("demoGuide.book.tools")
+    : key === "notes" && noteIsVacation ? t("demoGuide.notes.vacation")
+    : key === "nav" ? t("demoGuide.nav.end") : null;
 
   return (
     <div className="fixed inset-0 z-[70] pointer-events-none" role="dialog" aria-modal="true" aria-label={title}>
@@ -254,22 +340,38 @@ export default function DemoGuide({ onNavigate, onSidebar }: {
           <div className="fixed pointer-events-auto" style={{ top: hole.top + hole.height, left: 0, right: 0, bottom: 0 }} />
           <div className="fixed pointer-events-auto" style={{ top: hole.top, left: 0, width: hole.left, height: hole.height }} />
           <div className="fixed pointer-events-auto" style={{ top: hole.top, left: hole.left + hole.width, right: 0, height: hole.height }} />
+          {SHIELDED.includes(key) && <div className="fixed pointer-events-auto" style={hole} />}
         </>
       ) : (
         <div className="fixed inset-0 bg-slate-900/50 pointer-events-auto" />
       )}
 
       <div ref={bubbleRef} className="fixed pointer-events-auto rounded-2xl bg-white shadow-2xl border border-slate-200 p-4 space-y-2" style={bubbleStyle}>
-        <div className="text-[11px] font-semibold text-brand-green">{t("demoGuide.progress", { n: phase + 1, total: STOPS.length })}</div>
+        {/* Una barra delgada, sin números (25-oct): `role="progressbar"` para quien no ve la pantalla. */}
+        <div role="progressbar" aria-label={t("demoGuide.progressLabel")} aria-valuemin={1} aria-valuemax={STOPS.length}
+             aria-valuenow={phase + 1} className="h-1 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-full rounded-full bg-brand-green transition-all duration-200" style={{ width: `${((phase + 1) / STOPS.length) * 100}%` }} />
+        </div>
         <h2 className="font-semibold text-slate-900 leading-snug">{title}</h2>
-        <p className="text-sm text-slate-600">{body}</p>
+        {body && <p className="text-sm text-slate-600">{body}</p>}
+        {lines && (
+          <>
+            <p className={`${key === "nav" ? "hidden sm:block " : ""}text-sm text-slate-600`}>{t(`demoGuide.${key}.lead`)}</p>
+            {/* En el celular las líneas corren seguidas ("a · b · c"): una lista alta taparía lo iluminado (la barra). */}
+            <ul className="text-xs leading-snug text-slate-600 sm:text-[13px] sm:space-y-1 sm:list-disc sm:ps-4 sm:marker:text-slate-300">
+              {lines.map((l) => <li key={l} className="inline after:content-['_·_'] last:after:content-none sm:block sm:after:content-none">{l}</li>)}
+            </ul>
+          </>
+        )}
         {extra && <p className="text-xs text-slate-500">{extra}</p>}
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-2 pt-1">
           <button type="button" onClick={close} className="text-sm text-slate-500 hover:text-slate-800">{t("demoGuide.skip")}</button>
+          <button type="button" onClick={back}
+                  className="px-2 py-1 rounded-lg text-sm text-slate-600 hover:bg-slate-100 whitespace-nowrap">← {t("demoGuide.back")}</button>
           <div className="ms-auto flex items-center gap-2">
             {last && (
               <button type="button" onClick={() => { close(); void goLive(); }}
-                      className="px-3 py-1.5 rounded-lg text-sm font-semibold border border-brand-green text-brand-green hover:bg-emerald-50">
+                      className="px-3 py-1.5 rounded-lg text-sm font-semibold whitespace-nowrap border border-brand-green text-brand-green hover:bg-emerald-50">
                 {t("demoDoor.signInGoogle")}
               </button>
             )}

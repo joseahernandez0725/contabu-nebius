@@ -571,6 +571,55 @@ _VACATION = re.compile(r"vacation|vacacion|europe|europa|\btrip\b|viaje", re.I)
 
 
 def guide_pick(session: Session, company: Company) -> dict:
+    """El hallazgo de las paradas 9, 11 y 12 del recorrido, MÁS `transaction_id`: la primera fila (por fecha) de ese
+    hallazgo, para que la parada 11 abra su panel lateral. Ver `_guide_finding` para cómo se elige el hallazgo."""
+    pick = _guide_finding(session, company)
+    tx_id, f = None, None
+    if pick["finding_id"] is not None:
+        f = session.get(Finding, pick["finding_id"])
+        ids = [int(i) for i in (f.transaction_ids or [])] if f else []
+        if ids:
+            first = session.exec(select(Transaction).where(Transaction.company_id == company.id, Transaction.id.in_(ids))
+                                 .order_by(Transaction.date, Transaction.id)).first()
+            tx_id = first.id if first else None
+    # La nota de la parada 7: el hallazgo `note_check` lleva su id en la clave (`note:<id>:<comercio>`).
+    note_id = None
+    if pick["kind"] == "vacation" and pick["finding_id"] is not None:
+        parts = (f.key or "").split(":") if f else []
+        note_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+    return {**pick, "transaction_id": tx_id, "note_id": note_id, "proposal_index": _best_proposal(session, company)}
+
+
+_CONF_RANK = {"high": 3, "medium": 2, "low": 1}
+
+
+def _web_rank(merchant: Optional[str]) -> int:
+    """Qué tan firme es lo que Tavily encontró de este comercio en el demo (3 alta · 2 media · 1 baja · 0 nada):
+    las verificaciones sembradas (`demo_web_evidence.json`), por la huella más larga que abre el comercio."""
+    import demo_web_evidence
+    m = (merchant or "").upper().strip()
+    best = None
+    for row in demo_web_evidence.load():
+        fp = row["fingerprint"].upper()
+        if (m == fp or m.startswith(fp + " ")) and (best is None or len(fp) > len(best["fingerprint"])):
+            best = row
+    return _CONF_RANK.get((best or {}).get("confidence"), 0)
+
+
+def _best_proposal(session: Session, company: Company) -> int:
+    """La regla que la parada 10 muestra: la de MEJOR evidencia de la web (la confianza más baja de las suyas manda;
+    sin evidencia queda justo debajo de "alta"), sin avisos y con más filas que cambiaría. Antes era siempre la
+    primera, y una con evidencia de confianza baja dejaba mal parado al recorrido (Jose, 25-oct)."""
+    best_i, best_key = 0, None
+    for i, p in enumerate(tour_proposals(session, company)):
+        conf = [_CONF_RANK.get(e.get("confidence"), 0) for e in p.get("web_evidence") or []]
+        key = (min(conf) if conf else 2.5, not p.get("warnings"), (p.get("test") or {}).get("changes", 0))
+        if best_key is None or key > best_key:
+            best_i, best_key = i, key
+    return best_i
+
+
+def _guide_finding(session: Session, company: Company) -> dict:
     """El hallazgo de la parada 5. El de la nota de las vacaciones SOLO si la revisión guardada está limpia: que
     el ① no ate Netflix a las vacaciones (#4 del plan del 22-oct) y que Starbucks no salga partido por ciudades
     (#5). Si no, "Nómina: el banco solo ve lo neto"; si tampoco, el primero con veredicto."""
@@ -593,7 +642,10 @@ def guide_pick(session: Session, company: Company) -> dict:
     if payroll:
         return {"finding_id": payroll.id, "kind": "payroll",
                 "why": "netflix" if netflix_tied else "starbucks" if len(starbucks) > 1 else "no_note"}
-    first = next((f for f in fs if f.agent_verdict), fs[0] if fs else None)
+    # Sin vacaciones ni nómina: el primero con veredicto, pero uno cuya evidencia de la web sea ALTA gana (25-oct: varios
+    # ejemplos salían con Tavily en confianza baja). `max` conserva el primero en los empates.
+    judged = [f for f in fs if f.agent_verdict] or fs
+    first = max(judged, key=lambda f: _web_rank(f.merchant), default=None)
     return {"finding_id": first.id if first else None, "kind": "finding"}
 
 

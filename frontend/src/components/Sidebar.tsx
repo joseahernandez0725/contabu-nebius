@@ -137,7 +137,7 @@ export default function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-4">
-        <Section label={t("shell.book")} expanded={expanded}>
+        <Section label={t("shell.book")} expanded={expanded} tour={expanded ? "nav-sections" : undefined}>
           {BOOK_ORDER.map((v) => {
             const active = view === v;
             const audit = v === "audit" ? auditCount : 0;
@@ -225,7 +225,7 @@ export default function Sidebar({
 
 // Encabezado de sección. Mantiene el MISMO alto expandida o no: comprimida muestra una raya en vez del
 // texto, así los íconos no saltan de arriba a abajo al abrir la barra.
-function Section({ label, expanded, children }: { label: string; expanded: boolean; children: ReactNode }) {
+function Section({ label, expanded, children, tour }: { label: string; expanded: boolean; children: ReactNode; tour?: string }) {
   return (
     <div>
       <div className="h-5 mb-1 flex items-center px-2.5">
@@ -235,7 +235,7 @@ function Section({ label, expanded, children }: { label: string; expanded: boole
           <span className="block w-full h-px bg-slate-200" />
         )}
       </div>
-      <div className="space-y-0.5">{children}</div>
+      <div className="space-y-0.5" data-tour={tour}>{children}</div>
     </div>
   );
 }

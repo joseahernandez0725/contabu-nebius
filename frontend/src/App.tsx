@@ -285,7 +285,7 @@ function App() {
 
       {/* El recorrido guiado (23-oct; 🔄 25-oct, Jose: SOLO en la visita guiada — nada de esto en el demo en
           vivo, ni el "Guide" de arriba ni la lista de antes, `DemoTour`, que se borró). */}
-      {touring && <DemoGuide onNavigate={setView} onSidebar={onGuideSidebar} />}
+      {touring && <DemoGuide onNavigate={setView} onSidebar={onGuideSidebar} onOpenRow={(id) => openInSheet({ id })} />}
     </div>
   );
 }
