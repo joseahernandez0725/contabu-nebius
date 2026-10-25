@@ -621,8 +621,9 @@ def _best_proposal(session: Session, company: Company) -> int:
 
 def _guide_finding(session: Session, company: Company) -> dict:
     """El hallazgo de la parada 5. El de la nota de las vacaciones SOLO si la revisión guardada está limpia: que
-    el ① no ate Netflix a las vacaciones (#4 del plan del 22-oct) y que Starbucks no salga partido por ciudades
-    (#5). Si no, "Nómina: el banco solo ve lo neto"; si tampoco, el primero con veredicto."""
+    el ① no ate Netflix a las vacaciones (#4 del plan del 22-oct). Que el ⑤ marque como personal cada Starbucks
+    de Europa (por ciudad) confirma la historia de la nota, no la rompe. Si no, "Nómina: el banco solo ve lo neto";
+    si tampoco, el primero con veredicto."""
     fs = session.exec(select(Finding).where(Finding.company_id == company.id, Finding.status == "open")
                       .order_by(Finding.id)).all()
     notes = {n.id: n.text or "" for n in session.exec(select(BookNote).where(BookNote.company_id == company.id)).all()}
@@ -634,14 +635,13 @@ def _guide_finding(session: Session, company: Company) -> dict:
     netflix_tied = any("NETFLIX" in (f.merchant or "").upper()
                        and _VACATION.search(f"{f.agent_observation_en or ''} {f.agent_observation_es or ''}")
                        for f in fs)
-    starbucks = {(f.merchant or "").upper() for f in fs if (f.merchant or "").upper().startswith("STARBUCKS")}
     vacation = [f for f in fs if f.type == "note_check" and _VACATION.search(note_text(f))]
-    if vacation and not netflix_tied and len(starbucks) <= 1:
+    if vacation and not netflix_tied:
         return {"finding_id": vacation[0].id, "kind": "vacation"}
     payroll = next((f for f in fs if f.type == "payroll_net_only"), None)
     if payroll:
         return {"finding_id": payroll.id, "kind": "payroll",
-                "why": "netflix" if netflix_tied else "starbucks" if len(starbucks) > 1 else "no_note"}
+                "why": "netflix" if netflix_tied else "no_note"}
     # Sin vacaciones ni nómina: el primero con veredicto, pero uno cuya evidencia de la web sea ALTA gana (25-oct: varios
     # ejemplos salían con Tavily en confianza baja). `max` conserva el primero en los empates.
     judged = [f for f in fs if f.agent_verdict] or fs

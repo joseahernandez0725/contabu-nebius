@@ -1532,13 +1532,13 @@
       "b": "The database adds up the totals, not the AI. Whatever has no category yet is declared below the result, never hidden."
     },
     "team": {
-      "measured": "Chosen by measuring: the bigger models found fewer errors.",
+      "measured": "Chosen by measuring, not by size: we tried all five Nemotron models in every seat.",
       "t": "The agent team",
       "b": "The agents already reviewed this book. Each step shows which Nemotron model did the work and what it found."
     },
     "finding": {
       "t": "A finding, with its evidence",
-      "vacation": "Your note (the owner was on vacation in Europe) became a check: the coffee bought there that week is personal, not a business meal. The web evidence is linked.",
+      "vacation": "Your note (the owner was on vacation in Europe) became a check: the coffee bought there during the trip is personal, not a business meal. The web evidence is linked.",
       "payroll": "Accounting knowledge, not just text: the bank only sees the net pay, so the taxes and the gross payroll are missing from the books.",
       "finding": "Each finding comes with the agent's verdict and its evidence. You decide what to do.",
       "judged": "The label says which model really judged it, taken from the log of the agents' calls."

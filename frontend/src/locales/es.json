@@ -1661,13 +1661,13 @@
       "b": "Los totales los suma la base de datos, no la IA. Lo que todavía no tiene categoría se declara debajo del resultado, nunca se esconde."
     },
     "team": {
-      "measured": "Elegidos midiendo: los modelos más grandes encontraron menos errores.",
+      "measured": "Elegidos midiendo, no por tamaño: probamos los cinco modelos de Nemotron en cada asiento.",
       "t": "El equipo de agentes",
       "b": "Los agentes ya revisaron este libro. Cada paso dice qué modelo de Nemotron hizo el trabajo y qué encontró."
     },
     "finding": {
       "t": "Un hallazgo, con su evidencia",
-      "vacation": "Tu nota (el dueño estuvo de vacaciones en Europa) se volvió un chequeo: el café comprado allá esa semana es personal, no una comida de negocio. La evidencia de la web está enlazada.",
+      "vacation": "Tu nota (el dueño estuvo de vacaciones en Europa) se volvió un chequeo: el café comprado allá durante el viaje es personal, no una comida de negocio. La evidencia de la web está enlazada.",
       "payroll": "Conocimiento contable, no solo texto: el banco solo ve el pago neto, así que en los libros faltan los impuestos y la nómina bruta.",
       "finding": "Cada hallazgo trae el veredicto del agente y su evidencia. Tú decides qué hacer.",
       "judged": "La etiqueta dice qué modelo lo juzgó de verdad, sacado del registro de llamadas de los agentes."
