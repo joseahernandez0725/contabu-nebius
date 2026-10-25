@@ -1436,7 +1436,7 @@ export default function Sheet({ onNavigate, focusTx, onFocusTxDone }: {
             la palabra clave que quieres, no "CHECK 1234"); sin selección, abre una regla en blanco. */}
         {toolbar && tab === "sheet" && (
           <button
-            disabled={!canEdit}
+            disabled={!canEdit} data-tour="create-rule"
             onClick={() => {
               const row = selected.length === 1 ? (rowsRef.current ?? []).find((r) => r.id === selected[0]) : null;
               setRuleDialog({ seed: row ?? null });

@@ -1552,6 +1552,10 @@
       "t": "Your rules are the book's formula",
       "b": "This is the engine: an ordered list of IF-THEN rows. The AI only proposes rows here — you approve them, and what you type by hand (✎) always wins over any rule."
     },
+    "newrule": {
+      "t": "How a rule is made",
+      "b": "Pick a Pending row and press Create rule: it suggests the keyword and you choose the category. Before anything changes, the rule is tested against the whole history and shows how many rows it would catch."
+    },
     "live": {
       "t": "Want to run the agents yourself?",
       "b": "Sign in with Google and enter the access code: you get your own copy of the three books, and you run the agents."

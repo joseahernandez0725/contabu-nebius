@@ -1681,6 +1681,10 @@
       "t": "Tus reglas son la fórmula del libro",
       "b": "Este es el motor: una lista ordenada de filas SI-ENTONCES. La IA solo propone filas aquí — tú las apruebas, y lo que escribes a mano (✎) siempre manda sobre cualquier regla."
     },
+    "newrule": {
+      "t": "Cómo se crea una regla",
+      "b": "Elige un movimiento Pendiente y pulsa Crear regla: sugiere la palabra clave y tú eliges la categoría. Antes de cambiar nada, la regla se prueba contra toda la historia y muestra cuántos movimientos atraparía."
+    },
     "live": {
       "t": "¿Quieres correr los agentes tú mismo?",
       "b": "Entra con Google y escribe el código de acceso: te damos tu propia copia de los tres libros, y corres tú los agentes."

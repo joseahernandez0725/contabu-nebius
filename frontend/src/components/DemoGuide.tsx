@@ -5,7 +5,7 @@ import { goLive, OPEN_GUIDE_EVENT } from "../demo";
 import type { View } from "./Sidebar";
 
 // EL RECORRIDO GUIADO DEL DEMO (FASE 13, área Firm · 23-oct; aprobado por Jose sobre dos dibujos). Una pantalla de
-// inicio y 14 paradas: la pantalla se oscurece al 50 %, un recorte claro y redondeado sobre lo que hay que tocar, y
+// inicio y 15 paradas: la pantalla se oscurece al 50 %, un recorte claro y redondeado sobre lo que hay que tocar, y
 // al lado una burbuja (una barra de progreso sin números, título, 1–2 frases, Skip / Next). Se avanza tocando lo iluminado o con Next; Esc
 // o Skip lo cierran. En el celular, la burbuja va abajo (o arriba, si lo iluminado queda abajo). Cada parada abre
 // sola la página que le toca. Las marcas que ilumina son `data-tour="…"` en los componentes (PageKit, Sidebar,
@@ -23,14 +23,14 @@ import type { View } from "./Sidebar";
 // salir de la visita y volver a entrar lo reinicia.
 
 type Pick = Awaited<ReturnType<typeof getGuidePick>>;
-// Las 14 paradas, en orden (la guía rápida, 25-oct). La clave es el tema: los textos viven en `demoGuide.<clave>`.
-type StopKey = "who" | "clients" | "nav" | "bank" | "book" | "rules" | "notes" | "team" | "finding" | "proposal"
+// Las 15 paradas, en orden (la guía rápida, 25-oct). La clave es el tema: los textos viven en `demoGuide.<clave>`.
+type StopKey = "who" | "clients" | "nav" | "bank" | "book" | "rules" | "newrule" | "notes" | "team" | "finding" | "proposal"
   | "row" | "agents" | "pnl" | "live";
-const STOPS: StopKey[] = ["who", "clients", "nav", "bank", "book", "rules", "notes", "team", "finding", "proposal",
+const STOPS: StopKey[] = ["who", "clients", "nav", "bank", "book", "rules", "newrule", "notes", "team", "finding", "proposal",
   "row", "agents", "pnl", "live"];
 // Paradas con controles adentro que NO deben tocarse en la visita (vincular, actualizar, "Está bien"…): un tapón
 // sobre lo iluminado, y tocarlo no avanza (se avanza con Next). La visita es de solo lectura también por dentro.
-const SHIELDED: StopKey[] = ["bank", "book", "notes", "row", "agents"];
+const SHIELDED: StopKey[] = ["bank", "book", "newrule", "notes", "row", "agents"];
 // Las que muestran una lista de líneas en la burbuja (`demoGuide.<clave>.l`).
 const LISTED: StopKey[] = ["nav", "book"];
 const PAD = 6;          // el aire alrededor de lo iluminado
@@ -178,6 +178,13 @@ export default function DemoGuide({ onNavigate, onSidebar, onOpenRow }: {
         onNavigate("transactions");
         await clickWhenReady('[data-tour="rules-tab"]');
         sel = '[data-tour="rules-formula"]';
+      }
+      if (key === "newrule") {
+        // Cómo se crea una regla: el botón "Crear regla" de la Hoja (su ventana prueba la regla contra la historia).
+        // Solo se ilumina: el tapón (`SHIELDED`) impide abrir la ventana, que flota por encima de la guía.
+        onNavigate("transactions");
+        await clickWhenReady('[data-tour="sheet-tab"]');
+        sel = '[data-tour="create-rule"]';
       }
       if (key === "notes") {
         onNavigate("notes");
