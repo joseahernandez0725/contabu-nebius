@@ -1277,7 +1277,7 @@ export const getTourProposals = () => auditFetch<FormulaProposal[]>("/demo/propo
 
 /** El hallazgo de la parada 5 del recorrido: el de la nota de las vacaciones si la revisión está limpia. */
 export const getGuidePick = () =>
-  auditFetch<{ finding_id: number | null; kind: "vacation" | "payroll" | "finding" }>("/demo/guide");
+  auditFetch<{ finding_id: number | null; kind: "vacation" | "payroll" | "finding"; transaction_id?: number | null; note_id?: number | null }>("/demo/guide");
 
 /** Quién juzgó de verdad cada hallazgo (sacado de `agentcall`): {finding_id: {by, model}}. */
 export type FindingJudge = { by: "reviewer" | "note_checker" | "personal_judge" | "code"; model: string | null };

@@ -84,7 +84,7 @@ export default function Upload({ onDone }: { onDone: () => void }) {
   const dotOf = (c: BankConnection) => (c.status === "disconnected" ? DOT.problem : c.last_synced_at ? DOT.ok : DOT.off);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-tour="banks">
       {/* 1. LA LÍNEA DE ESTADO */}
       <PageHeader
         meta={banks.conns.length > 0 ? t("page.banks.updated", { when: ago(oldest) }) : undefined}

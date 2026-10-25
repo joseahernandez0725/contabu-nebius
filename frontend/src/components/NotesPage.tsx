@@ -114,7 +114,7 @@ export default function NotesPage({ onOpenSheet, onProposeRules }: {
   const selNote = typeof sel === "number" ? notes?.find((n) => n.id === sel) : undefined;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" data-tour="notes-page">
       <PageHeader
         meta={<span className="max-w-2xl block">{t("notesPage.lead")}</span>}
         primary={<button className={BTN_PRIMARY} onClick={() => setSel("new")} disabled={sel === "new"}>{t("notes.add")}</button>}
@@ -138,7 +138,7 @@ export default function NotesPage({ onOpenSheet, onProposeRules }: {
               const s = short(n);
               const dot = n.paused_at ? "bg-slate-300" : s.ok ? "bg-emerald-500" : "bg-amber-400";
               return (
-                <ListRow key={n.id} active={sel === n.id} onClick={() => setSel(n.id)} dot={dot}
+                <ListRow key={n.id} active={sel === n.id} onClick={() => setSel(n.id)} dot={dot} tour={`note-${n.id}`}
                          title={firstLine(n.text)}
                          sub={n.paused_at ? t("notesPage.paused") : `${s.ok && n.kind === "keep_in_mind" ? "✓ " : ""}${s.text}`}
                          // El 📌/🚫 va aquí y no en el título: dentro del texto truncado, Chromium no pintaba la línea (18-oct).
