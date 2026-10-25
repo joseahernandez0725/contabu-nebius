@@ -8,6 +8,8 @@ corren con los valores de hoy (`DEFAULTS`):
     AGENT_MODEL_DRAFTER   / AGENT_REASONING_DRAFTER     ④ redactor de la fórmula
     AGENT_MODEL_PERSONAL  / AGENT_REASONING_PERSONAL    ⑤ ¿personal para este negocio?
     AGENT_MODEL_NOTES     / AGENT_REASONING_NOTES       ⑥ traductor de notas (la nota → chequeo del auditor)
+    AGENT_MODEL_CLASSIFIER / AGENT_REASONING_CLASSIFIER ② clasificador de los resultados de la web (24-oct; encendido por
+                                                        defecto, `VERIFIER_CLASSIFIER=table` lo apaga)
 
 El modelo se escribe con su nombre corto (`nano`, `lightning`, `super`, `ultra`, `vl`) o con el id completo de
 Nebius; el razonamiento, `1`/`0` (`true`/`false`). El modelo de cada llamada queda en `agentcall.model`.
@@ -38,8 +40,9 @@ DEFAULTS: dict[str, tuple[str, bool]] = {
     "drafter": ("vl", False),
     "personal": ("nano", False),
     "notes": ("super", False),
+    "classifier": ("super", False),  # 24-oct: Jose lo adopta; la medición en `web_classify.py` y FASE 11.A
 }
-_ENV = {"reviewer": "REVIEWER", "drafter": "DRAFTER", "personal": "PERSONAL", "notes": "NOTES"}
+_ENV = {"reviewer": "REVIEWER", "drafter": "DRAFTER", "personal": "PERSONAL", "notes": "NOTES", "classifier": "CLASSIFIER"}
 OVERRIDES: dict[str, tuple[str, bool]] = {}
 
 

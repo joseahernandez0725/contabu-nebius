@@ -28,7 +28,8 @@ DAILY_CAP = int(os.getenv("AGENT_DAILY_CALLS") or (20 if _DEMO else 200))
 # Búsquedas del ② verificador (Tavily) por oficina en 24 h: tope APARTE, porque cada una gasta un
 # crédito del plan gratis (1.000/mes) y la caché es por oficina (cada visitante del demo busca de nuevo).
 DAILY_SEARCH_CAP = int(os.getenv("AGENT_DAILY_SEARCHES") or (15 if _DEMO else 100))
-_MODEL_AGENTS = ("drafter", "reviewer", "note_checker", "personal_judge")
+# 24-oct: el clasificador del ② ("web_classifier", Nemotron) cuenta igual que los demás, aquí y en el tope del demo entero.
+_MODEL_AGENTS = ("drafter", "reviewer", "note_checker", "personal_judge", "web_classifier")
 
 
 class CapReached(RuntimeError):
@@ -182,6 +183,9 @@ def spent(session: Session, company: Company, since_id: int) -> dict:
 TEAM = ("note_checker", "personal_judge", "reviewer", "verifier", "drafter")
 _MODEL_KEY = {"note_checker": "notes", "personal_judge": "personal", "reviewer": "reviewer", "drafter": "drafter"}
 RUN_GAP_S = 180
+# 24-oct: el clasificador del ② con Nemotron no es un integrante aparte: sus llamadas suman costo y tiempo a la fila del ②
+# (las búsquedas siguen contándose solas: lo que muestra la pantalla es cuántas hizo).
+_PART_OF = {"web_classifier": "verifier"}
 
 
 def _sum_counts(dicts) -> dict[str, int]:
@@ -194,13 +198,14 @@ def _sum_counts(dicts) -> dict[str, int]:
 
 def team(session: Session, company: Company, since_id: Optional[int] = None) -> dict:
     import agent_models
+    import merchant_verifier
     from sqlalchemy import text
     # "Hace cuánto" con el reloj DE LA BASE: `created_at` (sin zona) queda guardado en la hora de la sesión de
     # Postgres, no en UTC (✅ 18-oct: "hace 7 horas" justo después de correr; el mismo error que se arregló el
     # 8-oct en `book_review.seconds_since_review`). Restar dos `created_at` entre sí sí está bien.
     now = session.connection().execute(text("SELECT LOCALTIMESTAMP")).scalar()
     ago = lambda t: max(0, int((now - t).total_seconds()))   # noqa: E731
-    q = select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.agent.in_(TEAM))
+    q = select(AgentCall).where(AgentCall.company_id == company.id, AgentCall.agent.in_(TEAM + tuple(_PART_OF)))
     if since_id is not None:
         q = q.where(AgentCall.id > since_id)
     rows = session.exec(q.order_by(AgentCall.id.desc()).limit(500)).all()
@@ -218,7 +223,12 @@ def team(session: Session, company: Company, since_id: Optional[int] = None) -> 
     agents = []
     for a in TEAM:
         mine = [r for r in run if r.agent == a]
-        if a in _MODEL_KEY:
+        helpers = [r for r in run if _PART_OF.get(r.agent) == a]
+        if a == "verifier" and merchant_verifier.CLASSIFIER == "nemotron":
+            model_id, reasoning = agent_models.get("classifier")
+            key = agent_models.short(model_id)
+            model = {"key": "tavily", "label": f"Tavily + {agent_models.LABELS.get(key, model_id)}", "reasoning": reasoning}
+        elif a in _MODEL_KEY:
             model_id, reasoning = agent_models.get(_MODEL_KEY[a])
             key = agent_models.short(model_id)
             model = {"key": key, "label": agent_models.LABELS.get(key, model_id), "reasoning": reasoning}
@@ -230,8 +240,8 @@ def team(session: Session, company: Company, since_id: Optional[int] = None) -> 
             "run": {
                 "calls": len(mine), "ok": sum(r.outcome == "ok" for r in mine),
                 "items_out": sum(r.items_out for r in mine), "items_valid": sum(r.items_valid for r in mine),
-                "latency_ms": sum(r.latency_ms for r in mine),
-                "cost_usd": round(sum(r.cost_usd or 0.0 for r in mine), 6),
+                "latency_ms": sum(r.latency_ms for r in mine + helpers),
+                "cost_usd": round(sum(r.cost_usd or 0.0 for r in mine + helpers), 6),
                 "credits": sum(r.credits or 0 for r in mine),
                 # 20-oct: el ④ guarda por motivo cuántas filas rechazó el validador (`rejections`).
                 "rejections": _sum_counts(r.rejections for r in mine),

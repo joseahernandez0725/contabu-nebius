@@ -514,6 +514,7 @@
       "payment_processor": "Payment processor",
       "property_management": "Property management",
       "bank_financial": "Bank / financial",
+      "government_tax": "Government (taxes, licenses, permits)",
       "consumer_electronics": "Electronics store",
       "convenience_store": "Convenience store",
       "department_store": "Department store",

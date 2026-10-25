@@ -362,13 +362,106 @@ def _exam_truth(session: Session, company, exam: str = "1") -> list[dict]:
     return out
 
 
+# ── 24-oct: el ② CON NEMOTRON, sobre resultados CRUDOS guardados (`--web replay`) ─────────────────────────────
+# El oráculo guarda tipos YA clasificados (por la tabla): con él, el clasificador nuevo ni corre. Aquí Tavily se
+# reemplaza por sus resultados crudos guardados (`private/web_classify/raw.jsonl` + `replay.jsonl`); lo que falte se busca
+# UNA vez de verdad y se guarda (600), así las corridas siguientes reusan lo mismo y lo único que cambia es Nemotron.
+REPLAY = HERE / "private" / "web_classify" / "replay.jsonl"
+REPLAY_STATS: Counter = Counter()
+
+
+def replay_on() -> None:
+    import merchant_verifier as mv
+    if getattr(mv._search, "_replay", False):
+        return
+    real = mv._search
+    cache = {}
+    for path in (HERE / "private" / "web_classify" / "raw.jsonl", REPLAY):
+        if path.exists():
+            for x in path.read_text().splitlines():
+                if x.strip():
+                    r = json.loads(x)
+                    cache.setdefault((r["query"], r["level"]), r)
+
+    def fake(query: str, depth: str = "basic"):
+        hit = cache.get((query, depth))
+        if hit is None:
+            results, used, lat = real(query, depth)
+            hit = {"set": "replay", "query": query, "level": depth, "credits": used, "latency_ms": lat,
+                   "results": [{k: r.get(k) for k in ("title", "content", "url", "score")} for r in results],
+                   "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+            REPLAY.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(REPLAY, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            os.chmod(REPLAY, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(hit, ensure_ascii=False) + "\n")
+            cache[(query, depth)] = hit
+            REPLAY_STATS["live_credits"] += used
+        REPLAY_STATS["searches"] += 1
+        REPLAY_STATS["with_results"] += bool(hit["results"])
+        return hit["results"], hit["credits"], hit["latency_ms"]
+    fake._replay = True  # type: ignore[attr-defined]
+    mv._search = fake
+    # El control (`REPLAY_CLASSIFIER=table`): la tabla de palabras sobre los MISMOS resultados crudos.
+    mv.CLASSIFIER = os.getenv("REPLAY_CLASSIFIER", "nemotron")
+    import collections
+    import nemotron
+    nemotron.SENT = collections.deque(maxlen=5000)   # con el clasificador se envían muchos más mensajes que 50
+
+
+def privacy_split(sent: list[dict], txs: list, persons: set) -> dict:
+    """La privacidad, separada: los agentes de siempre (todo lo enviado) y el clasificador del ②, del que se revisa lo que
+    sale DEL LIBRO (la consulta y la región); los resultados son texto de internet (traen precios, que no son montos)."""
+    import agents
+    mark = "You classify ONE business"
+    is_clf = lambda m: m["messages"][0]["content"].startswith(mark)   # noqa: E731
+    clf = []
+    for m in sent:
+        if is_clf(m):
+            u = json.loads(m["messages"][1]["content"])
+            clf.append({"messages": [{"content": json.dumps({k: v for k, v in u.items() if k != "results"})}]})
+    return {"agents": agents.privacy_scan([m for m in sent if not is_clf(m)], txs, persons),
+            "classifier_from_book": agents.privacy_scan(clf, txs, persons), "classifier_messages": len(clf)}
+
+
+def _reclassify_memory(session: Session, company, fingerprints: set) -> int:
+    """La memoria de la oficina como la habría construido el ② NUEVO: los mismos comercios que la evidencia guardada,
+    clasificados por Nemotron sobre sus resultados crudos (la misma política: básica; avanzada si no salió alta)."""
+    import merchant_verifier as mv
+    from models import Transaction
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    region, cache, n = mv.book_region(txs), mv.cached(session, company), 0
+    for c in mv.candidates(txs):
+        if c.fingerprint in fingerprints and c.fingerprint not in cache and not c.skip:
+            mv._lookup(session, company, c, cache, record=False, region=region)
+            n += 1
+    session.flush()
+    return n
+
+
 def _evidence_paths(company, exam: str) -> list[Path]:
     import field_test
     extra = EXAMS[exam]["evidence"]
     return [field_test._oracle_path(company)] + ([field_test.OUT_DIR / extra] if extra else [])
 
 
-def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_note: bool = False) -> dict:
+def _clf_stats(session: Session, books: list) -> dict:
+    """Las llamadas del clasificador del ② en ESTA revisión (las de la memoria reconstruida no se registran)."""
+    from models import AgentCall
+    rows = session.exec(select(AgentCall).where(AgentCall.company_id.in_([b.id for b in books]),
+                                                AgentCall.agent == "web_classifier")).all()
+    per = Counter(r.company_id for r in rows)
+    model_calls = Counter(r.company_id for r in session.exec(select(AgentCall).where(
+        AgentCall.company_id.in_([b.id for b in books]), AgentCall.agent != "verifier")).all())
+    return {"clf_calls": len(rows), "clf_fallback": sum(r.outcome != "ok" for r in rows),
+            "clf_usd": round(sum(r.cost_usd or 0 for r in rows), 6), "clf_max_per_book": max(per.values(), default=0),
+            "model_calls_max_per_book": max(model_calls.values(), default=0), "model_calls_all_books": sum(model_calls.values()),
+            "replay_searches": REPLAY_STATS["searches"], "replay_with_results": REPLAY_STATS["with_results"],
+            "replay_live_credits": REPLAY_STATS["live_credits"]}
+
+
+def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_note: bool = False,
+              replay: bool = False) -> dict:
     """UNA revisión completa sobre la copia, como `measure.py --audit --web oracle`: los veredictos y las opiniones
     del ⑤ de antes se borran DENTRO de la transacción, para que cada modelo juzgue desde cero."""
     import agents
@@ -392,7 +485,8 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
     have = set(merchant_verifier.cached(session, company))
     saved_rows = [r for path in _evidence_paths(company, exam) if path.exists()
                   for r in json.load(open(path, encoding="utf-8"))]
-    for r in saved_rows:
+    reclassified = _reclassify_memory(session, company, {r["fingerprint"] for r in saved_rows}) if replay else 0
+    for r in ([] if replay else saved_rows):
         if r["fingerprint"] not in have:
             have.add(r["fingerprint"])
             session.add(MerchantLookup(firm_id=company.firm_id, company_id=None if company.firm_id else company.id,
@@ -402,8 +496,9 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
                                        source_url=r.get("source_url"), results_count=r.get("results_count") or 0,
                                        credits=0, search_depth=r.get("search_depth") or "basic"))
     session.flush()
-    merchant_verifier.ORACLE = {} if oracle else None
+    merchant_verifier.ORACLE = {} if (oracle and not replay) else None
     nemotron.SENT.clear()
+    REPLAY_STATS.clear()
     agents.CITATION_REJECTED.clear()
     truth = _exam_truth(session, company, exam)
     before = set(merchant_verifier.cached(session, company))
@@ -413,7 +508,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
     if vres.finding_ids:
         agents.review(session, company, lang="en", finding_ids=vres.finding_ids)
     web = {"searched": vres.searched, "credits": vres.credits}
-    if not oracle:   # la corrida en vivo: su evidencia se SUMA a la guardada, para que las demás la reusen (0 créditos)
+    if not oracle and not replay:   # la corrida en vivo: su evidencia se SUMA a la guardada, para que las demás la reusen (0 créditos)
         path = _evidence_paths(company, exam)[-1]
         saved = {r["fingerprint"]: r for r in json.load(open(path, encoding="utf-8"))} if path.exists() else {}
         for fp, m in merchant_verifier.cached(session, company).items():
@@ -438,7 +533,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
     team_keys = set(rev["found_keys"])
     pers_keys = set(keys) - set(rev["personal"]["missed"])
     note_keys = set(keys) - set(rev["notes"]["missed"])
-    privacy = agents.privacy_scan(list(nemotron.SENT), txs, merchant_verifier.protected_names(txs))
+    privacy = (privacy_split if replay else agents.privacy_scan)(list(nemotron.SENT), txs, merchant_verifier.protected_names(txs))
     a, rv, team = rev["auditor"], rev["reviewer"], rev["team"]
     return {"planted": rev["planted"], "unmatched": len(rev["unmatched"]),
             "blind_planted": len(blind), "open_planted": len(keys) - len(blind),
@@ -456,14 +551,15 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
             "personal_alerts": rev["personal"]["alerts"], "drafter_found": rev["drafter"]["found"],
             "dismissed_true": len(rev["dismissed_true"]), "judged": rev["judged"],
             "found_by_type": dict(by_type), "planted_by_type": dict(planted_types),
-            "searched": web["searched"], "credits_if_live": web["credits"],
+            "searched": web["searched"], "credits_if_live": web["credits"], **_clf_stats(session, [company]),
+            "memory_reclassified": reclassified,
             "cost_usd": costs["nebius_usd"] + ((pend.usage.cost_usd or 0.0) if pend.usage else 0.0),
             "nebius_calls": costs["nebius_calls"] + pend.calls,
             "latency_ms": lat + (pend.usage.latency_ms if pend.usage else 0), "privacy": privacy}
 
 
 def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, tag: str | None = None,
-         ns: str | None = None, seat: str = "team") -> int:
+         ns: str | None = None, seat: str = "team", replay: bool = False) -> int:
     import agent_models
     from db import engine
     from models import Company
@@ -500,7 +596,7 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
                 t0 = time.time()
                 try:
                     out, err = exam_once(s, company, oracle=not (live_first and first), exam=exam_id,
-                                         drop_note=drop_note), None
+                                         drop_note=drop_note, replay=replay), None
                 except Exception as e:
                     out, err = None, type(e).__name__
             finally:
@@ -512,7 +608,8 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
             print(f"⚠️ Tavily: {out['credits_if_live']} créditos (> {TAVILY_CAP})", flush=True)
         row = {"kind": kind, "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
                "exam": exam_id, "drop_note": drop_note,
-               "wall_s": round(time.time() - t0, 1), "error": err, "web": "live" if (live_first and first) else "saved",
+               "wall_s": round(time.time() - t0, 1), "error": err,
+               "web": "replay" if replay else "live" if (live_first and first) else "saved",
                **(out or {"cost_usd": 0.0})}
         first = False
         _append(row)
@@ -529,7 +626,7 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
 
 # ── el demo: D1 y D2 en UNA revisión (24-oct) ───────────────────────────────────────────────────
 
-def demo_once() -> dict:
+def demo_once(replay: bool = False) -> dict:
     """Los 3 libros del demo sembrados (en una transacción que se deshace) y UNA revisión completa, como
     `team_matrix.run_once` (memoria de la oficina vacía, ② por oráculo, 0 créditos). Se puntúa DOS veces con la misma
     revisión: D1 (el primer examen, escondiendo las filas del ciego, como siempre) y D2 (el ciego, con el primer examen
@@ -543,8 +640,9 @@ def demo_once() -> dict:
     import agents
     from db import engine
     from models import AgentCall, Firm, MerchantLookup, Transaction, User
-    merchant_verifier.ORACLE = {r["fingerprint"]: r for r in demo_web_evidence.load()}
+    merchant_verifier.ORACLE = None if replay else {r["fingerprint"]: r for r in demo_web_evidence.load()}
     nemotron.SENT.clear()
+    REPLAY_STATS.clear()
     agents.CITATION_REJECTED.clear()
     out = Counter()
     with Session(engine) as s:
@@ -591,13 +689,15 @@ def demo_once() -> dict:
             out["cost_usd"] = sum(c.cost_usd or 0 for c in calls if c.agent != "verifier")
             out["latency_ms"] = sum(c.latency_ms for c in calls if c.agent != "verifier")
             out["out_of_tokens"] = sum(1 for c in calls if c.outcome == "out_of_tokens")
-            privacy = agents.privacy_scan(list(nemotron.SENT), all_txs, merchant_verifier.protected_names(all_txs))
+            privacy = (privacy_split if replay else agents.privacy_scan)(list(nemotron.SENT), all_txs,
+                                                                         merchant_verifier.protected_names(all_txs))
+            out.update(_clf_stats(s, books))
         finally:
             s.rollback()
     return {**dict(out), "citation_rejected": dict(Counter(agents.CITATION_REJECTED)), "privacy": privacy}
 
 
-def demo(n: int, seat: str, ns: str) -> int:
+def demo(n: int, seat: str, ns: str, replay: bool = False) -> int:
     """`seat="team"`: el equipo de hoy × n. Si no, ESE asiento varía (los 10 candidatos × n) y los demás quedan en el de
     hoy. Las filas: `kind = f"{ns}_demo_{seat}"`."""
     import agent_models
@@ -614,13 +714,13 @@ def demo(n: int, seat: str, ns: str) -> int:
                 agent_models.OVERRIDES[seat] = (m, r)
             t0 = time.time()
             try:
-                out, err = demo_once(), None
+                out, err = demo_once(replay), None
             except Exception as e:
                 out, err = {"cost_usd": 0.0}, type(e).__name__
             finally:
                 agent_models.OVERRIDES.clear()
             row = {"kind": kind, "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
-                   "wall_s": round(time.time() - t0, 1), "error": err, **out}
+                   "wall_s": round(time.time() - t0, 1), "error": err, "web": "replay" if replay else "oracle", **out}
             _append(row)
             print(f"{kind} {m}{'+r' if r else ''}: {err or 'ok'} · D1 {out.get('d1_found')}/{out.get('d1_planted')} · "
                   f"D2 {out.get('d2_found')}/{out.get('d2_planted')} (código {out.get('d2_code')}) · ④ {out.get('pending_right')}/"
@@ -716,7 +816,11 @@ def main() -> int:
     ap.add_argument("--keep-note", type=int, help="drafter: conservar esta nota al volver al 'antes' (kind drafter_note)")
     ap.add_argument("--live-first", action="store_true",
                     help="drafter/exam: la PRIMERA corrida busca en Tavily de verdad y guarda la evidencia; las demás la reusan")
+    ap.add_argument("--web", choices=("saved", "replay"), default="saved",
+                    help="demo/exam: replay = el ② con Nemotron sobre los resultados CRUDOS guardados (24-oct)")
     args = ap.parse_args()
+    if args.web == "replay":
+        replay_on()
     if args.what == "table":
         return table()
     if args.what == "check":
@@ -726,8 +830,9 @@ def main() -> int:
     if args.what == "personal":
         return personal(args.n)
     if args.what == "demo":
-        return demo(args.n, args.seat, args.ns or "p2")
-    return exam(args.n, args.live_first, args.exam, args.drop_note, args.tag, args.ns, args.seat)
+        return demo(args.n, args.seat, args.ns or "p2", replay=args.web == "replay")
+    return exam(args.n, args.live_first, args.exam, args.drop_note, args.tag, args.ns, args.seat,
+                replay=args.web == "replay")
 
 
 if __name__ == "__main__":
