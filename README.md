@@ -4,7 +4,7 @@
 
 *Built with NVIDIA Nemotron 3 Nano, Nemotron 3 Super and Nemotron 3.5 Super VL on Nebius Token Factory, plus Tavily.*
 
-**Live demo:** [demo.contabu.com](https://demo.contabu.com) · **Video:** `<VIDEO LINK — Jose adds it>` · **License:** [MPL 2.0](LICENSE)
+**Live demo:** [demo.contabu.com](https://demo.contabu.com) · **Video:** [YouTube, 2:57](https://www.youtube.com/watch?v=pr4jjxK-zbk) · **License:** [MPL 2.0](LICENSE)
 
 **Big-firm AI, for the small bookkeeper.** The United States has
 [71,408 bookkeeping and non-CPA accounting offices](https://data.bls.gov/cew/data/api/2024/a/industry/541219.csv), with 4 employees on average, and bookkeeping jobs are projected to
