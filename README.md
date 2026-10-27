@@ -1,10 +1,12 @@
-# ContaBu
+# <img src="docs/img/logo.png" alt="ContaBu logo" width="48" height="48"> ContaBu
 
 **AI-native bookkeeping auditor. The code finds, the AI judges, the bookkeeper decides. EN/ES**
 
 *Built with NVIDIA Nemotron 3 Nano, Nemotron 3 Super and Nemotron 3.5 Super VL on Nebius Token Factory, plus Tavily.*
 
-**Live demo:** [demo.contabu.com](https://demo.contabu.com) · **Video:** [YouTube, 2:57](https://www.youtube.com/watch?v=pr4jjxK-zbk) · **License:** [MPL 2.0](LICENSE)
+**Live demo:** [demo.contabu.com](https://demo.contabu.com) · **Video:** [YouTube, 2:59](https://www.youtube.com/watch?v=PqxYZ9NNElQ) · **License:** [MPL 2.0](LICENSE)
+
+<img src="docs/img/welcome.png" width="720" alt="The guided tour's welcome screen, Big-firm AI for the small bookkeeper: five agents with their models (Nemotron 3 Nano reviews each finding and spots personal spending, Nemotron 3.5 Super VL drafts rules, Nemotron 3 Super reads notes, Tavily plus Nemotron 3 Super checks merchants on the web); before and after on the sample book Rivera HVAC (144 rows and 26 possible errors; then the P&amp;L with 34 Pending rows declared, 26 findings with their evidence and 5 rules proposed); a blind exam, 14 to 15 of 22; and one note, 7 of 15 to 15 of 15.">
 
 **Big-firm AI, for the small bookkeeper.** The United States has
 [71,408 bookkeeping and non-CPA accounting offices](https://data.bls.gov/cew/data/api/2024/a/industry/541219.csv), with 4 employees on average, and bookkeeping jobs are projected to
@@ -51,8 +53,17 @@ looks it up on **Tavily** at review time, and **Nemotron Super** reads the resul
 list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is suspicious
 and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can only return
 a type. On the real book, Super got **19–20 merchants right against 14** for our keyword table. And it spends little: a
-new office uses **33–35 credits** on its first review and **0** on the second, because it remembers every merchant. →
-[The full write-up](docs/tavily.md)
+new office uses **33–35 credits** on its first review and **0** on the second, because it remembers every merchant.
+We also measured the team with the verifier off: Tavily helps on the demo (blind exam 13–15 against 11–14 of 22, and 2
+more Pending transactions get a correct rule), but on the real book the personal-spending agent finds more hidden errors
+without it (12 against 7 of 12) while flagging twice as many unlabeled purchases. The cause and the fix are in the
+[write-up](docs/tavily.md#7-with-and-without-tavily).
+
+**Where the call happens:** `backend/merchant_verifier.py` sends the search to Tavily at review time (`verify_flagged`
+for the review, `search_one` for a single merchant). To see it in the live demo, run *Review the book* in Audit: the
+"Check on the web" step shows each search with its seconds and credits; or press *🔎 Search this merchant* on a Pending
+merchant. The guided tour is read-only: its web evidence was searched once with Tavily and saved, so it spends nothing.
+→ [The full write-up](docs/tavily.md)
 
 ## Design
 
@@ -97,28 +108,32 @@ every account carries its IRS Schedule C line to guide the tax preparer.
 
 ## Run it locally
 
-Requires **Python 3.14**, **Node 24** and **PostgreSQL 18** (the versions it is developed on).
+Tested with **Python 3.14**, **Node 24** and **PostgreSQL 18**. The commands are for macOS and Linux; the Windows
+(PowerShell) differences are noted next to them.
 
-**1 · Database**
+**1 · Database** — as the PostgreSQL superuser (`sudo -u postgres psql` on Linux, `psql -U postgres` on Windows,
+`psql postgres` on macOS with Homebrew):
 
-```bash
-createuser contabu --pwprompt && createdb contabu -O contabu
+```sql
+CREATE USER contabu WITH PASSWORD 'choose-a-password';
+CREATE DATABASE contabu OWNER contabu;
 ```
 
 **2 · Backend**
 
 ```bash
 cd backend
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env
-.venv/bin/alembic upgrade head
+python -m venv .venv
+source .venv/bin/activate              # Windows: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+cp .env.example .env                   # Windows: copy .env.example .env
 ```
 
 Fill in `backend/.env`:
 
 | Variable | Needed for |
 |---|---|
-| `DATABASE_URL` | everything — `postgresql+psycopg://contabu:PASSWORD@localhost:5432/contabu` |
+| `DATABASE_URL` | everything — `postgresql+psycopg://contabu:choose-a-password@localhost:5432/contabu` |
 | `NEBIUS_API_KEY` | the agents (Nemotron on Token Factory). `NEBIUS_MODEL` and `NEBIUS_BASE_URL` are optional |
 | `TAVILY_API_KEY` | the ② verifier |
 | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox`, `BANK_TOKEN_KEY` | bank feeds (optional) |
@@ -126,28 +141,54 @@ Fill in `backend/.env`:
 | `AGENT_DAILY_CALLS`, `AGENT_DAILY_SEARCHES` | per-office daily caps (optional) |
 
 Without `NEBIUS_API_KEY` or `TAVILY_API_KEY` the app still runs; only the agent steps report that they are unavailable.
-
-**3 · Run** (development mode: `AUTH_DEV_MODE` accepts an `X-Dev-Uid` header instead of a Firebase token — never turn it
-on in a public deployment; with `DEMO_MODE`, the backend refuses to start)
+Then create the tables:
 
 ```bash
-cd backend && AUTH_DEV_MODE=true .venv/bin/uvicorn main:app --reload --port 8000
+python -m alembic upgrade head
 ```
 
+**3 · Run** — two terminals. Development mode: `AUTH_DEV_MODE` accepts an `X-Dev-Uid` header instead of a Firebase
+token, so never turn it on in a public deployment (with `DEMO_MODE`, the backend refuses to start).
+
+Backend, from `backend/` with the virtual environment active:
+
 ```bash
-cd frontend && npm install && echo "VITE_DEV_UID=local-dev" > .env.local && npm run dev
+AUTH_DEV_MODE=true python -m uvicorn main:app --reload --port 8000
+# Windows: $env:AUTH_DEV_MODE="true"; python -m uvicorn main:app --reload --port 8000
 ```
 
-Open `http://localhost:5173`. To see a live Nemotron call from the UI, upload `backend/sample_bank.csv`: its headers are
-not ones the code knows, so the column mapper asks the model — and sends it only the headers and the column profiles.
-
-**4 · Checks**
+Frontend:
 
 ```bash
-cd backend && .venv/bin/python check_permissions.py     # every route; must report 0 leaks
-cd backend && .venv/bin/python check_formula.py         # the formula validator; must report 0 failures
-cd backend && .venv/bin/python check_web_classifier.py  # the ② classifier; must report 0 failures
-cd frontend && npx tsc -b                               # must be clean
+cd frontend
+npm install
+echo "VITE_DEV_UID=local-dev" > .env.local
+npm run dev
+```
+
+On Windows, create `frontend/.env.local` with a text editor, or with
+`Set-Content .env.local "VITE_DEV_UID=local-dev" -Encoding utf8`: in PowerShell 5.1, `echo … >` writes UTF-16, Vite
+does not read it, and every request then gets a 401.
+
+Open the address Vite prints (`http://localhost:5173`). The first time, it asks you to *Set up your business* (an empty
+book). To work on the three sample books of the public demo instead (Rivera HVAC, Casa Lupita, Sparkle Cleaning), run
+this once in the backend terminal and reload; it replaces that empty book:
+
+```bash
+python seed_local.py
+```
+
+To see a live Nemotron call from the UI, upload `backend/sample_bank.csv`: its headers are not ones the code knows, so
+the column mapper asks the model — and sends it only the headers and the column profiles. *Review the book*, in Audit,
+runs the whole team, including real Tavily searches.
+
+**4 · Checks** — from `backend/`, with the virtual environment active:
+
+```bash
+python check_permissions.py      # every route; must report 0 leaks
+python check_formula.py          # the formula validator; must report 0 failures
+python check_web_classifier.py   # the ② classifier; must report 0 failures
+cd ../frontend && npx tsc -b     # must be clean
 ```
 
 ## License

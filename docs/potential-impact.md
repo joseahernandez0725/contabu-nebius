@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Potential Impact — a large market, an underserved user and evidence on a real book
 
 ## Summary
@@ -10,6 +12,8 @@ real book (*an authorized client account*): a bookkeeper hid **12 errors** of th
 none, and the full system found **7**, all personal spending. With a single note from the bookkeeper, the rules the AI
 proposes went from **7 to 15 right out of 15**. Reviewing that whole book costs **less than a cent**: about one second of
 a bookkeeper's wage.
+
+![Results on a real book, an authorized client account with 197 transactions of 2026, 3 runs per condition with identical results. Errors found, of 12 hidden by a practicing bookkeeper: code alone 0 of 12, the full system 7 of 12. Rules right, of 15 Pending transactions the AI decides: without the bookkeeper's note 7 of 15, with a one-line note 15 of 15. Cost of a full review in Nemotron: $0.007 to $0.008, less than a cent, about 1 second of a bookkeeper's wage.](img/real-book-results.png)
 
 ---
 
@@ -126,7 +130,7 @@ verify step also searches the 10 merchants with the most Pending transactions. I
 | | Cost of a full review |
 |---|---|
 | The real book (2026) | $0.007–0.008 in Nemotron |
-| The three demo books | $0.012 in Nemotron; 33–35 Tavily credits the first time (measured with the keyword table; with Super, 27 to 45% fewer: see *Tavily* §4), 0 the second |
+| The three demo books | $0.012 in Nemotron; 33–35 Tavily credits the first time (measured with the keyword table; with Super, 27 to 45% fewer: see [Tavily §4](tavily.md#4-the-classification-the-keyword-table-against-the-nemotron-models)), 0 the second |
 
 At the trade's median wage ($24.36 an hour), a full review of the real book costs the same as **1.0 to 1.2 seconds** of
 the bookkeeper's time.

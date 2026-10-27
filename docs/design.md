@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Design — a complete product, built around the evidence
 
 ## Summary
@@ -108,7 +110,7 @@ translation again, and it shows which transactions it touched.
 
 | Limit | How we will address it |
 |---|---|
-| The business owner's platform does not exist yet: the client receives the income statement from their bookkeeper | Build the platform that connects the bookkeeper with their clients (see *Potential Impact*, "What's next") |
+| The business owner's platform does not exist yet: the client receives the income statement from their bookkeeper | Build the platform that connects the bookkeeper with their clients (see [Potential Impact](potential-impact.md#8-whats-next-a-plan-not-a-current-feature), "What's next") |
 | The spreadsheet is designed for large screens | A dedicated phone view for the sheet |
 | The call log has no run identifier: the "last run" is rebuilt by grouping calls with no gaps longer than 3 minutes | A run identifier on every call |
 | There are no screens yet for PDF statements or check images | They come with the ③ reconciler, under construction |

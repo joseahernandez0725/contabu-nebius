@@ -1,4 +1,8 @@
+[← Back to README](../README.md)
+
 # Tavily — how the ② verifier uses the web, and how we tested it
+
+**In one line:** on a real book, Tavily + Nemotron Super identify the merchant's business correctly **19–20 times out of 23** (14 with our keyword table), no search ever carried a person's name, and the second review spends **0 credits**.
 
 ## Summary
 
@@ -9,11 +13,15 @@ and **never people**, and web text cannot give orders to anyone: a single model 
 a type. On the real book, Super got **19–20 merchants right against 14** for our keyword table. And it spends little: a
 new office uses **33–35 credits** on its first review and **0** on the second, because it remembers every merchant.
 
+![The Check on the web step of the AI team panel: Looks the merchant up online, Tavily + Nemotron 3 Super, 1 web search, 3.3 s, 1 credit.](img/tavily-search.png)
+
+*A real search, as the Audit tab shows it: the review that built the guided tour searched 1 merchant on Tavily (3.3 s, 1 credit); the rest came from the office's memory.*
+
 > **ContaBu's agents, by number.** ① **Reviewer:** judges each of the auditor's findings (a problem, or legitimate?) ·
 > ② **Verifier:** looks the merchant up on the web with Tavily and says what kind of business it is · ③ **Reconciler:**
 > under construction · ④ **Rule drafter:** proposes rules for what is Pending · ⑤ **Personal?:** flags expenses that look
 > like the owner's personal spending, for *this* business · ⑥ **Note translator:** turns a bookkeeper's note into a check
-> the auditor runs on every review. Each one's model, and why, in *Technological Implementation*.
+> the auditor runs on every review. Each one's model, and why, in [Technological Implementation](technological-implementation.md).
 
 ---
 
@@ -24,6 +32,9 @@ new office uses **33–35 credits** on its first review and **0** on the second,
   rule covers. Also on demand, with *Search this merchant*, from a finding or from a transaction's panel. Mechanical
   problems (a row outside its rule, money that came in booked as an expense) are not searched: the web does not solve
   them.
+- **Why only search:** the verifier needs a short, ranked list of what a merchant is, not a page's full text or a
+  crawl of a site, so we use Tavily's search alone. The next step, for merchants that share a name with another
+  business, is to ask the search for the book's own region (see the limits below).
 - **How it searches:** a **basic** search first (1 credit). If the confidence is not high, an **advanced** one (2
   credits), once, keeping the advanced answer.
 - **How it classifies:** Nemotron Super, without reasoning, receives the query, the book's region and the 5 trimmed
@@ -145,13 +156,37 @@ Super spends less because it answers "high" more often on the basic search and u
   except for **three merchants left out on purpose**: an evaluator's first review makes real Tavily searches, and the
   verify step says how many were live and what they cost.
 
-## 7. Limits, and how we will address them
+## 7. With and without Tavily
+
+The same exams, the same code and the same day, three runs each: the whole team with the ② verifier on, and with it
+off (no searches and an empty memory, so no agent receives a merchant type from the web). The script is
+`backend/no_web_matrix.py`; it does not change the product or the measured files.
+
+| Three runs each | With Tavily | Without Tavily |
+|---|---|---|
+| Real book: hidden errors found (of 12) | 7 · 7 · 7 | **12 · 12 · 12** |
+| Real book: other purchases flagged as personal (not in the key, unchecked) | 5 · 5 · 8 | 12 · 12 · 13 |
+| Demo, blind exam (of 22) | **15 · 14 · 13** | 11 · 14 · 14 |
+| Demo, first exam (of 32) | 32 · 31 · 29 | 30 · 32 · 31 |
+| Demo: false alarms of the ⑤ | 2 · 2 · 2 | 2 · 4 · 2 |
+| Demo: Pending transactions covered by correct proposed rules (of 91) | **44** · 44 · 44 | 42 · 42 · 42 |
+| Sent to the model: descriptions · amounts · names | 0 · 0 · 0 | 0 · 0 · 0 |
+
+- **On the demo, Tavily helps a little:** the blind exam gives 13–15 against 11–14, and 2 more Pending transactions get a
+  correct rule, because web evidence is one of the grounds a rule needs.
+- **On the real book, it costs recall:** without the web, the ⑤ flags all 12 hidden errors, but also twice as many other
+  purchases (12–13 against 5–8). Nobody labeled those, so we cannot say how many are real personal spending and how many
+  are false alarms.
+- **Why:** with the web, a correct store type ("department store", "supermarket") leads the ⑤ to read a personal purchase
+  as a business one: the type says what the store is, not what was bought. The fix is in the limits below; until it is
+  measured, ContaBu keeps the verifier on, for the evidence it puts next to each finding and the rules it grounds.
+
+## 8. Limits, and how we will address them
 
 | Limit | How we will address it |
 |---|---|
 | Small samples: 33 demo merchants and 23 from the real book | More authorized real books, each with its key written before searching |
-| A correct store type does not say what was bought: with "department store" or "supermarket", the ⑤ downgraded 2 planted personal purchases in the demo | Stop the ⑤ from taking a store type as proof that the purchase is for the business |
+| A correct store type does not say what was bought: with "department store" or "supermarket", the ⑤ downgraded 2 planted personal purchases in the demo, and on the real book it finds 7 of 12 with the web against 12 without (§7) | Stop the ⑤ from taking a store type as proof that the purchase is for the business, and label the extra alerts to measure its precision |
 | A merchant with the same name as another business can bring the other one's evidence | Ask the search for the book's own region, besides having the classifier flag it |
 | The demo's saved evidence was classified with the keyword table; in the public demo, Super classifies only the live merchants and manual searches | Re-classify that evidence with Super and re-measure the demo exams |
 | The search policy was chosen with the keyword table; on the real book, *advanced only* was as accurate, made fewer errors (6 against 8) and spent less (100 against 118 credits) | Repeat that comparison with Super classifying and adopt the winner |
-| We did not measure a team without the verifier | Run the exams with the ② off to measure what it contributes |

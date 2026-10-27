@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Technological Implementation — how we use Nemotron and how we measured it
 
 ## Summary
@@ -12,6 +14,10 @@ came up. The surprise was in the seat that reviews each finding: the larger mode
 accurate, and on the real book Super, Ultra and 3.5 Super VL marked 6 or 7 true errors as "legitimate", letting them
 through. That is why the reviewer is **Nano**, the smallest. A review of three books costs **$0.012**, and the model
 never received an amount or a person's name.
+
+![The AI team panel in Audit, from the guided tour. 1. Audit: the auditor (code, no AI); Reads your notes, Nemotron 3 Super, 1 call, 1.4 s, $0.00051; Spots personal spending, Nemotron 3 Nano, 28 merchants, 2 calls, 23.8 s, $0.00054; Reviews each finding, Nemotron 3 Nano, 13 findings, 2 calls, 22.6 s, $0.00073. 2. Check on the web: Tavily + Nemotron 3 Super, 1 web search, 3.3 s, 1 credit. 3. Draft rules: Nemotron 3.5 Super VL, 7 proposed, 5 passed the validator, 2 calls, 3.0 s, $0.00314. Last run: 9 calls, $0.00530, 1 credit.](img/team.png)
+
+*The AI team panel in Audit: each step with the model that really did it, its time and its cost, taken from the log of the agents' calls.*
 
 ---
 
@@ -87,7 +93,7 @@ client account*), with its **197 transactions of 2026**, categorized by a bookke
 | Seat | Model | Why this one |
 |---|---|---|
 | ① Reviewer | **Nemotron Nano**, no reasoning | No candidate beats it on the blind exams (3.5 Lightning ties). On R1, Super, Ultra and Super VL dismiss 6 or 7 true errors as "legitimate" |
-| ② Verifier | **Tavily + Nemotron Super**, no reasoning | On the same Tavily results, Super classifies the business type better than the keyword table on the real book (19–20 correct against 14, with 2 errors each) and ties on the demo; it was never worse in any run (see *Tavily*). Measured live with the team: on the same fresh Tavily results, R2 7 · 7 · 5 against 5 · 5 · 5 for the table, and a tie on D2 (see below) |
+| ② Verifier | **Tavily + Nemotron Super**, no reasoning | On the same Tavily results ([Tavily](tavily.md#4-the-classification-the-keyword-table-against-the-nemotron-models)), Super classifies the business type better than the keyword table on the real book (19–20 correct against 14, with 2 errors each) and ties on the demo; it was never worse in any run (see *Tavily*). Measured live with the team: on the same fresh Tavily results, R2 7 · 7 · 5 against 5 · 5 · 5 for the table, and a tie on D2 (see below) |
 | ④ Rule drafter | **Nemotron 3.5 Super VL**, no reasoning | The same quality as Super with reasoning, 39% cheaper and 3 seconds per call instead of 15 to 40 |
 | ⑤ Personal? | **Nemotron Nano**, no reasoning | The most stable: 7 of 12 on R2 in all 12 runs, with both prompts. Ultra found 10 of 12 on R2, but did not win on D2 or R1, and the best large model changed just by rewriting the prompt (see below) |
 | ⑥ Note translator | **Nemotron Super**, no reasoning | Ties Ultra on quality and costs 15% less |

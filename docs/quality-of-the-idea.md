@@ -1,3 +1,5 @@
+[← Back to README](../README.md)
+
 # Quality of the Idea — inverting the obvious use of AI in accounting
 
 ## Summary
@@ -13,7 +15,7 @@ executed: a validator checks every row before it reaches the book (**26 test cas
 > ② **Verifier:** looks the merchant up on the web with Tavily and says what kind of business it is · ③ **Reconciler:**
 > under construction · ④ **Rule drafter:** proposes rules for what is Pending · ⑤ **Personal?:** flags expenses that look
 > like the owner's personal spending, for *this* business · ⑥ **Note translator:** turns a bookkeeper's note into a check
-> the auditor runs on every review. Each one's model, and why, in *Technological Implementation*.
+> the auditor runs on every review. Each one's model, and why, in [Technological Implementation](technological-implementation.md).
 
 ---
 
@@ -46,7 +48,7 @@ interpreter.
 ### 2.3 For reviewing each finding, a bigger model is not better
 
 The contest guide suggests the large model for reasoning and the small one for speed. We measured it seat by seat, with
-the decision rule written before running (details in *Technological Implementation*). In the seat that reviews each
+the decision rule written before running (details in [Technological Implementation](technological-implementation.md)). In the seat that reviews each
 finding, the larger models were more cautious, not more accurate, and **dismissed true errors as legitimate**: that is
 why Nemotron Nano reviews. (The personal-spending judge is also Nano, but for stability: there Ultra found more on one
 exam and did not win on the other two.) In the seat that drafts rules, a larger model does help, and the newest one does
@@ -60,7 +62,7 @@ reasoning), and its only possible output is **one business type from a closed li
 JSON and with no tools. The other agents never see the text: they receive only the type and the confidence. So a page
 can, at worst, get a type wrong, but it cannot give an agent orders. And the classifier was adopted by measurement: on
 the same Tavily results, it gets **19–20 merchants right against 14** for the keyword table on the real book, with the
-same errors (details in *Tavily*). Also, searching only the merchants that could be personal found **the same** (30 of 32
+same errors (details in [Tavily](tavily.md)). Also, searching only the merchants that could be personal found **the same** (30 of 32
 errors) with **40 credits instead of 56**, 29% fewer: the web does not solve a book's mechanical problems.
 
 ## 3. Verifiable safeguards
