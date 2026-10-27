@@ -196,6 +196,12 @@ cd ../frontend && npx tsc -b     # must be clean
 [Mozilla Public License 2.0](LICENSE): you can use and modify ContaBu; changes to its files are shared under the same
 license.
 
+## Feedback on Token Factory and Nemotron
+
+Fourteen findings from building ContaBu on Nebius Token Factory with NVIDIA Nemotron — what we tried, what happened,
+why it matters and what we suggest — each measured and reproducible with the scripts in `backend/`:
+[the full feedback](docs/nebius-feedback.md).
+
 ## Stack
 
 - **Frontend:** React 19 + Vite + TypeScript + Tailwind. The sheet is **RevoGrid**.
@@ -227,7 +233,7 @@ backend/
   team_matrix.py       the per-seat model matrix
   check_*.py           the permissions, formula validator and web classifier tests
   demo.py · demo_data.py   the public demo: the two doors, the guided tour, the seeded books
-docs/                  the five write-ups the README links to
+docs/                  the five write-ups and the feedback the README links to
 frontend/src/
   components/          the sheet, the rule book, Audit, the side panel, the P&L, the demo guide
   locales/             en.json · es.json — every visible string in English and Spanish
