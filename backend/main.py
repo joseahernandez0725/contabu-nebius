@@ -220,6 +220,10 @@ app.add_middleware(
         # todavía no está decidido (docs/DEMO Y ENTREGA.md).
         *[o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()],
     ],
+    # Solo en desarrollo (`AUTH_DEV_MODE`): localhost y 127.0.0.1 en cualquier puerto, por si Vite usa el 5174
+    # o se abre 127.0.0.1 (revisión externa, 26-oct). En el demo y en producción no aplica.
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?"
+    if os.getenv("AUTH_DEV_MODE", "").lower() in {"1", "true", "yes"} else None,   # la misma regla de auth.py
     allow_methods=["*"],
     allow_headers=["*"],
 )

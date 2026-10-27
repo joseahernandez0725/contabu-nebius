@@ -187,7 +187,7 @@ export default function Dashboard({ onNavigate, onOpenPending }: {
   if (down.length) items.push({ key: "down", dot: DOT.problem, go: "upload", count: down.length,
     title: t("page.summary.banksDown", { count: down.length }), sub: down.map((b) => b.institution_name ?? t("bank.unnamed")).join(" · ") });
   if (audit && audit.problems > 0) items.push({ key: "problems", dot: DOT.problem, go: "audit", count: audit.problems,
-    title: t("page.summary.problems", { count: audit.problems }), sub: t("page.summary.problemsSub") });
+    title: t("page.summary.problems", { count: audit.problems }), sub: t("page.summary.problemsSub", { total: audit.to_review }) });
   // Cuántas y cuánto salió ya lo dice el P&L de al lado; aquí solo se avisa si hay Pendientes FUERA del período.
   if (pendingAll > 0) items.push({ key: "pending", dot: DOT.pending, go: "transactions", count: pendingAll,
     title: t("page.summary.pending", { count: pendingAll }),

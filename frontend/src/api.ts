@@ -1264,7 +1264,7 @@ export async function redeemDemoCode(code: string): Promise<{ ok: true; code_nam
 export interface DemoIntro {
   team: { agent: "reviewer" | "drafter" | "personal" | "notes" | "classifier"; model: string }[];
   book: string | null;          // Rivera HVAC de la visita (los números de abajo salen de ese libro, por SQL)
-  rows?: number; pending?: number; issues?: number; explained?: number; proposals?: number;
+  rows?: number; pending?: number; issues?: number; explained?: number; personal?: number; from_notes?: number; proposals?: number;
 }
 export async function getDemoIntro(): Promise<DemoIntro> {
   const res = await fetch(`${API}/api/demo/intro`, { headers: await authHeaders() });

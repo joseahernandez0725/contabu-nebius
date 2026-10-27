@@ -128,8 +128,9 @@ export default function AuditWorkspace({
     const b = await getAuditBoard(lang);
     setBoard(b);
     onStats?.(b.stats);
-    // Los estimados se recalculan con el libro como quedó (no bloquean la pantalla).
-    Promise.all((["audit", "verify", "draft", "review_book"] as const).map((a) => getAgentEstimate(a, { lang })))
+    // Los estimados se recalculan con el libro como quedó (no bloquean la pantalla). En la visita guiada no: es de
+    // solo lectura, la API los niega (403) y ensuciaban la consola del navegador (revisión externa, 26-oct).
+    if (!inTour()) Promise.all((["audit", "verify", "draft", "review_book"] as const).map((a) => getAgentEstimate(a, { lang })))
       .then(([audit, verify, draft, review_book]) => setEst({ audit, verify, draft, review_book })).catch(() => {});
     return b;
   }, [onStats, lang]);
@@ -442,6 +443,12 @@ export default function AuditWorkspace({
               {tab === "pending" && board && groups.length === 0 && <Empty text={t("auditView.empty.pending")} />}
               {tab === "proposals" && proposals.length === 0 && <Empty text={t("auditView.empty.proposals")} />}
 
+              {/* Cuántos son y qué cuenta el número de la pestaña: hallazgos + observaciones (revisión externa, 26-oct). */}
+              {tab === "findings" && board && findings.length > 0 && (
+                <li className="px-3 py-1.5 text-[11px] text-slate-500 border-b border-slate-100">
+                  {board.stats.info > 0 ? t("auditView.listHeadInfo", { count: board.stats.to_review, info: board.stats.info })
+                                        : t("auditView.listHead", { count: board.stats.to_review })}
+                </li>)}
               {tab === "findings" && findings.map((f) => (
                 <QueueRow key={f.id} tour={`finding-${f.id}`} active={sel?.kind === "finding" && sel.id === f.id} onClick={() => setSel({ kind: "finding", id: f.id })}
                           dot={SEV_DOT[f.severity]} title={t(`auditView.type.${f.type}`, { defaultValue: f.type })}

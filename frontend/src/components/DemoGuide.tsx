@@ -323,7 +323,9 @@ export default function DemoGuide({ onNavigate, onSidebar, onOpenRow }: {
   const lines = LISTED.includes(key) ? (t(`demoGuide.${key}.l`, { returnObjects: true }) as unknown as string[]) : null;
   const title = t(`demoGuide.${key}.t`);
   const extra = key === "team" ? t("demoGuide.team.measured")
-    : key === "finding" && pick?.kind !== "payroll" ? t("demoGuide.finding.judged")
+    // De dónde salió la evidencia web (revisión externa, 26-oct): 50 de las 53 de la visita son la búsqueda guardada.
+    : key === "finding" && pick?.kind !== "payroll" ? `${t("demoGuide.finding.judged")} ${t("demoGuide.finding.web")}`
+    : key === "finding" ? t("demoGuide.finding.web")
     : key === "proposal" && !noProposal ? t("demoGuide.proposal.tourOnly")
     : key === "book" ? t("demoGuide.book.tools")
     : key === "notes" && noteIsVacation ? t("demoGuide.notes.vacation")
@@ -423,7 +425,9 @@ function IntroScreen({ intro, onStart, onSkip }: { intro: DemoIntro | null; onSt
             <section className="rounded-2xl border border-emerald-200 bg-emerald-50/60 p-4 space-y-1.5">
               <h2 className="text-xs font-semibold uppercase tracking-wide text-emerald-800">{t("demoGuide.intro.after")}</h2>
               <p className="text-sm text-slate-700">{t("demoGuide.intro.pnl", { count: intro?.pending ?? 0, n: n(intro?.pending) })}</p>
-              <p className="text-sm text-slate-700">{t("demoGuide.intro.explained", { count: intro?.explained ?? 0, n: n(intro?.explained) })}</p>
+              <p className="text-sm text-slate-700">{/* El total es el MISMO de "Antes" y de Audit; el desglose dice quién lo encontró (revisión externa, 26-oct). */}
+              {t("demoGuide.intro.explained", { count: intro?.issues ?? 0, n: n(intro?.issues), judged: n(intro?.explained),
+                personal: n(intro?.personal), notes: n(intro?.from_notes) })}</p>
               <p className="text-sm text-slate-700">{t("demoGuide.intro.proposals", { count: intro?.proposals ?? 0, n: n(intro?.proposals) })}</p>
             </section>
           </div>

@@ -514,15 +514,20 @@ def intro(session: Session) -> dict:
     if book is None:
         return {"team": team, "book": None}
     count = lambda q: int(session.exec(q).one())   # noqa: E731
-    findings = select(func.count(Finding.id)).where(Finding.company_id == book.id)
+    # Solo los ABIERTOS, como Audit y el Summary (revisión externa, 26-oct: contar uno "gone" daba 27 contra 26).
+    findings = select(func.count(Finding.id)).where(Finding.company_id == book.id, Finding.status == "open",
+                                                    Finding.type.not_in(book_review.INFO_TYPES))
     return {
         "team": team,
         "book": book.name,
         "rows": count(select(func.count(Transaction.id)).where(Transaction.company_id == book.id)),
         "pending": count(select(func.count(Transaction.id)).where(Transaction.company_id == book.id,
                                                                   Transaction.account_type.is_(None))),
-        "issues": count(findings.where(Finding.type.not_in(book_review.INFO_TYPES))),
-        "explained": count(findings.where(Finding.agent_verdict.is_not(None))),
+        "issues": count(findings),
+        # Cómo se reparten esos mismos hallazgos, para que la bienvenida cuadre con Audit y el Summary.
+        "explained": count(findings.where(Finding.agent_verdict.is_not(None))),       # los juzgó el ①
+        "personal": count(findings.where(Finding.type == "personal_use")),           # el ⑤
+        "from_notes": count(findings.where(Finding.type == "note_check")),           # la nota, vía el ⑥
         "proposals": count(select(func.count(DemoTourProposal.id)).where(DemoTourProposal.company_id == book.id)),
     }
 
