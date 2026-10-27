@@ -196,11 +196,6 @@ cd ../frontend && npx tsc -b     # must be clean
 [Mozilla Public License 2.0](LICENSE): you can use and modify ContaBu; changes to its files are shared under the same
 license.
 
-## Feedback on Token Factory and Nemotron
-
-Fourteen findings from building ContaBu, each measured and reproducible with the scripts in `backend/`, are in our
-Devpost submission.
-
 ## Stack
 
 - **Frontend:** React 19 + Vite + TypeScript + Tailwind. The sheet is **RevoGrid**.
