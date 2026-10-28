@@ -16,6 +16,8 @@ REAL, categorizado por un bookkeeper y nunca visto por un modelo? Cada asiento c
   script lee la clave para puntuar y solo devuelve conteos; su sha1 se compara antes y después de cada corrida.
 - `check`: sin IA y sin créditos — tamaño de la clave tras volver al "antes" y cuánta evidencia guardada hay.
 - `table`: las tablas, de `private/field_test/real_matrix.jsonl`.
+- `diag` (28-oct): sin IA — el Excel del diagnóstico del ⑤ que guardó `exam --diag` (para que Jose etiquete), y con
+  `--score` la precisión del ⑤ con sus etiquetas. Las órdenes, en `no_web_matrix.py`.
 
 🔴 Nada se escribe en las bases: cada corrida es UNA transacción que se deshace (`session.commit` = `flush`; los
 agentes no registran o registran dentro de ella). El script comprueba en qué base está (`drafter`/`personal` en
@@ -336,6 +338,152 @@ def personal(n: int) -> int:
     return 0
 
 
+# ── 28-oct: el diagnóstico del ⑤ con y sin Tavily (`exam --diag`, luego `diag`) ──────────────────────────
+# ¿Por qué el ⑤ encuentra 12 de 12 en R2 sin la web y 7 con ella? Por corrida se guarda, en un archivo APARTE (600),
+# qué tipo recibió el ⑤ por comercio, qué opinó de cada error de la clave y sus alertas que la clave no tiene, con
+# sus filas. 🔴 Trae comercios, montos y la clave: solo lo abre Jose (Excel, `diag`); en pantalla, solo conteos.
+DIAG = HERE / "private" / "field_test" / "personal_diag.jsonl"
+DIAG_XLSX = HERE / "private" / "field_test" / "personal_diag_examen2.xlsx"
+DIAG_ON = False
+CONDITION = "with"        # `no_web_matrix.py` lo cambia: "without" (nadie ve el tipo) · "personal_off" (solo el ⑤)
+SENT_TO_PERSONAL: dict = {}   # llave del comercio → el tipo que recibió el ⑤ (None = ninguno)
+LABELS = ("personal real", "negocio (falsa alarma)", "no sé")
+
+
+def capture_personal() -> None:
+    """Anota lo que de verdad le llega al ⑤ (lo lee de su mensaje, después de cualquier otro parche)."""
+    import personal_use
+    if getattr(personal_use._user, "_capture", False):
+        return
+    inner = personal_use._user
+
+    def _user(company, view, todo):
+        user, refs = inner(company, view, todo)
+        sent = json.loads(user.split("\n\nmerchants: ", 1)[1])
+        for m in sent:
+            SENT_TO_PERSONAL[refs[m["ref"]][0]] = m.get("verified_business_type")
+        return user, refs
+    _user._capture = True  # type: ignore[attr-defined]
+    personal_use._user = _user
+
+
+def _diag(session: Session, company, truth: list[dict], rev: dict) -> dict:
+    """Lo de UNA corrida, dentro de su transacción (antes del rollback)."""
+    import personal_use
+    from models import Finding, Transaction
+    txs = session.exec(select(Transaction).where(Transaction.company_id == company.id)).all()
+    by_id = {t.id: t for t in txs}
+    import measure
+    by_key: dict[tuple, list[int]] = {}
+    for t in txs:
+        by_key.setdefault(measure._row_key(t.description, t.date, t.amount, t.is_inflow), []).append(t.id)
+    planted = {f"{e['type']}#{i + 1}": {x for r in e["rows"] for x in by_key.get(
+        measure._row_key(r["description"], r["date"], r["amount"], r["is_inflow"]), [])} for i, e in enumerate(truth)}
+    all_planted = set().union(*planted.values()) if planted else set()
+    saved = personal_use.current(session, company)
+    tx_row = lambda t: {"id": t.id, "date": str(t.date), "description": t.description, "amount": float(t.amount),  # noqa: E731
+                        "category": f"{t.account_type.value}/{t.category}" if t.account_type else None}
+    extra = []
+    for f in session.exec(select(Finding).where(Finding.company_id == company.id, Finding.type == "personal_use",
+                                                Finding.status == "open")).all():
+        ids = set(f.transaction_ids or [])
+        if ids & all_planted:
+            continue
+        key = f.key.split(":", 1)[1]
+        j = saved.get(key)
+        extra.append({"merchant_key": key, "merchant": f.merchant, "type_sent": SENT_TO_PERSONAL.get(key),
+                      "verdict": j.verdict if j else None, "confidence": j.confidence if j else None,
+                      "reason_es": j.reason_es if j else None,
+                      "txs": [tx_row(by_id[i]) for i in sorted(ids) if i in by_id]})
+    pers_found = set(planted) - set(rev["personal"]["missed"])
+    errors = []
+    for i, (k, ids) in enumerate(planted.items()):
+        keys = sorted({personal_use.merchant_key(by_id[x]) for x in ids if x in by_id} - {None})
+        errors.append({"key": k, "blind": truth[i]["blind"], "merchants": keys,
+                       "type_sent": {m: SENT_TO_PERSONAL.get(m) for m in keys},
+                       "verdict": {m: f"{saved[m].verdict}/{saved[m].confidence}" if m in saved else None for m in keys},
+                       "found_by_personal": k in pers_found, "found_by_team": k in set(rev["found_keys"])})
+    return {"alerts": rev["personal"]["alerts"], "true_alerts": rev["personal"]["true_alerts"],
+            "extra": extra, "errors": errors}
+
+
+def _diag_rows(tags: list[str]) -> dict[str, list[dict]]:
+    rows = [json.loads(x) for x in open(DIAG, encoding="utf-8")] if DIAG.exists() else []
+    return {t: [r for r in rows if r["tag"] == t] for t in tags}
+
+
+def diag(tags: list[str], score: bool) -> int:
+    """Sin IA. Sin `--score`: el Excel para etiquetar (una fila por comercio alertado que la clave no tiene). Con
+    `--score`: lee las etiquetas de Jose y da la precisión del ⑤ por corrida. En pantalla, solo conteos."""
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
+    runs = _diag_rows(tags)
+    if score:
+        ws = load_workbook(DIAG_XLSX)["Etiquetar"]
+        head = [c.value for c in ws[1]]
+        label = {r[head.index("merchant_key")]: (r[head.index("etiqueta")] or "").strip().lower()
+                 for r in ws.iter_rows(min_row=2, values_only=True) if r[head.index("merchant_key")]}
+        for t in tags:
+            print(f"{t} ({', '.join(sorted({r['condition'] for r in runs[t]}))}):")
+            for r in runs[t]:
+                c = Counter(label.get(e["merchant_key"], "") for e in r["extra"])
+                real, false = c[LABELS[0]], c[LABELS[1]]
+                print(f"  alertas {r['alerts']} · en la clave {r['true_alerts']} · extra {len(r['extra'])}: "
+                      f"reales {real}, falsas {false}, sin saber {len(r['extra']) - real - false} → "
+                      f"reales en total {r['true_alerts'] + real} de {r['alerts']}")
+        return 0
+    merchants: dict[str, dict] = {}
+    for t in tags:
+        for r in runs[t]:
+            for e in r["extra"]:
+                m = merchants.setdefault(e["merchant_key"], {"e": e, "runs": Counter(), "types": {}, "txs": {}})
+                m["runs"][t] += 1
+                m["types"].setdefault(t, e["type_sent"])
+                m["txs"].update({x["id"]: x for x in e["txs"]})
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Etiquetar"
+    ws.append(["merchant_key", "comercio", "compras", "primera", "última", "monto total", "categoría actual",
+               *[f"alertas en {t} (de {len(runs[t])})" for t in tags], *[f"tipo que vio el ⑤ en {t}" for t in tags],
+               "razón del ⑤", "etiqueta"])
+    for key, m in sorted(merchants.items(), key=lambda kv: -sum(kv[1]["runs"].values())):
+        txs = sorted(m["txs"].values(), key=lambda x: x["date"])
+        ws.append([key, m["e"]["merchant"], len(txs), txs[0]["date"], txs[-1]["date"],
+                   round(sum(abs(x["amount"]) for x in txs), 2), ", ".join(sorted({x["category"] or "" for x in txs})),
+                   *[m["runs"][t] for t in tags], *[m["types"].get(t) or "" for t in tags], m["e"]["reason_es"], None])
+    dv = DataValidation(type="list", formula1='"' + ",".join(LABELS) + '"', allow_blank=True)
+    ws.add_data_validation(dv)
+    col = get_column_letter(ws.max_column)
+    dv.add(f"{col}2:{col}{max(2, ws.max_row)}")
+    ws2 = wb.create_sheet("Compras")
+    ws2.append(["merchant_key", "fecha", "descripción", "monto", "categoría actual"])
+    for key, m in merchants.items():
+        for x in sorted(m["txs"].values(), key=lambda x: x["date"]):
+            ws2.append([key, x["date"], x["description"], x["amount"], x["category"]])
+    ws3 = wb.create_sheet("Errores de la clave")
+    ws3.append(["error", "ciego", "comercio", *[f"{t} #{i + 1}: tipo · opinión · ⑤ · equipo"
+                                                  for t in tags for i in range(len(runs[t]))]])
+    keys = [(e["key"], e["blind"], m) for r in next((runs[t] for t in tags if runs[t]), [])[:1]
+            for e in r["errors"] for m in (e["merchants"] or [None])]
+    for k, blind, m in keys:
+        cells = []
+        for t in tags:
+            for r in runs[t]:
+                e = next(x for x in r["errors"] if x["key"] == k)
+                cells.append(f"{(e['type_sent'].get(m) if m else None) or '—'} · {(e['verdict'].get(m) if m else None) or '—'}"
+                             f" · {'sí' if e['found_by_personal'] else 'no'} · {'sí' if e['found_by_team'] else 'no'}")
+        ws3.append([k, "sí" if blind else "no", m or "", *cells])
+    DIAG_XLSX.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(DIAG_XLSX, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(DIAG_XLSX, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        wb.save(fh)
+    print(f"Excel (600): {DIAG_XLSX.relative_to(HERE)} · {len(merchants)} comercios para etiquetar · "
+          + " · ".join(f"{t}: {len(runs[t])} corridas" for t in tags))
+    return 0
+
+
 # ── el examen ciego en la COPIA ─────────────────────────────────────────────────────────────────
 
 def _key_path(exam: str) -> Path:
@@ -499,6 +647,7 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
     merchant_verifier.ORACLE = {} if (oracle and not replay) else None
     nemotron.SENT.clear()
     REPLAY_STATS.clear()
+    SENT_TO_PERSONAL.clear()
     agents.CITATION_REJECTED.clear()
     truth = _exam_truth(session, company, exam)
     before = set(merchant_verifier.cached(session, company))
@@ -555,7 +704,8 @@ def exam_once(session: Session, company, *, oracle: bool, exam: str = "1", drop_
             "memory_reclassified": reclassified,
             "cost_usd": costs["nebius_usd"] + ((pend.usage.cost_usd or 0.0) if pend.usage else 0.0),
             "nebius_calls": costs["nebius_calls"] + pend.calls,
-            "latency_ms": lat + (pend.usage.latency_ms if pend.usage else 0), "privacy": privacy}
+            "latency_ms": lat + (pend.usage.latency_ms if pend.usage else 0), "privacy": privacy,
+            **({"_diag": _diag(session, company, truth, rev)} if DIAG_ON else {})}
 
 
 def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, tag: str | None = None,
@@ -602,6 +752,7 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
             finally:
                 s.rollback()
                 agent_models.OVERRIDES.pop(seat, None)
+        diag_row = (out or {}).pop("_diag", None)
         if sha() != sha0:
             sys.exit("⛔ la clave cambió (sha1) durante la corrida: me detengo")
         if out and out.get("credits_if_live", 0) > TAVILY_CAP and live_first and first:
@@ -609,10 +760,17 @@ def exam(n: int, live_first: bool, exam_id: str = "1", drop_note: bool = False, 
         row = {"kind": kind, "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
                "exam": exam_id, "drop_note": drop_note,
                "wall_s": round(time.time() - t0, 1), "error": err,
-               "web": "replay" if replay else "live" if (live_first and first) else "saved",
+               "web": "replay" if replay else "live" if (live_first and first) else "saved", "web_condition": CONDITION,
                **(out or {"cost_usd": 0.0})}
         first = False
         _append(row)
+        if diag_row is not None:
+            DIAG.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(DIAG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            os.chmod(DIAG, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"tag": tag, "kind": kind, "condition": CONDITION, "ts": row["ts"], **diag_row},
+                                    ensure_ascii=False, default=str) + "\n")
         print(f"{kind} {m}{'+r' if r else ''}: {err or 'ok'} · ciegos: código {row.get('code_blind')} · con agentes "
               f"{row.get('agents_blind')} de {row.get('blind_planted')} · no ciegos {row.get('agents_open')}/{row.get('open_planted')} · "
               f"⑤ {row.get('personal_blind')} (+{row.get('personal_false_alerts')} sin clasificar) · "
@@ -720,7 +878,8 @@ def demo(n: int, seat: str, ns: str, replay: bool = False) -> int:
             finally:
                 agent_models.OVERRIDES.clear()
             row = {"kind": kind, "model": m, "reasoning": r, "ts": datetime.now().isoformat(timespec="seconds"),
-                   "wall_s": round(time.time() - t0, 1), "error": err, "web": "replay" if replay else "oracle", **out}
+                   "wall_s": round(time.time() - t0, 1), "error": err, "web": "replay" if replay else "oracle",
+                   "web_condition": CONDITION, **out}
             _append(row)
             print(f"{kind} {m}{'+r' if r else ''}: {err or 'ok'} · D1 {out.get('d1_found')}/{out.get('d1_planted')} · "
                   f"D2 {out.get('d2_found')}/{out.get('d2_planted')} (código {out.get('d2_code')}) · ④ {out.get('pending_right')}/"
@@ -804,7 +963,7 @@ def _adoption(mine: list[dict], kind: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "demo", "table"))
+    ap.add_argument("what", choices=("check", "drafter", "personal", "exam", "demo", "table", "diag"))
     ap.add_argument("--seat", default="team", choices=("team", "reviewer", "personal", "drafter", "notes"),
                     help="demo/exam: el asiento que varía (team = el equipo de hoy)")
     ap.add_argument("--ns", help="exam/demo: espacio de nombres de los kinds (p. ej. p2 = los prompts reescritos)")
@@ -818,7 +977,21 @@ def main() -> int:
                     help="drafter/exam: la PRIMERA corrida busca en Tavily de verdad y guarda la evidencia; las demás la reusan")
     ap.add_argument("--web", choices=("saved", "replay"), default="saved",
                     help="demo/exam: replay = el ② con Nemotron sobre los resultados CRUDOS guardados (24-oct)")
+    ap.add_argument("--diag", action="store_true",
+                    help="exam: guarda además el diagnóstico del ⑤ (comercios y la clave: archivo aparte, 600)")
+    ap.add_argument("--tags", nargs="+", help="diag: las etiquetas a comparar (p. ej. w28 nw28 p28)")
+    ap.add_argument("--score", action="store_true", help="diag: la precisión del ⑤ con las etiquetas de Jose")
     args = ap.parse_args()
+    if args.what == "diag":
+        if not args.tags:
+            sys.exit("⛔ diag necesita --tags")
+        return diag(args.tags, args.score)
+    if args.diag:
+        if args.what != "exam" or not args.tag:
+            sys.exit("⛔ --diag es solo para `exam` con --tag")
+        global DIAG_ON
+        DIAG_ON = True
+        capture_personal()
     if args.web == "replay":
         replay_on()
     if args.what == "table":

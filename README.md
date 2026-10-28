@@ -54,10 +54,11 @@ list of 30: so the reviewer can say *"this is a gym booked as an office expense"
 and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can only return
 a type. On the real book, Super got **19–20 merchants right against 14** for our keyword table. And it spends little: a
 new office uses **33–35 credits** on its first review and **0** on the second, because it remembers every merchant.
-We also measured the team with the verifier off: Tavily helps on the demo (blind exam 13–15 against 11–14 of 22, and 2
-more Pending transactions get a correct rule), but on the real book the personal-spending agent finds more hidden errors
-without it (12 against 7 of 12) while flagging twice as many unlabeled purchases. The cause and the fix are in the
-[write-up](docs/tavily.md#7-with-and-without-tavily).
+We also measured the team with the verifier off (no searches, and no agent sees the saved merchant types): Tavily helps
+on the demo (blind exam 13–15 against 11–14 of 22, and 2 more Pending transactions get a correct rule), but on the real
+book the personal-spending agent finds more hidden errors without it (12 against 7 of 12) because it flags more of
+everything, unlabeled merchants included: more suspicious, not shown to be better. The likely cause and a proposed fix
+are in the [write-up](docs/tavily.md#7-with-and-without-tavily).
 
 **Where the call happens:** `backend/merchant_verifier.py` sends the search to Tavily at review time (`verify_flagged`
 for the review, `search_one` for a single merchant). To see it in the live demo, run *Review the book* in Audit: the

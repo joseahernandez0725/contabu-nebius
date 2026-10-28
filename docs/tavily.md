@@ -158,14 +158,21 @@ Super spends less because it answers "high" more often on the basic search and u
 
 ## 7. With and without Tavily
 
-The same exams, the same code and the same day, three runs each: the whole team with the ② verifier on, and with it
-off (no searches and an empty memory, so no agent receives a merchant type from the web). The script is
-`backend/no_web_matrix.py`; it does not change the product or the measured files.
+The same exams, the same code and the same day, three runs each, with the whole team. What the two conditions mean:
+
+- **With Tavily:** the agents receive the merchant types Tavily found, saved from earlier real searches (classified by
+  the keyword table when they were saved). The same evidence in all 3 runs, and 0 credits.
+- **Without Tavily:** no search at all, and the saved types are hidden from every agent (the ⑤, the ①, the auditor, the
+  note checks and the ④ drafter): the office's memory reads as empty.
+- **Why the saved evidence:** so that the only difference between the two conditions is whether the agents see the
+  merchant's type, not what Tavily happens to return that day.
+
+The script is `backend/no_web_matrix.py`; it does not change the product or the measured files.
 
 | Three runs each | With Tavily | Without Tavily |
 |---|---|---|
 | Real book: hidden errors found (of 12) | 7 · 7 · 7 | **12 · 12 · 12** |
-| Real book: other purchases flagged as personal (not in the key, unchecked) | 5 · 5 · 8 | 12 · 12 · 13 |
+| Real book: other merchants flagged as personal (not in the key, unlabeled) | 5 · 5 · 8 | 12 · 12 · 13 |
 | Demo, blind exam (of 22) | **15 · 14 · 13** | 11 · 14 · 14 |
 | Demo, first exam (of 32) | 32 · 31 · 29 | 30 · 32 · 31 |
 | Demo: false alarms of the ⑤ | 2 · 2 · 2 | 2 · 4 · 2 |
@@ -173,20 +180,26 @@ off (no searches and an empty memory, so no agent receives a merchant type from 
 | Sent to the model: descriptions · amounts · names | 0 · 0 · 0 | 0 · 0 · 0 |
 
 - **On the demo, Tavily helps a little:** the blind exam gives 13–15 against 11–14, and 2 more Pending transactions get a
-  correct rule, because web evidence is one of the grounds a rule needs.
-- **On the real book, it costs recall:** without the web, the ⑤ flags all 12 hidden errors, but also twice as many other
-  purchases (12–13 against 5–8). Nobody labeled those, so we cannot say how many are real personal spending and how many
-  are false alarms.
-- **Why:** with the web, a correct store type ("department store", "supermarket") leads the ⑤ to read a personal purchase
-  as a business one: the type says what the store is, not what was bought. The fix is in the limits below; until it is
-  measured, ContaBu keeps the verifier on, for the evidence it puts next to each finding and the rules it grounds.
+  correct rule.
+- **On the real book, without the web the ⑤ flags more, not shown to flag better:** it finds all 12 hidden errors
+  against 7, but it also flags about twice as many other merchants (12–13 against 5–8), which nobody has labeled.
+  Flagging more is enough to land on more errors; whether it also judges better depends on those labels.
+- **Likely cause:** the ⑤ judges the merchant, not the purchase. A verified type such as "supermarket" or "department
+  store" makes "the business could buy here" plausible, so the ⑤ answers "mixed" or lowers its confidence, and the alert
+  disappears: the type says what the store is, not what was bought. We saw it on the demo (2 planted personal purchases
+  dropped); on the real book, a blind exam, it is not confirmed. It is not the keyword table's doing: with Super classifying, the team found
+  7 · 7 · 5 of 12 (24 Oct).
+- **Proposed fix (future work, not measured):** take the web type away from the ⑤ alone. A clearly personal type (a
+  gym) already raises its own alert in code, and the other agents keep the evidence. It is adopted only if, in 3 runs, it
+  loses nothing on the demo, finds more on the real book, and the labels show its extra alerts are not mostly false
+  alarms. Until then, the verifier stays on for every agent.
 
 ## 8. Limits, and how we will address them
 
 | Limit | How we will address it |
 |---|---|
 | Small samples: 33 demo merchants and 23 from the real book | More authorized real books, each with its key written before searching |
-| A correct store type does not say what was bought: with "department store" or "supermarket", the ⑤ downgraded 2 planted personal purchases in the demo, and on the real book it finds 7 of 12 with the web against 12 without (§7) | Stop the ⑤ from taking a store type as proof that the purchase is for the business, and label the extra alerts to measure its precision |
+| A store type does not say what was bought: on the real book the ⑤ finds 7 of 12 with the web and 12 without, because without it it flags more (§7) | Take the web type away from the ⑤ alone (or tell it a general store's type proves nothing), label its extra alerts, and adopt it only under the rule in §7 |
 | A merchant with the same name as another business can bring the other one's evidence | Ask the search for the book's own region, besides having the classifier flag it |
 | The demo's saved evidence was classified with the keyword table; in the public demo, Super classifies only the live merchants and manual searches | Re-classify that evidence with Super and re-measure the demo exams |
 | The search policy was chosen with the keyword table; on the real book, *advanced only* was as accurate, made fewer errors (6 against 8) and spent less (100 against 118 credits) | Repeat that comparison with Super classifying and adopt the winner |
