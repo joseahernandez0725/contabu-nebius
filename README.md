@@ -112,8 +112,16 @@ every account carries its IRS Schedule C line to guide the tax preparer.
 Tested with **Python 3.14**, **Node 24** and **PostgreSQL 18**. The commands are for macOS and Linux; the Windows
 (PowerShell) differences are noted next to them.
 
-**1 · Database** — as the PostgreSQL superuser (`sudo -u postgres psql` on Linux, `psql -U postgres` on Windows,
-`psql postgres` on macOS with Homebrew):
+On Windows, PowerShell blocks scripts by default, and both `Activate.ps1` and `npm` are scripts ("running scripts is
+disabled on this system"). Allow them once for your user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**1 · Database** — as the PostgreSQL superuser (`sudo -u postgres psql` on Linux, `psql postgres` on macOS with
+Homebrew). On Windows the installer does not add `psql` to the PATH, so call it by its full path:
+`& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres`.
 
 ```sql
 CREATE USER contabu WITH PASSWORD 'choose-a-password';
@@ -167,13 +175,15 @@ echo "VITE_DEV_UID=local-dev" > .env.local
 npm run dev
 ```
 
-On Windows, create `frontend/.env.local` with a text editor, or with
-`Set-Content .env.local "VITE_DEV_UID=local-dev" -Encoding utf8`: in PowerShell 5.1, `echo … >` writes UTF-16, Vite
-does not read it, and every request then gets a 401.
+On Windows, create `frontend/.env.local` with
+`[IO.File]::WriteAllText("$PWD\.env.local", "VITE_DEV_UID=local-dev")`. In PowerShell 5.1, `echo … >` writes UTF-16
+and `Set-Content -Encoding utf8` adds a byte-order mark: Vite does not read the variable in either case, and the app
+shows the Google sign-in instead of your local office.
 
 Open the address Vite prints (`http://localhost:5173`). The first time, it asks you to *Set up your business* (an empty
-book). To work on the three sample books of the public demo instead (Rivera HVAC, Casa Lupita, Sparkle Cleaning), run
-this once in the backend terminal and reload; it replaces that empty book:
+book). To work on the three sample books of the public demo instead (Rivera HVAC, Casa Lupita, Sparkle Cleaning), leave
+that form unfilled, run this once in the backend terminal and reload; it replaces that empty book (a book you already set
+up stays, and the three samples appear next to it in the client menu):
 
 ```bash
 python seed_local.py
