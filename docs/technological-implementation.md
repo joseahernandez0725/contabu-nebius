@@ -15,7 +15,7 @@ the agents, **14–15 of the 22**. Then, on a real book with 197 current transac
 errors**: code without AI found **none**, and with the agents **7** came up. The surprise was in the seat that reviews
 each finding: **the smallest model was the best judge.** The larger ones were more cautious, not more accurate: on
 another exam on the same real book, Super, Ultra and 3.5 Super VL marked 6 or 7 true errors as "legitimate", letting them
-through. That is why the reviewer is **Nano**. A review of three books costs **$0.012**, and the model never received an
+through. That is why the reviewer is **Nano**. A review of the three demo books takes **under two minutes** and costs **$0.012**, and the model never received an
 amount or a person's name.
 
 ![The AI team panel in Audit, from the guided tour. 1. Audit: the auditor (code, no AI); Reads your notes, Nemotron 3 Super, 1 call, 1.4 s, $0.00051; Spots personal spending, Nemotron 3 Nano, 28 merchants, 2 calls, 23.8 s, $0.00054; Reviews each finding, Nemotron 3 Nano, 13 findings, 2 calls, 22.6 s, $0.00073. 2. Check on the web: Tavily + Nemotron 3 Super, 1 web search, 3.3 s, 1 credit. 3. Draft rules: Nemotron 3.5 Super VL, 7 proposed, 5 passed the validator, 2 calls, 3.0 s, $0.00314. Last run: 9 calls, $0.00530, 1 credit.](img/team.png)
@@ -142,7 +142,8 @@ client account*), with its **197 transactions from 2026**, categorized by a book
   or owner money booked as a sale.
 - **Privacy, measured on what was actually sent to the model:** 0 full descriptions, 0 amounts and 0 person names, in
   every run.
-- **Cost of a full review:** $0.012 for the three demo books, $0.007–0.008 for the real book.
+- **Time and cost of a full review:** 31–34 s and $0.007–0.008 for the real book; 107–109 s and $0.012 for the three
+  demo books, almost all of it the models' time. Measured with the saved web evidence; in a new office, the first review also searches Tavily live.
 
 **The merchant verifier live.** In the table above the verifier uses the saved web evidence. Live, Super classifies
 freshly fetched Tavily results, so we re-ran D2 and R2 three times live, with a **control**: the keyword table on those

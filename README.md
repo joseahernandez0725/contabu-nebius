@@ -12,8 +12,8 @@
   someone has to review each client's books by hand.
 - **What ContaBu does:** a team of AI agents reviews the books and explains what looks wrong; the AI never touches a
   number.
-- **What we got:** on a real 2026 book, a single note from the bookkeeper took the rules the AI proposes from **half
-  right to all right**, and the full review costs **less than a cent**.
+- **What we got:** on a real 2026 book of 197 transactions, a single note from the bookkeeper took the rules the AI proposes from **half
+  right to all right**, and the full review takes **about 30 seconds** and costs **less than a cent**.
 
 **Big-firm AI, for the small bookkeeper.** The United States has
 [71,408 bookkeeping and non-CPA accounting offices](https://data.bls.gov/cew/data/api/2024/a/industry/541219.csv), with 4 employees on average, and bookkeeping jobs are projected to
@@ -29,7 +29,7 @@ our fixed checks in code, **without AI**, find 8, and with the agents **14–15 
 [real book](docs/potential-impact.md#5-evidence-on-a-real-book) with **197 current transactions from 2026**, we ran two
 tests: a bookkeeper hid **12 errors**, and code without AI found none while the agents found **7 of the 12**; and of the
 **15 Pending transactions** for which the AI proposed rules, it got 7 right on its own and **all 15** with a single note
-from the bookkeeper. Reviewing that whole book costs **less than a cent**, without sending the model a single amount or
+from the bookkeeper. Reviewing that whole book takes **about 30 seconds** and costs **less than a cent**, without sending the model a single amount or
 a person's name.
 
 ## Try it
@@ -57,7 +57,7 @@ agents, **14 to 15**. Then, on a real book with current transactions from 2026, 
 without AI found **none**, and with the agents **7** came up. The surprise was in the seat that reviews each finding:
 **the smallest model was the best judge.** The larger ones were more cautious, not more accurate: on another exam on the
 same real book, Super, Ultra and 3.5 Super VL marked 6 or 7 true errors as "legitimate", letting them through. That is
-why the reviewer is **Nano**. A review of three books costs **$0.012**, and the model never received an amount or a
+why the reviewer is **Nano**. A review of the three demo books takes **under two minutes** and costs **$0.012**, and the model never received an amount or a
 person's name. → [The full write-up](docs/technological-implementation.md)
 
 ## Tavily (the merchant verifier)
@@ -94,7 +94,7 @@ is built for that small bookkeeper, in English and in Spanish, and also for the 
 their own books. We tested it where it matters, on a real book (*an authorized client account*, with **197 current
 transactions from 2026**): a bookkeeper hid **12 errors** of the kind they see at work; code without AI found none, and
 the full system found **7**, all personal spending. And of the 15 Pending transactions for which the AI proposed rules,
-it got 7 right on its own and **all 15** with a single note from the bookkeeper. Reviewing that whole book costs **less
+it got 7 right on its own and **all 15** with a single note from the bookkeeper. Reviewing that whole book takes **about 30 seconds** and costs **less
 than a cent**: about one second of a bookkeeper's wage. → [The full write-up](docs/potential-impact.md)
 
 ## Quality of the Idea
