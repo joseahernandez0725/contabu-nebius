@@ -6,7 +6,7 @@
 
 **Live demo:** [demo.contabu.com](https://demo.contabu.com) · **Video:** [YouTube, 2:59](https://www.youtube.com/watch?v=PqxYZ9NNElQ) · **License:** [MPL 2.0](LICENSE)
 
-<img src="docs/img/cycle.png" width="860" alt="How ContaBu works: the bank (Plaid or a statement) goes into the rules, with no AI; whatever no rule covers stays Pending; the AI agents on NVIDIA Nemotron on Nebius Token Factory review and propose (Nemotron 3 Nano reviews each finding and spots personal spending, Tavily + Nemotron 3 Super checks merchants, Nemotron 3 Super reads the notes, Nemotron 3.5 Super VL drafts rules); the bookkeeper decides; and the P&amp;L comes out of the database, with no AI. What the bookkeeper approves becomes a rule or a check that runs on every later statement, with no AI.">
+<p align="center"><img src="docs/img/cycle.gif" width="960" alt="How ContaBu works, animated with a coffee bought in Rome: it comes in from the bank; no rule covers it, so it stays Pending; the AI agents on NVIDIA Nemotron on Nebius Token Factory review it one by one (Nemotron 3 Nano reviews each finding and spots personal spending, Tavily + Nemotron 3 Super checks the merchant, Nemotron 3 Super reads the notes, Nemotron 3.5 Super VL drafts a rule); the proposed rule, Aug 3 to 17 to Owner Draw, goes to the bookkeeper, who approves it; it loops back as a rule that runs on every next statement without AI; and the P&amp;L comes out of the database, with no AI."></p>
 
 - **The problem:** the United States has **71,408 small bookkeeping offices**, with 4 people on average, and every month
   someone has to review each client's books by hand.
@@ -41,8 +41,6 @@ a person's name.
 
 The guided tour opens with a welcome screen and a quick guide through the real screens. Every screen is in English and
 Spanish.
-
-<img src="docs/img/welcome.png" width="720" alt="The guided tour's welcome screen, Big-firm AI for the small bookkeeper: the five agents with their models; before and after on the sample book Rivera HVAC; the blind exam, 14 to 15 of 22; and one note, 7 of 15 to 15 of 15.">
 
 ---
 
