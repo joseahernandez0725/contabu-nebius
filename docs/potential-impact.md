@@ -6,14 +6,14 @@
 
 The United States has **71,408 bookkeeping offices**, with 4 people on average, and the trade is shrinking **6%** toward
 2035, while their clients are still there: **36.4 million businesses**, **5.8 million** of them Hispanic-owned. ContaBu
-is built for that small bookkeeper, in English and Spanish, and it also serves the owner of a business that is just
-starting out and wants to keep their own books, with AI that costs them pennies. We tested it where it matters, on a
-real book (*an authorized client account*): a bookkeeper hid **12 errors** of the kind they see at work; code alone found
-none, and the full system found **7**, all personal spending. With a single note from the bookkeeper, the rules the AI
-proposes went from **7 to 15 right out of 15**. Reviewing that whole book costs **less than a cent**: about one second of
-a bookkeeper's wage.
+is built for that small bookkeeper, in English and in Spanish, and also for the owner who is just starting out and keeps
+their own books. We tested it where it matters, on a real book (*an authorized client account*, with **197 current
+transactions from 2026**): a bookkeeper hid **12 errors** of the kind they see at work; our fixed checks in code, without
+AI, found none, and the full system found **7**, all personal spending. And of the 15 Pending transactions for which the
+AI proposed rules, it got 7 right on its own and **all 15** with a single note from the bookkeeper. Reviewing that whole
+book costs **less than a cent**: about one second of a bookkeeper's wage.
 
-![Results on a real book, an authorized client account with 197 transactions of 2026, 3 runs per condition with identical results. Errors found, of 12 hidden by a practicing bookkeeper: code alone 0 of 12, the full system 7 of 12. Rules right, of 15 Pending transactions the AI decides: without the bookkeeper's note 7 of 15, with a one-line note 15 of 15. Cost of a full review in Nemotron: $0.007 to $0.008, less than a cent, about 1 second of a bookkeeper's wage.](img/real-book-results.png)
+![Results on a real book, an authorized client account with 197 transactions from 2026, 3 runs per condition with identical results. Errors found, of 12 hidden by a practicing bookkeeper: code without AI 0 of 12, the full system 7 of 12. Rules right, of 15 Pending transactions the AI decides: without the bookkeeper's note 7 of 15, with a one-line note 15 of 15. Cost of a full review in Nemotron: $0.007 to $0.008, less than a cent, about 1 second of a bookkeeper's wage.](img/real-book-results.png)
 
 ---
 
@@ -58,20 +58,16 @@ care.
 | Growth of Hispanic-owned employer firms | from 406,086 (2021) to 465,202 (2022) and 496,000 (2023) | U.S. Census Bureau, *Annual Business Survey*, 2022, 2023 and 2024 editions |
 
 Together, Hispanic-owned businesses had **$974.5 billion** in receipts in 2023 ($730.3 + $244.2 billion). They are
-**nearly one in six** businesses in the country, and the share is higher among the smallest ones, which are the ones
-that hire an outside bookkeeper instead of keeping their own accounting. That is why every ContaBu screen is in
-**English and Spanish**.
+**nearly one in six** businesses in the country, and the share is higher among the smallest: 17.5% of nonemployer
+businesses, against 8.4% of employer businesses. That is why every ContaBu screen is in **English and in Spanish**.
 
 **English and Spanish end to end, with one click.** ContaBu is written entirely in both languages: every screen, every
 button, every message and the demo guide exist in English and in Spanish, and the language switches with one click on
 any screen, without losing anything (the data is stored in English; the language is only the layer you see). The agents
-that explain a finding (the reviewer and the personal-spending judge) write their explanation **in both languages in the
+that explain a finding (the reviewer and the personal-spending agent) write their explanation **in both languages in the
 same call**, so switching languages does not pay for the review again. In practice, a bookkeeper can do all the work in
 Spanish, talk to their client in Spanish, and deliver the P&L as a PDF **in English**, the language of the tax preparer
-and the IRS.
-
-That is an advantage over the most widely used tools in the US, which are designed to work in English. For the
-bookkeeper who serves Hispanic owners, the difference is not having to translate their own work.
+and the IRS. For the bookkeeper who serves Hispanic owners, the difference is not having to translate their own work.
 
 ContaBu was born from the daily work of a bookkeeper in the United States: every tool in this document answers a
 mistake that work finds.
@@ -93,23 +89,24 @@ rules and checks that can be read, tested and approved.
 ## 5. Evidence on a real book
 
 The book is the bank account of a small business, used with its owner's permission (*an authorized client account*):
-its **197 transactions of 2026**, categorized by a bookkeeper. It never goes into the demo or the repository.
+its **197 transactions from 2026**, categorized by a bookkeeper. It never goes into the demo or the repository. We ran
+two tests on that book.
 
-**Errors a bookkeeper finds at work.** A practicing bookkeeper planted in a copy of the book the errors they see in
+**1. Errors a bookkeeper finds at work.** A practicing bookkeeper planted in a copy of the book the errors they see in
 practice: 12 hidden from the system, almost all personal spending (athletic wear, beauty, underwear, an amusement park),
 plus an ATM withdrawal and a gas station booked wrong.
 
 | | Found (of 12) |
 |---|---|
-| Code alone | 0 |
+| Code without AI | 0 |
 | The full system, 3 runs | **7 · 7 · 7** |
 
 The 7 are personal spending, caught by the agent that judges whether a merchant is personal **for this particular
-business**. Four more errors, not hidden (purchases on the wrong side of an amount threshold), are caught by code alone
-in all three runs.
+business**. Four more errors, not hidden (purchases on the wrong side of an amount threshold), are caught by code
+without AI in all three runs.
 
-**The bookkeeper's judgment as input.** We compared the rules the drafter agent proposes with the bookkeeper's actual
-decisions about the Pending transactions:
+**2. The bookkeeper's judgment as input.** Of the book's **118 Pending transactions**, the rule drafter proposed rules
+that decide 15. We compared them with what the bookkeeper actually decided about those transactions:
 
 | | Transactions it decides | Right |
 |---|---|---|
@@ -130,7 +127,7 @@ verify step also searches the 10 merchants with the most Pending transactions. I
 | | Cost of a full review |
 |---|---|
 | The real book (2026) | $0.007–0.008 in Nemotron |
-| The three demo books | $0.012 in Nemotron; 33–35 Tavily credits the first time (measured with the keyword table; with Super, 27 to 45% fewer: see [Tavily §4](tavily.md#4-the-classification-the-keyword-table-against-the-nemotron-models)), 0 the second |
+| The three demo books (387 transactions) | $0.012 in Nemotron; 33–35 Tavily credits the first time (measured with the keyword table; with Super, 27 to 45% fewer: see [Tavily §4](tavily.md#4-the-classification-the-keyword-table-against-the-nemotron-models)), 0 the second |
 
 At the trade's median wage ($24.36 an hour), a full review of the real book costs the same as **1.0 to 1.2 seconds** of
 the bookkeeper's time.
@@ -147,7 +144,7 @@ expense they have to justify.
 | Cash basis and income statement: no double entry and no balance sheet | A balance sheet derived from cash, then double entry |
 | It does not include payroll, invoicing or tax filing | Out of scope on purpose: ContaBu gives the preparer a P&L with the IRS lines |
 | Missing detectors: a wrong category on a single row, an ATM withdrawal booked as an expense, a loan or an owner contribution booked as a sale | Build those detectors and measure them on the same exams |
-| The drafter decides 15 of the real book's 118 Pending transactions; the rest stays with the bookkeeper | More sources of grounds: the ③ reconciler (checks with names) and the client's answers |
+| The drafter decides 15 of the real book's 118 Pending transactions; the rest stays with the bookkeeper | More sources of grounds: the statement reconciler (checks with names) and the client's answers |
 | A single real book, and no paying clients yet | More authorized clients, each with its own exam |
 | The personal purchases in the real book's exam were added to the copy, because the book had none of those kinds | Exams written by bookkeepers on books that contain those expenses for real |
 
@@ -157,7 +154,7 @@ ContaBu is a bookkeeping tool, not tax advice.
 
 Bookkeeping is the beginning of what ContaBu wants to offer. Two pieces are planned; neither is available yet:
 
-- **The ③ reconciler (under construction).** It will store bank statements and check images, reconcile every transaction
+- **The statement reconciler (under construction).** It will store bank statements and check images, reconcile every transaction
   in the book against the PDF statement and assign each check the name of whoever cashed it, automatically. It is the
   piece that turns into evidence what today only the client knows.
 - **The platform that connects bookkeepers with business owners.** The owner will receive their income statement, answer

@@ -1,35 +1,30 @@
 [← Back to README](../README.md)
 
-# Tavily — how the ② verifier uses the web, and how we tested it
-
-**In one line:** on a real book, Tavily + Nemotron Super identify the merchant's business correctly **19–20 times out of 23** (14 with our keyword table), no search ever carried a person's name, and the second review spends **0 credits**.
+# Tavily — how the merchant verifier uses the web, and how we tested it
 
 ## Summary
 
-To know whether an expense belongs to the business, sometimes you need to know what the merchant is. The ② verifier
-looks it up on **Tavily** at review time, and **Nemotron Super** reads the results and picks the business type from a
-list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is suspicious
-and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can only return
-a type. On the real book, Super got **19–20 merchants right against 14** for our keyword table. And it spends little: a
-new office uses **33–35 credits** on its first review and **0** on the second, because it remembers every merchant.
+To know whether an expense belongs to the business, sometimes you need to know what the merchant is. The merchant
+verifier looks it up on **Tavily** at review time, and **Nemotron Super** reads the results and picks the business type
+from a list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is
+suspicious and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can
+only return a type. On the real book, of **23 merchants** whose business type the bookkeeper wrote down before searching,
+Super identified **19–20** correctly (depending on the run) reading Tavily's results, against **14** for our keyword
+table, without AI, on the same results. And it spends little: the first review of the three demo books (**387
+transactions** over three months), in an office that has not searched any merchant yet, uses **33–35 credits**; the
+second, **0**, because each office remembers the merchants it already searched, for all of its clients.
 
 ![The Check on the web step of the AI team panel: Looks the merchant up online, Tavily + Nemotron 3 Super, 1 web search, 3.3 s, 1 credit.](img/tavily-search.png)
 
 *A real search, as the Audit tab shows it: the review that built the guided tour searched 1 merchant on Tavily (3.3 s, 1 credit); the rest came from the office's memory.*
-
-> **ContaBu's agents, by number.** ① **Reviewer:** judges each of the auditor's findings (a problem, or legitimate?) ·
-> ② **Verifier:** looks the merchant up on the web with Tavily and says what kind of business it is · ③ **Reconciler:**
-> under construction · ④ **Rule drafter:** proposes rules for what is Pending · ⑤ **Personal?:** flags expenses that look
-> like the owner's personal spending, for *this* business · ⑥ **Note translator:** turns a bookkeeper's note into a check
-> the auditor runs on every review. Each one's model, and why, in [Technological Implementation](technological-implementation.md).
 
 ---
 
 ## 1. What it does
 
 - **Where it runs:** in *Review the book*, on the merchants of findings that could be personal spending (mostly the ones
-  the ⑤ flagged) and on the **10 merchants with the most Pending transactions**, so the ④ drafter has evidence for what no
-  rule covers. Also on demand, with *Search this merchant*, from a finding or from a transaction's panel. Mechanical
+  the personal-spending agent flagged) and on the **10 merchants with the most Pending transactions**, so the rule
+  drafter has evidence for what no rule covers. Also on demand, with *Search this merchant*, from a finding or from a transaction's panel. Mechanical
   problems (a row outside its rule, money that came in booked as an expense) are not searched: the web does not solve
   them.
 - **Why only search:** the verifier needs a short, ranked list of what a merchant is, not a page's full text or a
@@ -42,6 +37,10 @@ new office uses **33–35 credits** on its first review and **0** on the second,
   **this** merchant. If the model fails or leaves the schema, the keyword table classifies.
 - **It remembers:** each merchant is searched once per office; the second review comes from memory and spends no
   credits. Every search and every classification is logged, with what it cost.
+- **Where the call happens:** `backend/merchant_verifier.py` sends the search to Tavily at review time (`verify_flagged`
+  for the review, `search_one` for a single merchant). To see it in the live demo, run *Review the book* in Audit: the
+  "Check on the web" step shows each search with its seconds and credits; or press *🔎 Search this merchant* on a Pending
+  merchant. The guided tour is read-only: its web evidence was searched once with Tavily and saved, so it spends nothing.
 
 ## 2. What it never does
 
@@ -80,8 +79,8 @@ were measured with the keyword table, before Super classified; they serve to cho
 | **Basic, then advanced if not high, keeping the advanced (today's)** | **56 of 68** | **8** | **202** |
 | Advanced only | 56 of 68 | 8 | 212 |
 
-**Does it help the team?** With live search, the team found the same errors as with the saved evidence (29 and 31 of 32
-live; 31 and 31 saved), and the verifier contributed the right correction on **4** errors in each run, against 2 with
+**Does it help the team?** On the demo's first exam (32 errors), with live search the team found the same errors as with
+the saved evidence (29 and 31 of 32 live; 31 and 31 saved), and the verifier contributed the right correction on **4** errors in each run, against 2 with
 the saved evidence.
 
 ## 4. The classification: the keyword table against the Nemotron models
@@ -91,7 +90,7 @@ or a Nemotron model?
 
 **The method.** The raw results were fetched **only once** and saved (186 credits): 37 demo merchants, from the two books
 not used to tune the table, and 25 merchants from the real book (2026), with basic and advanced search. After that, zero
-credits: the table and the **10 candidates** (the five Nemotron models, with and without reasoning) read exactly the
+credits: the table and the **10 candidates** (Token Factory's five Nemotron models, with and without reasoning) read exactly the
 same thing, **3 times each**. 33 demo merchants and 23 real-book merchants were scored (the ambiguous ones do not count),
 with today's search policy. We counted what the agents actually use: the high- or medium-confidence answers, right and
 wrong. **The rule, written before running:** a model is adopted only if, on both keys, it has more usable right answers
@@ -120,12 +119,14 @@ Each correction was logged with what it said before and why it changed.
 The other seven candidates (Nano, 3.5 Lightning and Ultra, with and without reasoning, and Super with reasoning) were
 measured the same way, with the key before the correction, and none beat Super on the demo without making more errors.
 
-**The decision.** The rule written beforehand **was not met**: on the demo, Super's worst run (25) ties the table. We
-adopted it because **in no run, on neither key, was it worse than the table**, and on the real book, which the table
-never saw, it beats it by 5–6 right answers with the same errors. The tie on the demo is explained by the table having
-been tuned on the demo's results: it plays at home there. 3.5 Super VL gets more right on the real book, but on the demo
-it makes 6 usable errors against the table's 4; that is why it was not chosen. The classifier costs **$0.0004 and one
-second per merchant**.
+**The decision.** We do not pick the model that gets the most right, but the one that gets more right **without getting
+more wrong**: a confident wrong answer reaches the agents as evidence and can lead them into an error, so the rule asks
+for both. That is why 3.5 Super VL was not chosen: it gets more right on the real book, but on the demo it makes 6
+usable errors against the table's 4. With Super, the rule written beforehand **was not met**: on the demo, its worst run
+(25) ties the table. We adopted it because **in no run, on neither key, was it worse than the table**, in right answers
+or in errors, and on the real book, which the table never saw, it beats it by 5–6 right answers with the same errors.
+The tie on the demo is explained by the table having been tuned on the demo's results: it plays at home there. The
+classifier costs **$0.0004 and one second per merchant**.
 
 **Credits with Super.** The advanced search is only requested if the basic one's confidence is not high, so the
 classifier decides how many credits are spent. Computed on the saved results (0 credits), with today's search policy:
@@ -149,8 +150,8 @@ Super spends less because it answers "high" more often on the basic search and u
 
 ## 6. In the demo
 
-- A new office with the three books spends **33–35 credits** on its first review (measured with the keyword table); the
-  second, **0**. With Super, on the saved results for the demo's 37 merchants, the count drops from 73 to 49–53 credits
+- The three demo books (387 transactions) spend **33–35 credits** on the first review (measured with the keyword table);
+  the second, **0**. With Super, on the saved results for the demo's 37 merchants, the count drops from 73 to 49–53 credits
   (§4).
 - So the demo does not spend on every visitor, the evidence for its books was fetched once and is copied into each office,
   except for **three merchants left out on purpose**: an evaluator's first review makes real Tavily searches, and the
@@ -158,48 +159,59 @@ Super spends less because it answers "high" more often on the basic search and u
 
 ## 7. With and without Tavily
 
-The same exams, the same code and the same day, three runs each, with the whole team. What the two conditions mean:
+The same exams, the same code and the same day, three runs per condition, with the whole team. The four conditions:
 
-- **With Tavily:** the agents receive the merchant types Tavily found, saved from earlier real searches (classified by
-  the keyword table when they were saved). The same evidence in all 3 runs, and 0 credits.
-- **Without Tavily:** no search at all, and the saved types are hidden from every agent (the ⑤, the ①, the auditor, the
-  note checks and the ④ drafter): the office's memory reads as empty.
-- **Why the saved evidence:** so that the only difference between the two conditions is whether the agents see the
-  merchant's type, not what Tavily happens to return that day.
+- **With Tavily:** the agents receive the merchant types Tavily found, saved from earlier real searches. The same
+  evidence in all 3 runs, and 0 credits.
+- **Without Tavily:** no search at all, and the saved types are hidden from every agent (personal spending, reviewer,
+  auditor, note checks and rule drafter): the office's memory reads as empty.
+- **Without Tavily for the personal-spending agent only:** the other agents still see the evidence; that agent alone
+  does not get the verified type.
+- **With Tavily and the purchase context:** the personal-spending agent sees the verified type and also how the
+  bookkeeper booked each merchant's purchases (the section and the category; never an amount, a description or a name).
+- **Why the saved evidence:** so that the only difference between the conditions is what the agents see, not what Tavily
+  happens to return that day.
 
-The script is `backend/no_web_matrix.py`; it does not change the product or the measured files.
+The scripts are `backend/no_web_matrix.py` and `backend/context_matrix.py`; they do not change the product or the
+measured files. On the real book, the bookkeeper labeled every extra merchant the personal-spending agent flagged (14
+merchants): all 14 are business expenses, so every extra alert is a false alarm.
 
-| Three runs each | With Tavily | Without Tavily |
-|---|---|---|
-| Real book: hidden errors found (of 12) | 7 · 7 · 7 | **12 · 12 · 12** |
-| Real book: other merchants flagged as personal (not in the key, unlabeled) | 5 · 5 · 8 | 12 · 12 · 13 |
-| Demo, blind exam (of 22) | **15 · 14 · 13** | 11 · 14 · 14 |
-| Demo, first exam (of 32) | 32 · 31 · 29 | 30 · 32 · 31 |
-| Demo: false alarms of the ⑤ | 2 · 2 · 2 | 2 · 4 · 2 |
-| Demo: Pending transactions covered by correct proposed rules (of 91) | **44** · 44 · 44 | 42 · 42 · 42 |
-| Sent to the model: descriptions · amounts · names | 0 · 0 · 0 | 0 · 0 · 0 |
+| Three runs each | With Tavily | Without Tavily | Without Tavily for personal spending only | With Tavily and the purchase context |
+|---|---|---|---|---|
+| Real book: hidden errors found (of 12) | 7 · 7 · 7 | **12 · 12 · 12** | **12 · 12 · 12** | 0 · 6 · 0 |
+| Real book: false alarms of the personal-spending agent (labeled) | **8 · 1 · 1** | 5 · 5 · 7 | 10 · 8 · 8 | 0 · 2 · 0 |
+| Demo, blind exam (of 22) | **14 · 14 · 14** | 14 · 14 · 13 | **14 · 14 · 14** | 10 · 10 · 10 |
+| Demo, first exam (not blind, of 32) | 30 · 32 · 30 | 32 · 32 · 30 | 32 · 30 · 32 | 26 · 26 · 26 |
+| Demo: false alarms of the personal-spending agent | 2 · 2 · 2 | 3 · 2 · 3 | 2 · 2 · 2 | 1 · 1 · 1 |
+| Demo: Pending transactions covered by correct proposed rules (of 91) | 41 · 44 · 44 | 42 · 42 · 42 | **44 · 44 · 44** | **44 · 44 · 44** |
+| Sent to the model: descriptions · amounts · names | 0 · 0 · 0 | 0 · 0 · 0 | 0 · 0 · 0 | 0 · 0 · 0 |
 
-- **On the demo, Tavily helps a little:** the blind exam gives 13–15 against 11–14, and 2 more Pending transactions get a
-  correct rule.
-- **On the real book, without the web the ⑤ flags more, not shown to flag better:** it finds all 12 hidden errors
-  against 7, but it also flags about twice as many other merchants (12–13 against 5–8), which nobody has labeled.
-  Flagging more is enough to land on more errors; whether it also judges better depends on those labels.
-- **Likely cause:** the ⑤ judges the merchant, not the purchase. A verified type such as "supermarket" or "department
-  store" makes "the business could buy here" plausible, so the ⑤ answers "mixed" or lowers its confidence, and the alert
-  disappears: the type says what the store is, not what was bought. We saw it on the demo (2 planted personal purchases
-  dropped); on the real book, a blind exam, it is not confirmed. It is not the keyword table's doing: with Super classifying, the team found
-  7 · 7 · 5 of 12 (24 Oct).
-- **Proposed fix (future work, not measured):** take the web type away from the ⑤ alone. A clearly personal type (a
-  gym) already raises its own alert in code, and the other agents keep the evidence. It is adopted only if, in 3 runs, it
-  loses nothing on the demo, finds more on the real book, and the labels show its extra alerts are not mostly false
-  alarms. Until then, the verifier stays on for every agent.
+- **On the demo, with and without Tavily nearly tie:** the blind exam gives 14 · 14 · 14 against 14 · 14 · 13. With
+  Tavily, the personal-spending agent makes fewer false alarms (2 against 2–3), and up to 2 more Pending transactions get
+  a correct rule.
+- **On the real book, the cause is confirmed:** the personal-spending agent judges the merchant, not the purchase. A
+  verified type such as "supermarket" or "department store" makes "the business could buy here" plausible, so it answers
+  "mixed" and the alert disappears. Taking the type away from **that agent alone** is enough for it to find all 12 errors,
+  as without Tavily. It is not the keyword table's doing: with Super classifying live, the team found 7 · 7 · 5 of 12 on
+  the same exam.
+- **Both fixes were measured against a rule written before running, and neither meets it:**
+  - *Taking the type away from the personal-spending agent only* loses nothing on the demo and finds all 12 errors, but
+    its extra alerts are all false alarms: 8–10 per run, more than with Tavily off for everyone (5–7).
+  - *Giving it the purchase context* makes things worse: on the real book it finds 0 · 6 · 0 of 12, and on the demo it
+    drops to 10 of 22 on the blind exam. The hidden personal purchases are booked as business expenses, so the booked
+    category confirms to the agent what it was supposed to question.
+- **The decision:** the verifier stays on for every agent, as submitted. With Tavily, the personal-spending agent lets
+  errors through on the real book; without the type, it catches them all, but at the cost of false alarms the bookkeeper
+  would have to dismiss by hand. Neither is free, and we do not change the product without a fix that passes the rule.
+- **An earlier run** found the same errors, 7 against 12, but its extra alerts, unlabeled, were different (5–8 with
+  Tavily, 12–13 without): that is why we labeled them before deciding.
 
 ## 8. Limits, and how we will address them
 
 | Limit | How we will address it |
 |---|---|
 | Small samples: 33 demo merchants and 23 from the real book | More authorized real books, each with its key written before searching |
-| A store type does not say what was bought: on the real book the ⑤ finds 7 of 12 with the web and 12 without, because without it it flags more (§7) | Take the web type away from the ⑤ alone (or tell it a general store's type proves nothing), label its extra alerts, and adopt it only under the rule in §7 |
+| A store type does not say what was bought: on the real book, the personal-spending agent finds 7 of 12 with the web and 12 without the type, but without the type it adds 8–10 false alarms per run; giving it the booked category makes it worse (§7) | The agent sees the merchant, not what was bought. Next: at a general store, the alert should not go away but move to "ask the client" instead, measured with the same rule and the same labels |
 | A merchant with the same name as another business can bring the other one's evidence | Ask the search for the book's own region, besides having the classifier flag it |
 | The demo's saved evidence was classified with the keyword table; in the public demo, Super classifies only the live merchants and manual searches | Re-classify that evidence with Super and re-measure the demo exams |
 | The search policy was chosen with the keyword table; on the real book, *advanced only* was as accurate, made fewer errors (6 against 8) and spent less (100 against 118 credits) | Repeat that comparison with Super classifying and adopt the winner |

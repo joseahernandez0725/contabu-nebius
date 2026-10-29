@@ -2,7 +2,42 @@
 
 # Feedback: Nebius Token Factory + NVIDIA Nemotron, from building ContaBu
 
-Context: five bookkeeping agents returning strict JSON, via the OpenAI-compatible API (httpx, temperature 0). Findings 1–7 were measured on Nemotron 3 Nano 30B-A3B; 8–10, 12 and 13 compare Nano, 3.5 Lightning, Super 120B, Ultra 550B and 3.5 Super VL, agent by agent; 11 and 14 are about the service. Findings 8–10 are mid-October snapshots; the team we ship came out of them and of later runs: ① reviewer and ⑤ personal-spending judge on Nano, ② merchant classifier and ⑥ note translator on Super, ④ rule drafter on 3.5 Super VL, none reasoning. Every finding below comes from real calls we measured; each says what we tried, what happened, why (✅ = proven with a test; 🟡 = our hypothesis, since we can't see inside the service), why it matters to a developer, and what we suggest. Everything is reproducible with the commands at the end.
+Context: five bookkeeping agents returning strict JSON, via the OpenAI-compatible API (httpx, temperature 0). Findings 1–7 were measured on Nemotron 3 Nano 30B-A3B; 8–10, 12 and 13 compare Nano, 3.5 Lightning, Super 120B, Ultra 550B and 3.5 Super VL, agent by agent; 11 and 14 are about the service. Findings 8–10 are mid-October snapshots; the team we ship came out of them and of later runs (see *ContaBu's agents* below). Every finding below comes from real calls we measured; each says what we tried, what happened, why (✅ = proven with a test; 🟡 = our hypothesis, since we can't see inside the service), why it matters to a developer, and what we suggest. Everything is reproducible with the commands at the end.
+
+## ContaBu's agents
+
+ContaBu reviews a client's books with an **auditor** written in code, with no AI, and a team of five agents, each on
+its own Nemotron model on Token Factory, none of them reasoning:
+
+- **Reviewer** (Nemotron 3 Nano): judges each of the auditor's findings (a problem, legitimate or unsure) and explains
+  why, in English and in Spanish.
+- **Personal-spending agent** (Nemotron 3 Nano): flags the merchants booked as business expenses that look like the
+  owner's personal spending, for this particular business.
+- **Merchant verifier** (Tavily + Nemotron 3 Super): searches the web for what a suspicious merchant is, and the model
+  picks its business type from a closed list.
+- **Note translator** (Nemotron 3 Super): turns a bookkeeper's note into a check the auditor runs on every review,
+  without calling the model again.
+- **Rule drafter** (Nemotron 3.5 Super VL): proposes rules for the Pending transactions; the bookkeeper approves them
+  and an engine with no AI applies them.
+
+A sixth piece, a statement reconciler, is under construction and not measured here.
+
+## What worked well
+
+- The OpenAI-compatible API worked with a plain httpx client: one route, no SDK.
+- json_schema with strict: true is really enforced (finding 4) — the right foundation for agents that must return data, not prose.
+- With reasoning off, Nano is fast and cheap enough to run on every review; the full measured team costs $0.012 per review of three books.
+- Super with reasoning on was predictable in length: 0 truncated answers in 144 calls (finding 10).
+- 3.5 Super VL, with text only, became our best rule drafter on quality, cost and latency (finding 12).
+- Reference costs (Nano, public catalog prices $0.06 in / $0.24 out per 1M tokens):
+
+| Task | Input tokens | Output tokens | Cost | Latency |
+|---|---|---|---|---|
+| JSON ping, reasoning off | 37 | 18 | $0.000007 | 0.3–1.3 s |
+| JSON ping, reasoning on (default) | 37 | 196–247 | $0.00005 | 1.0–1.4 s |
+| Propose rules for a book, reasoning off | 2,000–4,000 | 110–1,000 | $0.0002–0.0004 | 1–5 s |
+| Same, reasoning on | 2,000–4,000 | 4,900–16,000 | $0.0014–0.0040 | 16–75 s |
+| Review 5 findings, reasoning off | ~1,400 | 300–400 | ~$0.00017 | 1.5–3.7 s |
 
 ## Summary, by impact
 
@@ -22,23 +57,6 @@ Context: five bookkeeping agents returning strict JSON, via the OpenAI-compatibl
 | 8 | Lightning, reasoning, writes ~3× more than Nano and runs out of tokens in half the calls | "Same price" ≠ "same cost": 2.7× | Typical reasoning length per model; a working reasoning cap; return partial reasoning on truncation | Low to medium |
 | 14 | A window of 503s that no response explained silently degraded our results (the status page posted a dedicated-endpoint incident 16 min after our errors began) | A model comparison run in that window would have picked the wrong model | Retry-After and a reason (capacity / maintenance) in 503s; status components per model | Low to medium |
 | 6 | The model id in the official cookbook returns 404 | The first copied example fails | Fix the id; case-insensitive ids or a "did you mean" | Low |
-
-## What worked well
-
-- The OpenAI-compatible API worked with a plain httpx client: one route, no SDK.
-- json_schema with strict: true is really enforced (finding 4) — the right foundation for agents that must return data, not prose.
-- With reasoning off, Nano is fast and cheap enough to run on every review; the full measured team costs $0.012 per review of three books.
-- Super with reasoning on was predictable in length: 0 truncated answers in 144 calls (finding 10).
-- 3.5 Super VL, with text only, became our best rule drafter on quality, cost and latency (finding 12).
-- Reference costs (Nano, public catalog prices $0.06 in / $0.24 out per 1M tokens):
-
-| Task | Input tokens | Output tokens | Cost | Latency |
-|---|---|---|---|---|
-| JSON ping, reasoning off | 37 | 18 | $0.000007 | 0.3–1.3 s |
-| JSON ping, reasoning on (default) | 37 | 196–247 | $0.00005 | 1.0–1.4 s |
-| Propose rules for a book, reasoning off | 2,000–4,000 | 110–1,000 | $0.0002–0.0004 | 1–5 s |
-| Same, reasoning on | 2,000–4,000 | 4,900–16,000 | $0.0014–0.0040 | 16–75 s |
-| Review 5 findings, reasoning off | ~1,400 | 300–400 | ~$0.00017 | 1.5–3.7 s |
 
 ## 1. Reasoning tokens are not reported separately in usage
 
@@ -176,12 +194,12 @@ What happened (✅ Oct 15, model_matrix.py, 2 runs per combination, 24 calls per
 
 | Agent (calls per run) | Output per run, Nano reasoning | Output per run, Lightning reasoning |
 |---|---|---|
-| ⑤ personal for this business? (3) | 16,196 | 45,328 |
-| ⑥ note translator (2) | 3,676 | 10,204 |
-| ① reviewer (3) | 15,451 | 48,000 (all 3 calls at the cap) |
-| ④ drafter (4) | 18,374 | 51,916 |
+| Personal-spending agent (3) | 16,196 | 45,328 |
+| Note translator (2) | 3,676 | 10,204 |
+| Reviewer (3) | 15,451 | 48,000 (all 3 calls at the cap) |
+| Rule drafter (4) | 18,374 | 51,916 |
 
-Ran out of tokens (finish_reason "length" at 16,000): Lightning 13 of 24 calls, Nano 0 of 24. A truncated call is billed in full and returns neither the answer nor the reasoning text. Cost of the four per run: Lightning reasoning $0.039, Nano reasoning $0.015 — same price per token; the difference is only how much it writes. Without reasoning, Lightning was the better of the two as ④ in that test: 33% Pending coverage in both runs (Nano: 10% and 24%), 100% precision, 3 s and $0.0018 per run (Nano: $0.0020).
+Ran out of tokens (finish_reason "length" at 16,000): Lightning 13 of 24 calls, Nano 0 of 24. A truncated call is billed in full and returns neither the answer nor the reasoning text. Cost of the four per run: Lightning reasoning $0.039, Nano reasoning $0.015 — same price per token; the difference is only how much it writes. Without reasoning, Lightning was the better of the two as the rule drafter in that test: 33% Pending coverage in both runs (Nano: 10% and 24%), 100% precision, 3 s and $0.0018 per run (Nano: $0.0020).
 
 Why: 🟡 Lightning seems trained to reason much longer by default; with a fixed cap that becomes truncated answers. From outside we can't see how much of the output is reasoning when the answer is cut.
 
@@ -197,12 +215,12 @@ What happened (✅ Oct 15; quality is counted by code, never by the model):
 
 | Agent | Best quality for the cost | What happened with the large models |
 |---|---|---|
-| ⑤ personal for this business? | Nano, reasoning off: flags 8–9 of 11 personal expenses, precision 86–92%, $0.001 | Super and Ultra: 100% precision but flag only 4–6 of 11 (more cautious), at 4–14× the cost. Reasoning lowered what it flags in 3 of the 4 models (same in Ultra) |
-| ① reviewer | Nano, reasoning off: 30–31 of 32, precision 87–92%, 0 true errors called "legitimate", $0.001 | Super without reasoning dismissed 4–5 true errors as "legitimate"; Ultra, 2. None improved on Nano |
-| ④ drafter | Lightning, reasoning off: coverage 33% (stable), 100% precision, $0.0018 | Ultra without reasoning: 43% stable, 100%, $0.028 (15×). Super reasoning: 48–51%, but 3 extra rows on the vacation case |
-| ⑥ note translator | Ultra, reasoning off: the 3 errors the notes touch, in both runs, 1 s, $0.003 | Nano needs reasoning (without it: 0–1 of 3); Ultra reasoning didn't improve and cost 4× |
+| Personal-spending agent | Nano, reasoning off: flags 8–9 of 11 personal expenses, precision 86–92%, $0.001 | Super and Ultra: 100% precision but flag only 4–6 of 11 (more cautious), at 4–14× the cost. Reasoning lowered what it flags in 3 of the 4 models (same in Ultra) |
+| Reviewer | Nano, reasoning off: 30–31 of 32, precision 87–92%, 0 true errors called "legitimate", $0.001 | Super without reasoning dismissed 4–5 true errors as "legitimate"; Ultra, 2. None improved on Nano |
+| Rule drafter | Lightning, reasoning off: coverage 33% (stable), 100% precision, $0.0018 | Ultra without reasoning: 43% stable, 100%, $0.028 (15×). Super reasoning: 48–51%, but 3 extra rows on the vacation case |
+| Note translator | Ultra, reasoning off: the 3 errors the notes touch, in both runs, 1 s, $0.003 | Nano needs reasoning (without it: 0–1 of 3); Ultra reasoning didn't improve and cost 4× |
 
-What repeats: with structured outputs over a closed list, the large models were more conservative, not more accurate. To FIND problems (⑤, ①) the small one won on these demo exams (for ⑤, not on every exam: see finding 13); to PROPOSE rules (④), where world knowledge matters, the larger ones won. Reasoning helped in 2 cases (the note translator on Nano; the ④ on Super, +10 points of coverage at 2.4× the cost) and was worse or equal in the rest, multiplying latency (up to 250 s in one call).
+What repeats: with structured outputs over a closed list, the large models were more conservative, not more accurate. To FIND problems (the personal-spending agent and the reviewer) the small one won on these demo exams (for the personal-spending agent, not on every exam: see finding 13); to PROPOSE rules (the rule drafter), where world knowledge matters, the larger ones won. Reasoning helped in 2 cases (the note translator on Nano; the rule drafter on Super, +10 points of coverage at 2.4× the cost) and was worse or equal in the rest, multiplying latency (up to 250 s in one call).
 
 Why: 🟡 our prompts were tuned on Nano; a prompt written for Super or Ultra might do differently. The trend (bigger = more cautious) repeated in two different agents.
 
@@ -218,7 +236,7 @@ What happened (✅ Oct 15–16, team_matrix.py; per call, across all runs):
 
 | With reasoning | Calls | Mean output per call (estimated reasoning) | Out of tokens | Max latency |
 |---|---|---|---|---|
-| Super 120B (the ④ drafter) | 144 | 3,115 (2,652) | 0 | 41 s |
+| Super 120B (the rule drafter) | 144 | 3,115 (2,652) | 0 | 41 s |
 | Ultra 550B | 34 | 1,300–3,712 | 0 | 33 s |
 | Nano | 33 | 1,308–6,760 | 1 | 90 s |
 | 3.5 Lightning | 32 | 5,189–11,313 | 9 | 261 s |
@@ -253,11 +271,11 @@ Suggestion: say on VL's model card how it does with text only compared with Supe
 
 ## 13. On a blind exam, a larger model as judge finds FEWER errors
 
-What we tried: confirm finding 9 on errors the agents were never tuned on — the blind exam (22 errors planted and written separately) — changing one seat at a time. ⑤ (personal for this business?) is the agent that adds errors; ① (reviewer) is the one that filters. Each was run with Lightning, Super, Ultra and 3.5 Super VL, all without reasoning, against the current team (both on Nano), 3 runs each, in the same batch. The reading rule was written before: "X detects more" only if its worst run beats the control's best (✅ Oct 17, team_matrix.py --blind-seats; 27 runs; $0.46).
+What we tried: confirm finding 9 on errors the agents were never tuned on — the blind exam (22 errors planted and written separately) — changing one seat at a time. The personal-spending agent is the one that adds errors; the reviewer is the one that filters. Each was run with Lightning, Super, Ultra and 3.5 Super VL, all without reasoning, against the current team (both on Nano), 3 runs each, in the same batch. The reading rule was written before: "X detects more" only if its worst run beats the control's best (✅ Oct 17, team_matrix.py --blind-seats; 27 runs; $0.46).
 
-What happened: the control finds 14–15 of 22 (code alone, 8 in all 27 runs). A larger ⑤: all four find 12–13. They contribute 3–4 errors instead of 5–6, with somewhat higher precision (81–85% vs. 78–79%). Ultra costs 2.4 times more per run and finds fewer. A larger ①: none finds more. Super and Ultra dismiss 1–3 true errors per run as "legitimate" (Nano and Lightning, 0). 3.5 Super VL finds fewer (12–13) and dismisses 3 in every run, even though it is our best rule drafter (finding 12). Limit: each agent uses one prompt for every model; we did not write a prompt tuned to each model.
+What happened: the control finds 14–15 of 22 (code alone, 8 in all 27 runs). A larger personal-spending agent: all four find 12–13. They contribute 3–4 errors instead of 5–6, with somewhat higher precision (81–85% vs. 78–79%). Ultra costs 2.4 times more per run and finds fewer. A larger reviewer: none finds more. Super and Ultra dismiss 1–3 true errors per run as "legitimate" (Nano and Lightning, 0). 3.5 Super VL finds fewer (12–13) and dismisses 3 in every run, even though it is our best rule drafter (finding 12). Limit: each agent uses one prompt for every model; we did not write a prompt tuned to each model.
 
-One exception, on a later exam: on a real book with 12 errors planted by a practicing bookkeeper, Ultra as ⑤ found 10 of 12 against Nano's 7; it did not win on the blind demo exam or on a second real-book exam, and the best large model changed just by rewriting the prompt, so ⑤ stayed on Nano for stability. As ① (the reviewer), no larger model found more on any exam: Super, Ultra and 3.5 Super VL dismissed 6–7 true errors as "legitimate" on the first real-book exam (errors picked at random by a program).
+One exception, on a later exam: on a real book with 12 errors planted by a practicing bookkeeper, Ultra as the personal-spending agent found 10 of 12 against Nano's 7; it did not win on the blind demo exam or on a second real-book exam, and the best large model changed just by rewriting the prompt, so that agent stayed on Nano for stability. As the reviewer, no larger model found more on any exam: Super, Ultra and 3.5 Super VL dismissed 6–7 true errors as "legitimate" on the first real-book exam (errors picked at random by a program).
 
 Why it matters: "use the biggest model for what matters" fails when what matters is NOT letting something through: as the reviewer, Nemotron's larger models were more cautious, not more accurate, on every exam, including data they were never tuned on. As the judge that flags personal spending, the result changed with the exam and the prompt. One model can be the best in one seat and the worst in another.
 
@@ -293,5 +311,5 @@ python measure.py --demo --audit          # against the demo's answer key (findi
 python model_matrix.py                    # the model matrix (findings 8 and 9; ~$0.70)
 python team_matrix.py --plan              # the best model per agent, in the team (finding 10; ~$2)
 python team_matrix.py --vl                # 3.5 Super VL in every seat (finding 12; ~$0.70)
-python team_matrix.py --blind-seats       # a larger ⑤ or ① on the blind exam (finding 13; ~$0.46)
+python team_matrix.py --blind-seats       # a larger personal-spending agent or reviewer on the blind exam (finding 13; ~$0.46)
 ```

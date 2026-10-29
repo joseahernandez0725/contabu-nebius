@@ -6,7 +6,14 @@
 
 **Live demo:** [demo.contabu.com](https://demo.contabu.com) · **Video:** [YouTube, 2:59](https://www.youtube.com/watch?v=PqxYZ9NNElQ) · **License:** [MPL 2.0](LICENSE)
 
-<img src="docs/img/welcome.png" width="720" alt="The guided tour's welcome screen, Big-firm AI for the small bookkeeper: five agents with their models (Nemotron 3 Nano reviews each finding and spots personal spending, Nemotron 3.5 Super VL drafts rules, Nemotron 3 Super reads notes, Tavily plus Nemotron 3 Super checks merchants on the web); before and after on the sample book Rivera HVAC (144 rows and 26 possible errors; then the P&amp;L with 34 Pending rows declared, 26 findings with their evidence and 5 rules proposed); a blind exam, 14 to 15 of 22; and one note, 7 of 15 to 15 of 15.">
+<img src="docs/img/cycle.png" width="860" alt="How ContaBu works: the bank (Plaid or a statement) goes into the rules, with no AI; whatever no rule covers stays Pending; the AI agents on NVIDIA Nemotron on Nebius Token Factory review and propose (Nemotron 3 Nano reviews each finding and spots personal spending, Tavily + Nemotron 3 Super checks merchants, Nemotron 3 Super reads the notes, Nemotron 3.5 Super VL drafts rules); the bookkeeper decides; and the P&amp;L comes out of the database, with no AI. What the bookkeeper approves becomes a rule or a check that runs on every later statement, with no AI.">
+
+- **The problem:** the United States has **71,408 small bookkeeping offices**, with 4 people on average, and every month
+  someone has to review each client's books by hand.
+- **What ContaBu does:** a team of AI agents reviews the books and explains what looks wrong; the AI never touches a
+  number.
+- **What we got:** on a real 2026 book, a single note from the bookkeeper took the rules the AI proposes from **half
+  right to all right**, and the full review costs **less than a cent**.
 
 **Big-firm AI, for the small bookkeeper.** The United States has
 [71,408 bookkeeping and non-CPA accounting offices](https://data.bls.gov/cew/data/api/2024/a/industry/541219.csv), with 4 employees on average, and bookkeeping jobs are projected to
@@ -15,11 +22,15 @@ Hispanic-owned](https://www.census.gov/newsroom/press-releases/2025/business-own
 daily work of a bookkeeper in that market: a team of agents on NVIDIA Nemotron, on Nebius Token Factory, plus
 [Tavily web search](docs/tavily.md), reviews each client's books and explains what looks wrong. **The AI never
 categorizes and never computes:** it judges, checks suspicious merchants on the web and proposes rules that the
-bookkeeper approves, and [each model won its seat by measurement](docs/technological-implementation.md). **What we
-got:** on a [blind exam](docs/technological-implementation.md), code alone finds 8 of 22 errors and with the agents,
-**14–15 of 22**; on a [real book](docs/potential-impact.md), from **0 to 7 of 12** errors planted by a bookkeeper, and a
-single note from that bookkeeper takes the proposed rules from **7 to 15 of 15** correct. Reviewing that whole book costs
-**less than a cent**, without sending the model a single amount or a person's name.
+bookkeeper approves, and [each model won its seat by measurement](docs/technological-implementation.md), which Token
+Factory made fast: all five models sit behind one API, and changing an agent's model is changing one variable. **What we
+got:** on a [blind exam](docs/technological-implementation.md#4-what-a-blind-exam-is-and-what-we-asked) of 22 errors,
+our fixed checks in code, **without AI**, find 8, and with the agents **14–15 of the 22** come up. On a
+[real book](docs/potential-impact.md#5-evidence-on-a-real-book) with **197 current transactions from 2026**, we ran two
+tests: a bookkeeper hid **12 errors**, and code without AI found none while the agents found **7 of the 12**; and of the
+**15 Pending transactions** for which the AI proposed rules, it got 7 right on its own and **all 15** with a single note
+from the bookkeeper. Reviewing that whole book costs **less than a cent**, without sending the model a single amount or
+a person's name.
 
 ## Try it
 
@@ -31,40 +42,38 @@ single note from that bookkeeper takes the proposed rules from **7 to 15 of 15**
 The guided tour opens with a welcome screen and a quick guide through the real screens. Every screen is in English and
 Spanish.
 
+<img src="docs/img/welcome.png" width="720" alt="The guided tour's welcome screen, Big-firm AI for the small bookkeeper: the five agents with their models; before and after on the sample book Rivera HVAC; the blind exam, 14 to 15 of 22; and one note, 7 of 15 to 15 of 15.">
+
 ---
 
-## Technological Implementation
+## Technological Implementation: NVIDIA Nemotron on Nebius Token Factory
 
 We gave each agent one task, and each agent its own NVIDIA Nemotron model on Nebius Token Factory: **Nano** reviews the
 findings and spots personal spending, **Super** checks merchants on the web and translates the bookkeeper's notes, and
-**3.5 Super VL** drafts the rules. We did not pick them by eye: we tried all five Nemotron models in every seat, three
-times each, with the rule to win written before we started. And we put them to the test with **blind exams**: errors
-hidden in a book, with the answers kept where the agents cannot see them. Code alone found **8 of 22**; with the agents,
-**14 to 15**. Then, on a real book, a bookkeeper hid **12 errors**: code alone found **none**, and with the agents **7**
-came up. The surprise was in the seat that reviews each finding: the larger models were more cautious, not more
-accurate, and on the real book Super, Ultra and 3.5 Super VL marked 6 or 7 true errors as "legitimate", letting them
-through. That is why the reviewer is **Nano**, the smallest. A review of three books costs **$0.012**, and the model
-never received an amount or a person's name. → [The full write-up](docs/technological-implementation.md)
+**3.5 Super VL** drafts the rules. We did not pick them by eye: in every seat we tried the five Nemotron models Token
+Factory offers, three times each, with the rule to win written before we started. Token Factory made that fast: all five
+models sit behind the same OpenAI-compatible API, so changing an agent's model is changing one variable
+(`AGENT_MODEL_*`), with no code change. And we put them to the test with **blind exams**: errors hidden in a book, with
+the answers kept where the agents cannot see them. Our fixed checks in code, **without AI**, found **8 of 22**; with the
+agents, **14 to 15**. Then, on a real book with current transactions from 2026, a bookkeeper hid **12 errors**: code
+without AI found **none**, and with the agents **7** came up. The surprise was in the seat that reviews each finding:
+**the smallest model was the best judge.** The larger ones were more cautious, not more accurate: on another exam on the
+same real book, Super, Ultra and 3.5 Super VL marked 6 or 7 true errors as "legitimate", letting them through. That is
+why the reviewer is **Nano**. A review of three books costs **$0.012**, and the model never received an amount or a
+person's name. → [The full write-up](docs/technological-implementation.md)
 
-## Tavily (the ② verifier)
+## Tavily (the merchant verifier)
 
-To know whether an expense belongs to the business, sometimes you need to know what the merchant is. The ② verifier
-looks it up on **Tavily** at review time, and **Nemotron Super** reads the results and picks the business type from a
-list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is suspicious
-and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can only return
-a type. On the real book, Super got **19–20 merchants right against 14** for our keyword table. And it spends little: a
-new office uses **33–35 credits** on its first review and **0** on the second, because it remembers every merchant.
-We also measured the team with the verifier off (no searches, and no agent sees the saved merchant types): Tavily helps
-on the demo (blind exam 13–15 against 11–14 of 22, and 2 more Pending transactions get a correct rule), but on the real
-book the personal-spending agent finds more hidden errors without it (12 against 7 of 12) because it flags more of
-everything, unlabeled merchants included: more suspicious, not shown to be better. The likely cause and a proposed fix
-are in the [write-up](docs/tavily.md#7-with-and-without-tavily).
-
-**Where the call happens:** `backend/merchant_verifier.py` sends the search to Tavily at review time (`verify_flagged`
-for the review, `search_one` for a single merchant). To see it in the live demo, run *Review the book* in Audit: the
-"Check on the web" step shows each search with its seconds and credits; or press *🔎 Search this merchant* on a Pending
-merchant. The guided tour is read-only: its web evidence was searched once with Tavily and saved, so it spends nothing.
-→ [The full write-up](docs/tavily.md)
+To know whether an expense belongs to the business, sometimes you need to know what the merchant is. The merchant
+verifier looks it up on **Tavily** at review time, and **Nemotron Super** reads the results and picks the business type
+from a list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is
+suspicious and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can
+only return a type. On the real book, of **23 merchants** whose business type the bookkeeper wrote down before searching,
+Super identified **19–20** correctly (depending on the run) reading Tavily's results, against **14** for our keyword
+table, without AI, on the same results. And it spends little: the first review of the three demo books (**387
+transactions** over three months), in an office that has not searched any merchant yet, uses **33–35 credits**; the
+second, **0**, because each office remembers the merchants it already searched, for all of its clients. →
+[The full write-up](docs/tavily.md)
 
 ## Design
 
@@ -73,32 +82,32 @@ their daily work: the client's accounts connect through **Plaid** and their tran
 in from a statement), the rules categorize them, whatever no rule covers stays **Pending** in plain sight, the agents
 review and propose, and the bookkeeper decides. The Bookkeeping sheet works like a spreadsheet, with the tools a
 bookkeeper uses every day: a formula bar, right-click to create a rule from a row, color labels ("ask the client",
-"done"), filters by date, account and Pending, undo, a pivot and export to Excel. Every AI claim comes with its evidence,
-and every action shows its effect before it runs: select a row and a panel tells its whole story, and every proposed rule
-shows, before you approve it, the rows it would change. The P&L never hides what is Pending. And because the books of
-many clients live in one console, an automated test goes through the **86 server actions** and confirms that each user
-sees and changes only what is theirs. → [The full write-up](docs/design.md)
+"done"), filters by date, account and Pending, undo, a pivot and export to Excel. **Every AI claim comes with its
+evidence**, and **every action shows its effect before it runs**: select a row and a panel tells its whole story, and
+every proposed rule shows, before you approve it, the rows it would change. **The P&L never hides what is Pending.** And
+because the books of many clients live in one console, an automated test goes through the **86 server actions** and
+confirms that each user sees and changes only what is theirs. → [The full write-up](docs/design.md)
 
 ## Potential Impact
 
 The United States has **71,408 bookkeeping offices**, with 4 people on average, and the trade is shrinking **6%** toward
 2035, while their clients are still there: **36.4 million businesses**, **5.8 million** of them Hispanic-owned. ContaBu
-is built for that small bookkeeper, in English and Spanish, and it also serves the owner of a business that is just
-starting out and wants to keep their own books, with AI that costs them pennies. We tested it where it matters, on a
-real book (*an authorized client account*): a bookkeeper hid **12 errors** of the kind they see at work; code alone found
-none, and the full system found **7**, all personal spending. With a single note from the bookkeeper, the rules the AI
-proposes went from **7 to 15 right out of 15**. Reviewing that whole book costs **less than a cent**: about one second of
-a bookkeeper's wage. → [The full write-up](docs/potential-impact.md)
+is built for that small bookkeeper, in English and in Spanish, and also for the owner who is just starting out and keeps
+their own books. We tested it where it matters, on a real book (*an authorized client account*, with **197 current
+transactions from 2026**): a bookkeeper hid **12 errors** of the kind they see at work; code without AI found none, and
+the full system found **7**, all personal spending. And of the 15 Pending transactions for which the AI proposed rules,
+it got 7 right on its own and **all 15** with a single note from the bookkeeper. Reviewing that whole book costs **less
+than a cent**: about one second of a bookkeeper's wage. → [The full write-up](docs/potential-impact.md)
 
 ## Quality of the Idea
 
 The obvious move would be to ask the AI to categorize every transaction. We did the opposite: **the AI never categorizes
 and never computes.** Each book is a **formula**, an ordered list of rules like an Excel IF, and the AI only drafts rows
 for that formula; the bookkeeper approves them and an engine with no AI applies them. So every number on the P&L has an
-explanation a bookkeeper can sign. What the bookkeeper knows about a client is written once in a note, the AI turns it
-into a check, and that check runs on every review without calling the model again. And nothing the model returns is
-executed: a validator checks every row before it reaches the book (**26 test cases, 0 failures**). →
-[The full write-up](docs/quality-of-the-idea.md)
+explanation a bookkeeper can sign. The note *"the owner was on vacation in Europe from August 3 to 17"* becomes a single
+row of the formula, whose history test shows the **9** rows it changes and nothing else, and a check that runs on every
+review without calling the model again. And nothing the model returns is executed: a validator checks every row before
+it reaches the book (**26 test cases, 0 failures**). → [The full write-up](docs/quality-of-the-idea.md)
 
 ---
 
@@ -144,7 +153,7 @@ Fill in `backend/.env`:
 |---|---|
 | `DATABASE_URL` | everything — `postgresql+psycopg://contabu:choose-a-password@localhost:5432/contabu` |
 | `NEBIUS_API_KEY` | the agents (Nemotron on Token Factory). `NEBIUS_MODEL` and `NEBIUS_BASE_URL` are optional |
-| `TAVILY_API_KEY` | the ② verifier |
+| `TAVILY_API_KEY` | the merchant verifier |
 | `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV=sandbox`, `BANK_TOKEN_KEY` | bank feeds (optional) |
 | `AGENT_MODEL_*`, `AGENT_REASONING_*` | change one agent's model (optional; defaults in `backend/agent_models.py`) |
 | `AGENT_DAILY_CALLS`, `AGENT_DAILY_SEARCHES` | per-office daily caps (optional) |
@@ -198,7 +207,7 @@ runs the whole team, including real Tavily searches.
 ```bash
 python check_permissions.py      # every route; must report 0 leaks
 python check_formula.py          # the formula validator; must report 0 failures
-python check_web_classifier.py   # the ② classifier; must report 0 failures
+python check_web_classifier.py   # the merchant classifier; must report 0 failures
 cd ../frontend && npx tsc -b     # must be clean
 ```
 
@@ -235,10 +244,10 @@ backend/
   book_review.py       Review the book: the findings, the deterministic checks
   nemotron.py          the Token Factory client: strict JSON, reasoning switch, retries, cost per call
   agent_models.py      which Nemotron model (and reasoning) each agent uses
-  agents.py            ④ rule drafter and ① reviewer; pseudonyms and the privacy scan
-  note_checks.py       ⑥ a bookkeeper's note → an audit check
-  personal_use.py      ⑤ personal for THIS business?
-  merchant_verifier.py ② merchant verifier: Tavily search + Nemotron Super classifier, keyword table as fallback
+  agents.py            the rule drafter and the reviewer; pseudonyms and the privacy scan
+  note_checks.py       the note translator: a bookkeeper's note → an audit check
+  personal_use.py      the personal-spending agent: personal for THIS business?
+  merchant_verifier.py the merchant verifier: Tavily search + Nemotron Super classifier, keyword table as fallback
   agent_calls.py       metering for every call and the daily caps
   measure.py           one review against the answer keys
   team_matrix.py       the per-seat model matrix

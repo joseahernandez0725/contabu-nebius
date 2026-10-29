@@ -9,11 +9,13 @@ their daily work: the client's accounts connect through **Plaid** and their tran
 in from a statement), the rules categorize them, whatever no rule covers stays **Pending** in plain sight, the agents
 review and propose, and the bookkeeper decides. The Bookkeeping sheet works like a spreadsheet, with the tools a
 bookkeeper uses every day: a formula bar, right-click to create a rule from a row, color labels ("ask the client",
-"done"), filters by date, account and Pending, undo, a pivot and export to Excel. Every AI claim comes with its evidence,
-and every action shows its effect before it runs: select a row and a panel tells its whole story, and every proposed rule
-shows, before you approve it, the rows it would change. The P&L never hides what is Pending. And because the books of
-many clients live in one console, an automated test goes through the **86 server actions** and confirms that each user
-sees and changes only what is theirs.
+"done"), filters by date, account and Pending, undo, a pivot and export to Excel. **Every AI claim comes with its
+evidence**, and **every action shows its effect before it runs**: select a row and a panel tells its whole story, and
+every proposed rule shows, before you approve it, the rows it would change. **The P&L never hides what is Pending.** And
+because the books of many clients live in one console, an automated test goes through the **86 server actions** and
+confirms that each user sees and changes only what is theirs.
+
+![The Bookkeeping sheet with the side panel open on a coffee bought in Rome. In the sheet, categories set by a rule show a green ƒ, the ones written by hand a ✎, and Pending rows show in red. The panel tells the row's story: what the bookkeeper's note about the owner's vacation in Europe asks (9 rows), the personal-spending agent's finding, and the Tavily evidence (coffee shop, high confidence).](img/sheet-panel.png)
 
 ---
 
@@ -29,7 +31,8 @@ that proposes and explains, never as a black box that decides.
 The sidebar is the map of that flow, in the same order: **Summary** (the P&L and what needs attention) · **Bank feeds**
 (where transactions come in) · **Transactions** (the Bookkeeping sheet, the Pivot and the Rules) · **Notes** (what the
 bookkeeper knows about that client) · **Audit** (the AI team) · **P&L** (what the client receives) · **Book settings**
-(the chart of accounts, with each account's IRS line).
+(the chart of accounts, with each account's IRS line). Everything is in English and in Spanish, and the language
+switches with one click on any screen without losing anything.
 
 | Stage | What the bookkeeper does | What the design guarantees |
 |---|---|---|
@@ -113,4 +116,4 @@ translation again, and it shows which transactions it touched.
 | The business owner's platform does not exist yet: the client receives the income statement from their bookkeeper | Build the platform that connects the bookkeeper with their clients (see [Potential Impact](potential-impact.md#8-whats-next-a-plan-not-a-current-feature), "What's next") |
 | The spreadsheet is designed for large screens | A dedicated phone view for the sheet |
 | The call log has no run identifier: the "last run" is rebuilt by grouping calls with no gaps longer than 3 minutes | A run identifier on every call |
-| There are no screens yet for PDF statements or check images | They come with the ③ reconciler, under construction |
+| There are no screens yet for PDF statements or check images | They come with the statement reconciler, under construction |
