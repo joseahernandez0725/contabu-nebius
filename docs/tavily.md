@@ -9,8 +9,8 @@ verifier looks it up on **Tavily** at review time, and **Nemotron Super** reads 
 from a list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is
 suspicious and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can
 only return a type. On the real book, of **23 merchants** whose business type the bookkeeper wrote down before searching,
-Super identified **19–20** correctly (depending on the run) reading Tavily's results, against **14** for our keyword
-table, without AI, on the same results. And it spends little: the first review of the three demo books (**387
+Super identified **19–20** correctly (**83–87%**, depending on the run) **reading Tavily's results**, against 14 (61%)
+for our keyword table, without AI, which read **exactly the same results**. And it spends little: the first review of the three demo books (**387
 transactions** over three months), in an office that has not searched any merchant yet, uses **33–35 credits**; the
 second, **0**, because each office remembers the merchants it already searched, for all of its clients.
 
@@ -157,7 +157,17 @@ Super spends less because it answers "high" more often on the basic search and u
   except for **three merchants left out on purpose**: an evaluator's first review makes real Tavily searches, and the
   verify step says how many were live and what they cost.
 
-## 7. With and without Tavily
+## 7. With and without Tavily: what a merchant's type tells, and what it doesn't
+
+**What we learned:** Tavily tells **what the merchant is**, not **what was bought**. For the reviewer and the rule
+drafter, that is exactly what they need: knowing that a merchant is a gym or a hardware store lets the reviewer say
+*"this is a gym booked as an office expense"* and the drafter ground a rule. For the personal-spending agent, at
+general stores such as a supermarket or a department store, it is not enough: the type makes it plausible that the
+business buys there, and the alert disappears. And without the type it finds more errors, but not because it judges
+better: it suspects more merchants, and on the real book the ones it flags on top are all business expenses. Adding up
+the three runs, that is 10 false alarms with Tavily, 17 without Tavily and 26 without the type for that agent only.
+We measured it with four conditions on the same day and with the alerts labeled by the bookkeeper; neither of the two
+fixes we tried met the rule written beforehand, so the product stays as submitted.
 
 The same exams, the same code and the same day, three runs per condition, with the whole team. The four conditions:
 
@@ -179,12 +189,20 @@ merchants): all 14 are business expenses, so every extra alert is a false alarm.
 | Three runs each | With Tavily | Without Tavily | Without Tavily for personal spending only | With Tavily and the purchase context |
 |---|---|---|---|---|
 | Real book: hidden errors found (of 12) | 7 · 7 · 7 | **12 · 12 · 12** | **12 · 12 · 12** | 0 · 6 · 0 |
-| Real book: false alarms of the personal-spending agent (labeled) | **8 · 1 · 1** | 5 · 5 · 7 | 10 · 8 · 8 | 0 · 2 · 0 |
+| Real book: false alarms of the personal-spending agent (labeled) | 8 · 1 · 1 | 5 · 5 · 7 | 10 · 8 · 8 | 0 · 2 · 0 |
 | Demo, blind exam (of 22) | **14 · 14 · 14** | 14 · 14 · 13 | **14 · 14 · 14** | 10 · 10 · 10 |
 | Demo, first exam (not blind, of 32) | 30 · 32 · 30 | 32 · 32 · 30 | 32 · 30 · 32 | 26 · 26 · 26 |
 | Demo: false alarms of the personal-spending agent | 2 · 2 · 2 | 3 · 2 · 3 | 2 · 2 · 2 | 1 · 1 · 1 |
 | Demo: Pending transactions covered by correct proposed rules (of 91) | 41 · 44 · 44 | 42 · 42 · 42 | **44 · 44 · 44** | **44 · 44 · 44** |
 | Sent to the model: descriptions · amounts · names | 0 · 0 · 0 | 0 · 0 · 0 | 0 · 0 · 0 | 0 · 0 · 0 |
+
+*Two runs stand out: the first run with Tavily gave 8 false alarms on the real book, and the other two, 1; and the
+second run with the purchase context found 6 errors, and the other two, 0. In the other conditions, the three runs are
+close. That is why false alarms are compared by adding up the three runs, not run by run. The run records show the
+cause is the model, not the evidence or the service: the three runs of each condition received the same saved
+evidence and the same merchant types, with no failed calls, and only the model's answers changed (in the first run
+with Tavily it judged 7 more merchants with no web type as personal; in the second run with the purchase context, the
+same merchants went from low to medium confidence, which is the threshold for an alert).*
 
 - **On the demo, with and without Tavily nearly tie:** the blind exam gives 14 · 14 · 14 against 14 · 14 · 13. With
   Tavily, the personal-spending agent makes fewer false alarms (2 against 2–3), and up to 2 more Pending transactions get

@@ -67,8 +67,8 @@ verifier looks it up on **Tavily** at review time, and **Nemotron Super** reads 
 from a list of 30: so the reviewer can say *"this is a gym booked as an office expense"*. It searches only what is
 suspicious and **never people**, and web text cannot give orders to anyone: a single model reads it, and that model can
 only return a type. On the real book, of **23 merchants** whose business type the bookkeeper wrote down before searching,
-Super identified **19–20** correctly (depending on the run) reading Tavily's results, against **14** for our keyword
-table, without AI, on the same results. And it spends little: the first review of the three demo books (**387
+Super identified **19–20** correctly (**83–87%**, depending on the run) **reading Tavily's results**, against 14 (61%)
+for our keyword table, without AI, which read **exactly the same results**. And it spends little: the first review of the three demo books (**387
 transactions** over three months), in an office that has not searched any merchant yet, uses **33–35 credits**; the
 second, **0**, because each office remembers the merchants it already searched, for all of its clients. →
 [The full write-up](docs/tavily.md)

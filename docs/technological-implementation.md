@@ -109,7 +109,7 @@ client account*), with its **197 transactions from 2026**, categorized by a book
 | Seat | Model | Why this one |
 |---|---|---|
 | Reviewer | **Nemotron Nano**, no reasoning | No candidate beats it on the blind exams (3.5 Lightning ties). On R1, Super, Ultra and Super VL dismiss 6 or 7 true errors as "legitimate" |
-| Merchant verifier | **Tavily + Nemotron Super**, no reasoning | On the same Tavily results, Super classifies the business type better than the keyword table on the real book (19–20 of 23 against 14, with 2 errors each) and ties on the demo; it was never worse in any run ([Tavily](tavily.md#4-the-classification-the-keyword-table-against-the-nemotron-models)) |
+| Merchant verifier | **Tavily + Nemotron Super**, no reasoning | On the same Tavily results, Super classifies the business type better than the keyword table on the real book — 19–20 of 23 (83–87%) against 14, with 2 errors each — and ties on the demo; it was never worse in any run ([Tavily](tavily.md#4-the-classification-the-keyword-table-against-the-nemotron-models)) |
 | Rule drafter | **Nemotron 3.5 Super VL**, no reasoning | The same quality as Super with reasoning, 39% cheaper and 3 seconds per call instead of 15 to 40 |
 | Personal-spending agent | **Nemotron Nano**, no reasoning | The most stable: 7 of 12 on R2 in all 12 runs, with both prompts. Ultra found 10 of 12 on R2, but did not win on D2 or R1, and the best large model changed just by rewriting the prompt |
 | Note translator | **Nemotron Super**, no reasoning | Ties Ultra on quality and costs 15% less |
@@ -158,7 +158,7 @@ freshly fetched Tavily results, so we re-ran D2 and R2 three times live, with a 
 Live, the team **drops** a little (one D2 run gives 13 and one R2 run gives 5), and the control shows the cause is the new
 evidence, not Super: on the same results, the table also gives 13 on D2 and 5 · 5 · 5 on R2, while Super scores more than
 the table on R2 in two of three runs and the same in the third. Privacy was 0 · 0 · 0 live as well. The Tavily details,
-including the test with the verifier off, are in its [write-up](tavily.md#7-with-and-without-tavily).
+including the test with the verifier off, are in its [write-up](tavily.md#7-with-and-without-tavily-what-a-merchants-type-tells-and-what-it-doesnt).
 
 ## 7. Limits, and how we will address them
 
@@ -169,4 +169,4 @@ including the test with the verifier off, are in its [write-up](tavily.md#7-with
 | A single real book | More authorized clients, each with its own exam |
 | Each agent uses one prompt for every model; we did not write a prompt tailored to each model | Repeat the seat comparison with a prompt written for each candidate model |
 | Errors with no detector (a wrong category on a single row, an ATM withdrawal as an expense, a loan or owner money as a sale) | Build those detectors and measure them on the same exams |
-| A correct store type does not say what was bought: with the merchant verifier live, D1 (not blind) drops to 27 · 28 · 31 (31 · 30 · 31 with the saved evidence), because Super labels a department store or a supermarket with high confidence and the personal-spending agent downgraded 2 planted personal purchases | At a general store, the alert should not go away but move to "ask the client"; the two fixes we measured did not pass our rule ([Tavily §7](tavily.md#7-with-and-without-tavily)) |
+| A correct store type does not say what was bought: with the merchant verifier live, D1 (not blind) drops to 27 · 28 · 31 (31 · 30 · 31 with the saved evidence), because Super labels a department store or a supermarket with high confidence and the personal-spending agent downgraded 2 planted personal purchases | At a general store, the alert should not go away but move to "ask the client"; the two fixes we measured did not pass our rule ([Tavily §7](tavily.md#7-with-and-without-tavily-what-a-merchants-type-tells-and-what-it-doesnt)) |

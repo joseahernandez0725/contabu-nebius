@@ -57,8 +57,9 @@ A web page can carry instructions. So only **one** model reads it, the merchant 
 reasoning), and its only possible output is **one business type from a closed list of 30**, with a confidence, in strict
 JSON and with no tools. The other agents never see the text: they receive only the type and the confidence. So a page
 can, at worst, get a type wrong, but it cannot give an agent orders. And the classifier was adopted by measurement: on
-the same Tavily results, on the real book it gets **19–20 of 23 merchants right against 14** for the keyword table, with
-the same errors (details in [Tavily](tavily.md)). Also, searching only the merchants that could be personal spending
+the real book, of 23 merchants whose business type the bookkeeper wrote down before searching, Super identified
+**19–20** correctly (**83–87%**, depending on the run) **reading Tavily's results**, against 14 (61%) for our keyword
+table, without AI, which read **exactly the same results**; both made the same errors (details in [Tavily](tavily.md)). Also, searching only the merchants that could be personal spending
 found **the same** on the demo's first exam (30 of 32 errors) with **40 credits instead of 56**, 29% fewer: the web does
 not solve a book's mechanical problems. Later, the 10 merchants with the most Pending transactions were added to the
 search, so the rule drafter has evidence for what no rule covers ([Potential Impact §5](potential-impact.md#5-evidence-on-a-real-book)).
@@ -94,5 +95,5 @@ search, so the rule drafter has evidence for what no rule covers ([Potential Imp
 | A note with no period still backs any row that cites it, even if it does not mention that merchant | Make it back only the merchants it names or the types the note translator understood |
 | Missing detectors: a wrong category on a single row, an ATM withdrawal booked as an expense, a loan or an owner contribution booked as a sale | Build those detectors and measure them on the same exams |
 | Each agent uses one prompt for every model; we did not write a prompt tailored to each model | Repeat the seat comparison with a prompt written for each candidate model |
-| A correct store type does not say what was bought, and the personal-spending agent can take it as proof that the purchase is for the business | At a general store, the alert should not go away but move to "ask the client"; the two fixes we measured did not pass our rule ([Tavily §7](tavily.md#7-with-and-without-tavily)) |
+| A correct store type does not say what was bought, and the personal-spending agent can take it as proof that the purchase is for the business | At a general store, the alert should not go away but move to "ask the client"; the two fixes we measured did not pass our rule ([Tavily §7](tavily.md#7-with-and-without-tavily-what-a-merchants-type-tells-and-what-it-doesnt)) |
 | A single real book | More authorized clients, each with its own exam |
