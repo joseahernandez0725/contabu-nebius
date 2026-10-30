@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
         # Lo Pendiente se declara SIEMPRE que exista, también en la salida de consola.
         if u["count"]:
-            print(f"\n  PENDING — not classified yet ({u['count']} movements, NOT in the result above)")
+            print(f"\n  PENDING — not classified yet ({u['count']} transactions, NOT in the result above)")
             print(f"    Money in   ({u['count_in']:>3})      {money(u['money_in'])}")
             print(f"    Money out  ({u['count_out']:>3})      {money(u['money_out'])}")
             if u["count_unknown"]:
